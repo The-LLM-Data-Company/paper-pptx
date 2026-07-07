@@ -1,6 +1,6 @@
 # paper-pptx
 
-`paper-pptx` is The LLM Data Company's hard fork of
+`paper-pptx` is Paper Instruments' hard fork of
 [`python-pptx`](https://github.com/scanny/python-pptx), based on the upstream
 `v1.0.2` release.
 
