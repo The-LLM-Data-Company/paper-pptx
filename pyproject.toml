@@ -3,8 +3,13 @@ requires = ["setuptools>=61.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "python-pptx"
-authors = [{name = "Steve Canny", email = "stcanny@gmail.com"}]
+name = "paper-pptx"
+version = "0.1.0"
+authors = [
+    {name = "Steve Canny", email = "stcanny@gmail.com"},
+    {name = "The LLM Data Company"},
+]
+maintainers = [{name = "The LLM Data Company"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -28,17 +33,17 @@ dependencies = [
     "typing_extensions>=4.9.0",
 ]
 description = "Create, read, and update PowerPoint 2007+ (.pptx) files."
-dynamic = ["version"]
 keywords = ["powerpoint", "ppt", "pptx", "openxml", "office"]
 license = { text = "MIT" }
-readme = "README.rst"
+readme = "README.md"
 requires-python = ">=3.8"
 
 [project.urls]
-Changelog = "https://github.com/scanny/python-pptx/blob/master/HISTORY.rst"
-Documentation = "https://python-pptx.readthedocs.io/en/latest/"
-Homepage = "https://github.com/scanny/python-pptx"
-Repository = "https://github.com/scanny/python-pptx"
+Changelog = "https://github.com/The-LLM-Data-Company/paper-pptx/blob/main/HISTORY.rst"
+Documentation = "https://github.com/The-LLM-Data-Company/paper-pptx"
+Homepage = "https://github.com/The-LLM-Data-Company/paper-pptx"
+Issues = "https://github.com/The-LLM-Data-Company/paper-pptx/issues"
+Repository = "https://github.com/The-LLM-Data-Company/paper-pptx"
 
 [tool.black]
 line-length = 100
@@ -140,6 +145,3 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["pptx"]
-
-[tool.setuptools.dynamic]
-version = {attr = "pptx.__version__"}

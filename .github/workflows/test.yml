@@ -1,0 +1,55 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install -r requirements-test.txt
+      - name: Run pytest
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+
+          args = [sys.executable, "-m", "pytest", "-q"]
+          try:
+              import pyparsing.warnings  # noqa: F401
+          except Exception:
+              pass
+          else:
+              args += ["-W", "ignore::pyparsing.warnings.PyparsingDeprecationWarning"]
+          try:
+              import pytest
+
+              getattr(pytest, "PytestRemovedIn10Warning")
+          except Exception:
+              pass
+          else:
+              args += ["-W", "ignore::pytest.PytestRemovedIn10Warning"]
+          raise SystemExit(subprocess.call(args))
+          PY
+      - name: Run behave
+        run: behave -q

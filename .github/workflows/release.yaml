@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       # Publish on any tag starting with a `v`, e.g., v1.2.3
@@ -28,8 +29,9 @@ jobs:
         run: uv build
       # Check that basic features work and we didn't miss to include crucial files
       - name: Smoke test (wheel)
-        run: uv run --isolated --no-project --with dist/*.whl python -c "import paper_pptx; print(paper_pptx.__version__)"
+        run: uv run --isolated --no-project --with dist/*.whl python -c "import pptx; print(pptx.__paper_version__)"
       - name: Smoke test (source distribution)
-        run: uv run --isolated --no-project --with dist/*.tar.gz python -c "import paper_pptx; print(paper_pptx.__version__)"
+        run: uv run --isolated --no-project --with dist/*.tar.gz python -c "import pptx; print(pptx.__paper_version__)"
       - name: Publish
+        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
         run: uv publish
