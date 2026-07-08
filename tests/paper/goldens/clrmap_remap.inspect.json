@@ -1,7 +1,8 @@
 {
   "schema": "paper-text-inspection",
-  "version": 1,
+  "version": 2,
   "part": "/ppt/slides/slide1.xml",
+  "blind_region_count": 0,
   "blocks": [
     {
       "anchor": {
@@ -12,6 +13,9 @@
       "shape_id": 2,
       "shape_name": "accent1_box",
       "placeholder_type": null,
+      "container": "shape",
+      "container_detail": null,
+      "blind": false,
       "level": 0,
       "text": "",
       "runs": []
@@ -25,6 +29,9 @@
       "shape_id": 3,
       "shape_name": "tx1_text",
       "placeholder_type": null,
+      "container": "shape",
+      "container_detail": null,
+      "blind": false,
       "level": 0,
       "text": "Mapped text color",
       "runs": [

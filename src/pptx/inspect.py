@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from pptx.text.text import _Run
 
 SCHEMA_NAME = "paper-text-inspection"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # -- v2 (v0.1): visibility-complete traversal, container/blind fields
 
 _TITLE_FAMILY = frozenset([PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE])
 _BODY_FAMILY = frozenset(
@@ -156,7 +156,15 @@ class InspectedRun:
 
 @dataclass(frozen=True)
 class TextBlock:
-    """One paragraph of one shape, with anchor and per-run effective fonts."""
+    """One paragraph of one text body, with anchor and per-run effective fonts.
+
+    `container` says where the text lives: "shape" (a top-level `p:sp`), "group" (a `p:sp`
+    inside `p:grpSp` nesting; `container_detail` is the slash-joined group-name path), or
+    "table-cell" (`container_detail` is `"<frame-name>!r{row}c{col}"`). `blind` is True when
+    the block's *text* is visible but its effective values are unresolvable by design in
+    this version (table-cell runs inherit through table styles, a chain v0.1 does not walk);
+    a blind block's runs carry `resolved=False` values, never guesses.
+    """
 
     anchor: BlockAnchor
     shape_id: int
@@ -165,6 +173,9 @@ class TextBlock:
     level: int
     text: str
     runs: Tuple[InspectedRun, ...]
+    container: str = "shape"
+    container_detail: Optional[str] = None
+    blind: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -172,6 +183,9 @@ class TextBlock:
             "shape_id": self.shape_id,
             "shape_name": self.shape_name,
             "placeholder_type": self.placeholder_type,
+            "container": self.container,
+            "container_detail": self.container_detail,
+            "blind": self.blind,
             "level": self.level,
             "text": self.text,
             "runs": [run.to_dict() for run in self.runs],
@@ -185,11 +199,17 @@ class TextInspection:
     part: str
     blocks: Tuple[TextBlock, ...] = field(default_factory=tuple)
 
+    @property
+    def blind_region_count(self) -> int:
+        """Number of blocks whose effective values are unresolvable by design (see TextBlock)."""
+        return sum(1 for block in self.blocks if block.blind)
+
     def to_dict(self) -> dict:
         return {
             "schema": SCHEMA_NAME,
             "version": SCHEMA_VERSION,
             "part": self.part,
+            "blind_region_count": self.blind_region_count,
             "blocks": [block.to_dict() for block in self.blocks],
         }
 
@@ -216,47 +236,135 @@ def effective_font(run: "_Run") -> EffectiveFont:
     return _FontResolver(part).effective_font(r, sp)
 
 
-def inspect_text(slide: "Slide") -> TextInspection:
-    """Return a |TextInspection| of every text-bearing `p:sp` shape on `slide`.
+#: Group nesting beyond this depth refuses: no real deck nests remotely this deep, and an
+#: unbounded recursion on hostile/malformed XML would be a fail-silent hazard.
+MAX_GROUP_DEPTH = 16
 
-    Blocks appear in spTree (z-)order, paragraphs in document order; `block_index` numbers
-    them consecutively within the slide part. Table and chart text are out of v0 scope and do
-    not appear.
+
+def inspect_text(slide: "Slide") -> TextInspection:
+    """Return a |TextInspection| of every text block on `slide`, visibility-complete.
+
+    Traversal is depth-first document order over the shape tree: top-level `p:sp` shapes,
+    `p:sp` shapes inside groups (recursively, to `MAX_GROUP_DEPTH`), and table cells
+    (row-major within each table graphic-frame). `block_index` numbers blocks consecutively
+    in that pinned order. Table-cell blocks report their text but are *blind regions* for
+    effective values (see |TextBlock|); chart text lives in the chart part, not the slide
+    part, and is out of scope here. Group nesting deeper than `MAX_GROUP_DEPTH` raises
+    |UnsupportedStructureError|.
     """
     part = slide.part
     partname = str(part.partname)
     resolver = _FontResolver(part)
-    blocks = []
-    block_index = 0
-    for shape in slide.shapes:
-        if not shape.has_text_frame:
-            continue
-        sp = shape._element
-        placeholder_type = (
-            shape.placeholder_format.type.name if shape.is_placeholder else None
-        )
-        for paragraph in shape.text_frame.paragraphs:
-            runs = tuple(
-                InspectedRun(r.text, resolver.effective_font(r._r, sp))
-                for r in paragraph.runs
-            )
-            text = "".join(inspected.text for inspected in runs)
-            # -- raw read: the paragraph.level proxy getter is get-or-add and would mutate
-            pPr = paragraph._p.find(qn("a:pPr"))
-            level = int(pPr.get("lvl", "0")) if pPr is not None else 0
-            blocks.append(
-                TextBlock(
-                    anchor=BlockAnchor(partname, block_index, content_hash(text)),
-                    shape_id=shape.shape_id,
-                    shape_name=shape.name,
-                    placeholder_type=placeholder_type,
-                    level=level,
-                    text=text,
-                    runs=runs,
-                )
-            )
-            block_index += 1
+    blocks: list = []
+    _walk_container(
+        slide._element.spTree, (), partname, resolver, blocks
+    )
     return TextInspection(part=partname, blocks=tuple(blocks))
+
+
+def _walk_container(container_elm, group_path, partname, resolver, blocks) -> None:
+    """Append TextBlocks for `container_elm`'s children, depth-first in document order."""
+    if len(group_path) > MAX_GROUP_DEPTH:
+        raise UnsupportedStructureError(
+            "group shapes nested more than %d deep; refusing to traverse what no real deck"
+            " produces" % MAX_GROUP_DEPTH
+        )
+    for child in container_elm:
+        if child.tag == qn("p:sp"):
+            _append_sp_blocks(child, group_path, partname, resolver, blocks)
+        elif child.tag == qn("p:grpSp"):
+            _walk_container(
+                child, group_path + (_cNvPr_name(child),), partname, resolver, blocks
+            )
+        elif child.tag == qn("p:graphicFrame"):
+            _append_table_blocks(child, partname, blocks)
+
+
+def _append_sp_blocks(sp, group_path, partname, resolver, blocks) -> None:
+    txBody = sp.find(qn("p:txBody"))
+    if txBody is None:
+        return
+    placeholder_type = None
+    if not group_path and sp.has_ph_elm:
+        ph_type = sp.ph_type
+        placeholder_type = ph_type.name if ph_type is not None else None
+    container = "group" if group_path else "shape"
+    container_detail = "/".join(group_path) if group_path else None
+    for p in txBody.findall(qn("a:p")):
+        runs = tuple(
+            InspectedRun(_run_text(r), resolver.effective_font(r, sp))
+            for r in p.findall(qn("a:r"))
+        )
+        _append_block(
+            blocks, partname, sp, p, runs, placeholder_type, container, container_detail, False
+        )
+
+
+def _append_table_blocks(graphicFrame, partname, blocks) -> None:
+    tbl = graphicFrame.find(".//%s" % qn("a:tbl"))
+    if tbl is None:
+        return
+    frame_name = _cNvPr_name(graphicFrame)
+    for row_index, tr in enumerate(tbl.findall(qn("a:tr"))):
+        for col_index, tc in enumerate(tr.findall(qn("a:tc"))):
+            txBody = tc.find(qn("a:txBody"))
+            if txBody is None:
+                continue
+            detail = "%s!r%dc%d" % (frame_name, row_index, col_index)
+            for p in txBody.findall(qn("a:p")):
+                runs = tuple(
+                    InspectedRun(_run_text(r), _blind_font("table-cell"))
+                    for r in p.findall(qn("a:r"))
+                )
+                _append_block(
+                    blocks, partname, graphicFrame, p, runs, None, "table-cell", detail, True
+                )
+
+
+def _append_block(
+    blocks, partname, shape_elm, p, runs, placeholder_type, container, container_detail, blind
+) -> None:
+    text = "".join(inspected.text for inspected in runs)
+    pPr = p.find(qn("a:pPr"))
+    level = int(pPr.get("lvl", "0")) if pPr is not None else 0
+    cNvPr = shape_elm.find(".//%s" % qn("p:cNvPr"))
+    blocks.append(
+        TextBlock(
+            anchor=BlockAnchor(partname, len(blocks), content_hash(text)),
+            shape_id=int(cNvPr.get("id")),
+            shape_name=cNvPr.get("name") or "",
+            placeholder_type=placeholder_type,
+            level=level,
+            text=text,
+            runs=runs,
+            container=container,
+            container_detail=container_detail,
+            blind=blind,
+        )
+    )
+
+
+def _cNvPr_name(shape_elm) -> str:
+    cNvPr = shape_elm.find(".//%s" % qn("p:cNvPr"))
+    return (cNvPr.get("name") or "") if cNvPr is not None else ""
+
+
+def _run_text(r) -> str:
+    t = r.find(qn("a:t"))
+    return t.text or "" if t is not None else ""
+
+
+def _blind_font(region_kind: str) -> EffectiveFont:
+    """Return an EffectiveFont whose values are honestly unresolved for a blind region."""
+    step = ProvenanceStep(
+        level="%s text" % region_kind,
+        part=None,
+        detail="%s inheritance (e.g. table styles) is not resolved in v0.1; text is"
+        " reported, values are not guessed" % region_kind,
+        supplied=False,
+    )
+    unresolved = EffectiveValue(value=None, value_pt=None, resolved=False, provenance=(step,))
+    return EffectiveFont(size=unresolved, name=unresolved, color_rgb=unresolved)
 
 
 def _ancestor_sp(element):

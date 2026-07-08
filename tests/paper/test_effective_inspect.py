@@ -252,6 +252,92 @@ def test_libreoffice_independently_confirms_branded_effective_sizes():
 # --------------------------------------------------------------------------------- anchors
 
 
+# -------------------------------------------------- visibility completeness (v0.1 Phase 0.2/0.3)
+
+
+def test_inspect_text_sees_table_cells_as_counted_blind_regions():
+    """v0.1 0.2: table-cell text appears (row-major) as typed blind regions, never silence."""
+    inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
+    by_container = {}
+    for block in inspection.blocks:
+        by_container.setdefault(block.container, []).append(block)
+
+    cell_blocks = by_container.get("table-cell", [])
+    assert [b.text for b in cell_blocks] == [
+        "cell r0c0", "cell r0c1", "cell r1c0", "cell r1c1"
+    ]
+    assert [b.container_detail for b in cell_blocks] == [
+        "grouped_table!r0c0", "grouped_table!r0c1",
+        "grouped_table!r1c0", "grouped_table!r1c1",
+    ]
+    assert all(b.blind for b in cell_blocks)
+    for block in cell_blocks:
+        for run in block.runs:
+            assert run.font.size.resolved is False  # -- honest unresolved, not a guess
+    assert inspection.blind_region_count == 4
+
+    payload = inspection.to_dict()
+    assert payload["version"] == 2
+    assert payload["blind_region_count"] == 4
+
+
+def test_inspect_text_sees_grouped_shape_text_with_group_paths():
+    """v0.1 0.3: text inside groups appears, recursively, with its group path."""
+    inspection = inspect_text(_open("self_generated/nested_groups.pptx").slides[0])
+    by_text = {b.text: b for b in inspection.blocks}
+    assert by_text["Level zero"].container == "shape"
+    assert by_text["Level zero"].container_detail is None
+    assert by_text["Level one"].container == "group"
+    assert by_text["Level one"].container_detail == "group_level1"
+    assert by_text["Level two"].container_detail == "group_level1/group_level2"
+    assert by_text["Level three"].container_detail == (
+        "group_level1/group_level2/group_level3"
+    )
+    assert not any(b.blind for b in inspection.blocks)
+    # -- grouped runs resolve through the normal (non-placeholder) chain
+    assert by_text["Level three"].runs[0].font.size.resolved is True
+
+
+def test_inspect_text_sees_in_group_textbox_beside_grouped_table():
+    inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
+    by_text = {b.text: b for b in inspection.blocks}
+    assert by_text["Top-level text"].container == "shape"
+    assert by_text["In-group text"].container == "group"
+    assert by_text["In-group text"].container_detail == "outer_group"
+
+
+def test_inspect_text_block_order_is_depth_first_document_order():
+    inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
+    texts = [b.text for b in inspection.blocks]
+    assert texts == [
+        "Top-level text", "In-group text",
+        "cell r0c0", "cell r0c1", "cell r1c0", "cell r1c1",
+    ]
+    assert [b.anchor.block_index for b in inspection.blocks] == list(range(len(texts)))
+
+
+def test_pathological_group_nesting_refuses_instead_of_recursing_forever():
+    prs = _open("self_generated/minimal_clean.pptx")
+    shapes = prs.slides[0].shapes
+    group = shapes.add_group_shape()
+    for _ in range(17):
+        group = group.shapes.add_group_shape()
+    box = group.shapes.add_textbox(0, 0, 914400, 914400)
+    box.text_frame.paragraphs[0].add_run().text = "too deep"
+    with pytest.raises(UnsupportedStructureError, match="nested"):
+        inspect_text(prs.slides[0])
+
+
+def test_effective_font_resolves_runs_inside_groups():
+    prs = _open("self_generated/nested_groups.pptx")
+    group = next(s for s in prs.slides[0].shapes if s.name == "group_level1")
+    for name in ("group_level2", "group_level3"):
+        group = next(s for s in group.shapes if s.name == name)
+    box = next(s for s in group.shapes if s.name == "level3_box")
+    info = box.text_frame.paragraphs[0].runs[0].effective_font()
+    assert info.size.resolved is True
+
+
 def test_content_hash_is_pinned_sha256_nfc_prefix():
     assert content_hash("Branded Title") == (
         hashlib.sha256("Branded Title".encode("utf-8")).hexdigest()[:8]

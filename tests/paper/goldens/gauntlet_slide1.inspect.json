@@ -1,7 +1,8 @@
 {
   "schema": "paper-text-inspection",
-  "version": 1,
+  "version": 2,
   "part": "/ppt/slides/slide1.xml",
+  "blind_region_count": 0,
   "blocks": [
     {
       "anchor": {
@@ -12,6 +13,9 @@
       "shape_id": 2,
       "shape_name": "Title 1",
       "placeholder_type": "TITLE",
+      "container": "shape",
+      "container_detail": null,
+      "blind": false,
       "level": 0,
       "text": "Gauntlet: branded",
       "runs": [
@@ -168,6 +172,9 @@
       "shape_id": 3,
       "shape_name": "Content Placeholder 2",
       "placeholder_type": "OBJECT",
+      "container": "shape",
+      "container_detail": null,
+      "blind": false,
       "level": 0,
       "text": "Inherited body level one",
       "runs": [
@@ -330,6 +337,9 @@
       "shape_id": 3,
       "shape_name": "Content Placeholder 2",
       "placeholder_type": "OBJECT",
+      "container": "shape",
+      "container_detail": null,
+      "blind": false,
       "level": 1,
       "text": "Inherited body level two",
       "runs": [
