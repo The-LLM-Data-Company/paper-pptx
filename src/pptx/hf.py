@@ -72,9 +72,11 @@ def apply_presentation_footers(
     if not isinstance(skip_title_slides, bool):
         raise ValueError("skip_title_slides must be True or False")
 
+    from pptx.errors import materialize_slides
+
     first_number = _first_slide_number(prs)
     plans: "List[Tuple[Slide, int, bool]]" = []
-    for index, slide in enumerate(prs.slides):
+    for index, slide in enumerate(materialize_slides(prs, "apply_footers")):
         is_title = slide.slide_layout._element.get("type") == "title"
         all_off = skip_title_slides and is_title
         plans.append((slide, first_number + index, all_off))

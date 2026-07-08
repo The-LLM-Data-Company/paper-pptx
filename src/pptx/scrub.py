@@ -122,6 +122,10 @@ def scrub_presentation(
         if not isinstance(value, bool):
             raise ValueError("%s must be True or False, got %r" % (name, value))
 
+    from pptx.errors import materialize_slides
+
+    materialize_slides(prs, "scrub")  # -- typed refusal on a broken relationship graph
+
     package = prs.part.package
     before_parts: "Dict[str, object]" = {
         str(part.partname): part for part in package.iter_parts()

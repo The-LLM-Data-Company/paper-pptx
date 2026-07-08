@@ -148,11 +148,13 @@ def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
         raise ValueError(
             "detail must be one of %s, got %r" % (", ".join(_DETAIL_LEVELS), detail)
         )
+    from pptx.errors import materialize_slides
+
     prs_a = Presentation(path_a)
     prs_b = Presentation(path_b)
 
-    order_a = [(slide.slide_id, slide) for slide in prs_a.slides]
-    order_b = [(slide.slide_id, slide) for slide in prs_b.slides]
+    order_a = [(slide.slide_id, slide) for slide in materialize_slides(prs_a, "diff_decks")]
+    order_b = [(slide.slide_id, slide) for slide in materialize_slides(prs_b, "diff_decks")]
     ids_a = [slide_id for slide_id, _ in order_a]
     ids_b = [slide_id for slide_id, _ in order_b]
     position_a = {slide_id: index for index, (slide_id, _) in enumerate(order_a)}

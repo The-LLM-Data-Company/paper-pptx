@@ -54,3 +54,21 @@ class BoundaryViolationError(PaperRefusal):
 
 class RelationshipPolicyError(PaperRefusal):
     """The relationship graph cannot be honored under the requested policy."""
+
+
+def materialize_slides(prs, operation: str):
+    """Return `list(prs.slides)`, refusing typed when the relationship graph is broken.
+
+    paper-pptx internal helper (v0.11). Paper organs traverse the whole deck up front;
+    corrupt input (a `p:sldId` referencing a missing relationship) must speak from those
+    APIs as a typed, specific refusal - never a raw traceback. Upstream loader and
+    traversal behavior on such files is unchanged (the additive contract): only the
+    paper entry points route through this guard.
+    """
+    try:
+        return list(prs.slides)
+    except KeyError as exc:
+        raise UnsupportedStructureError(
+            "%s refused: the presentation's relationship graph is broken (%s); repair "
+            "the package before operating on it" % (operation, exc)
+        ) from exc

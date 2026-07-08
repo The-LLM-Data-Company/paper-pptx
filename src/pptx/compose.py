@@ -191,6 +191,10 @@ def _validate_arguments(
             "source_prs is this same presentation; same-package duplication is "
             "Slides.clone's job"
         )
+    from pptx.errors import materialize_slides
+
+    materialize_slides(source_prs, "import_slide")  # -- typed refusal on broken source
+    materialize_slides(dest_prs, "import_slide")
     if isinstance(slide, bool) or not isinstance(slide, (int, _Slide)):
         raise ValueError("slide must be a Slide or int index, got %r" % (slide,))
     if isinstance(slide, int):

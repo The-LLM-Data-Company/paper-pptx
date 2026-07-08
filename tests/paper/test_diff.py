@@ -191,3 +191,23 @@ def test_unnamed_shape_fallback_keys_are_deterministic():
         report = diff_decks(_path("self_generated/minimal_clean.pptx"), str(out))
     change = report.slide_changes[0]
     assert set(change.shapes_added) == {"sp#2", "sp#3"}  # -- synthetic keys, stable
+
+
+# ------------------------------------------------------------------ typed refusals on bad input
+
+
+def test_corrupt_input_speaks_as_typed_refusal():
+    """Plan §Prohibitions: bad input produces typed, specific refusals from the v0.11
+    organs - never raw tracebacks. (Upstream loader behavior is unchanged, additively.)"""
+    from pptx.errors import UnsupportedStructureError
+
+    corrupt = _path("self_generated/corrupt_dangling_sldid.pptx")
+    with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
+        diff_decks(corrupt, corrupt)
+    with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
+        Presentation(corrupt).scrub(notes=True)
+    with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
+        Presentation(corrupt).apply_footers(slide_number=True)
+    dest = Presentation(_path("self_generated/template_alpha.pptx"))
+    with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
+        dest.import_slide(Presentation(corrupt), 0, mode="bake")
