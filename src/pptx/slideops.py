@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from pptx.parts.slide import SlidePart
 
 _R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 #: Microsoft chart-style extension parts (LibreOffice and recent PowerPoint emit these)
 _CHART_COLOR_STYLE = "http://schemas.microsoft.com/office/2011/relationships/chartColorStyle"
 _CHART_STYLE = "http://schemas.microsoft.com/office/2011/relationships/chartStyle"
@@ -84,6 +86,47 @@ def clone_slide_part(source_part: "SlidePart", policy) -> "SlidePart":
 
     _rewrite_r_references(new_part._element, rId_mapping)
     return new_part
+
+
+def remove_slide_from_id_lists(presentation_elm, slide_id: int, rId: str) -> None:
+    """Purge `slide_id`/`rId` bookkeeping for a deleted slide from auxiliary ID lists.
+
+    Sections (`p14:sectionLst`, in the presentation's extension list) reference slides by
+    slide id; custom shows (`p:custShowLst`) reference them by relationship id. Neither is
+    reachable through the relationship graph, so without this step a delete leaves dangling
+    entries behind — the corruption class PLAN-v0.1 Phase 0.1 closes. Empty sections and
+    empty custom-show slide lists are schema-valid and left in place (matching PowerPoint,
+    which keeps an emptied section).
+    """
+    slide_id_str = str(slide_id)
+    for section_sldId in presentation_elm.findall(
+        ".//{%s}sectionLst//{%s}sldId" % (_P14_NS, _P14_NS)
+    ):
+        if section_sldId.get("id") == slide_id_str:
+            section_sldId.getparent().remove(section_sldId)
+    for show_sld in presentation_elm.findall(
+        ".//{%s}custShowLst//{%s}sld" % (_P_NS, _P_NS)
+    ):
+        if show_sld.get("{%s}id" % _R_NS) == rId:
+            show_sld.getparent().remove(show_sld)
+
+
+def enroll_clone_in_section(presentation_elm, source_slide_id: int, clone_slide_id: int) -> None:
+    """Add `clone_slide_id` to the section holding `source_slide_id`, directly after it.
+
+    No-op when the deck has no sections or the source slide is not enrolled in one. Custom
+    shows are deliberately NOT extended: a copy is not part of a curated show.
+    """
+    source_id_str = str(source_slide_id)
+    for section_sldId in presentation_elm.findall(
+        ".//{%s}sectionLst//{%s}sldId" % (_P14_NS, _P14_NS)
+    ):
+        if section_sldId.get("id") == source_id_str:
+            clone_entry = section_sldId.makeelement(
+                "{%s}sldId" % _P14_NS, {"id": str(clone_slide_id)}
+            )
+            section_sldId.addnext(clone_entry)
+            return
 
 
 def _allocate_partname(package, template: str, allocated: "set") -> PackURI:

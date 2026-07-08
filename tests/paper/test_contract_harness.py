@@ -27,6 +27,7 @@ from .contract import (
     save_to_bytes,
     zip_member_map,
 )
+from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
 from .lo import lo_load_smoke, soffice_path
 from .relint import dangling_relationship_targets, missing_relationship_references
 
@@ -297,6 +298,54 @@ def test_relint_reports_a_target_less_relationship_instead_of_crashing():
     assert dangling_relationship_targets(zip_map) == [
         ("ppt/slides/_rels/slide1.xml.rels", "rId1", "<missing Target attribute>")
     ]
+
+
+def test_idlists_detects_a_dangling_section_slide_id():
+    p = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    zip_map = {
+        "ppt/presentation.xml": (
+            '<p:presentation xmlns:p="%s" xmlns:p14="%s">'
+            '<p:sldIdLst><p:sldId id="256"/></p:sldIdLst>'
+            '<p:extLst><p:ext uri="{521415D9-36F7-43E2-AB2F-B90AF26B5E84}">'
+            '<p14:sectionLst><p14:section name="Ghost" id="{00000000-0000-4000-8000-000000000000}">'
+            '<p14:sldIdLst><p14:sldId id="999"/><p14:sldId id="256"/></p14:sldIdLst>'
+            "</p14:section></p14:sectionLst></p:ext></p:extLst></p:presentation>" % (p, p14)
+        ).encode(),
+    }
+    assert dangling_section_slide_ids(zip_map) == [("Ghost", "999")]
+    assert duplicate_section_slide_ids(zip_map) == []
+
+
+def test_idlists_detects_an_id_enrolled_in_two_sections():
+    p = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    section = (
+        '<p14:section name="%s" id="%s"><p14:sldIdLst><p14:sldId id="256"/></p14:sldIdLst>'
+        "</p14:section>"
+    )
+    zip_map = {
+        "ppt/presentation.xml": (
+            '<p:presentation xmlns:p="%s" xmlns:p14="%s">'
+            '<p:sldIdLst><p:sldId id="256"/></p:sldIdLst>'
+            '<p:extLst><p:ext uri="u"><p14:sectionLst>%s%s</p14:sectionLst></p:ext></p:extLst>'
+            "</p:presentation>"
+            % (
+                p,
+                p14,
+                section % ("A", "{11111111-1111-4111-8111-111111111111}"),
+                section % ("B", "{22222222-2222-4222-8222-222222222222}"),
+            )
+        ).encode(),
+    }
+    assert duplicate_section_slide_ids(zip_map) == ["256"]
+
+
+def test_idlists_pass_on_sectionless_and_presentationless_maps():
+    assert dangling_section_slide_ids({"x.xml": b"<x/>"}) == []
+    minimal = zip_member_map(corpus.fixture_path(MINIMAL).read_bytes())
+    assert dangling_section_slide_ids(minimal) == []
+    assert duplicate_section_slide_ids(minimal) == []
 
 
 # ------------------------------------------------------------------- corpus utility guards

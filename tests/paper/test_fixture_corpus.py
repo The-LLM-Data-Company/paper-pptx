@@ -15,6 +15,7 @@ from pptx import Presentation
 
 from . import corpus
 from .contract import save_reopen, zip_member_map
+from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
 from .lo import lo_load_smoke
 from .relint import dangling_relationship_targets, missing_relationship_references
 
@@ -114,6 +115,8 @@ def test_noncorrupt_fixture_has_relationship_integrity(relpath):
     zip_map = zip_member_map(corpus.fixture_path(relpath).read_bytes())
     assert dangling_relationship_targets(zip_map) == []
     assert missing_relationship_references(zip_map) == []
+    assert dangling_section_slide_ids(zip_map) == []
+    assert duplicate_section_slide_ids(zip_map) == []
 
 
 def test_corrupt_fixture_missing_reference_is_detected():

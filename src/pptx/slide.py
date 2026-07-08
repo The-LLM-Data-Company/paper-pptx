@@ -395,7 +395,7 @@ class Slides(ParentedElementProxy):
         `source`/`after` accept a |Slide| or a 0-based index; a |Slide| from another
         presentation raises |TargetNotFoundError|.
         """
-        from pptx.slideops import clone_slide_part
+        from pptx.slideops import clone_slide_part, enroll_clone_in_section
 
         if policy is None:
             policy = SlideClonePolicy()
@@ -405,12 +405,16 @@ class Slides(ParentedElementProxy):
         anchor_slide = source_slide if after is None else self._resolve_slide(after)
         anchor_index = self.index(anchor_slide)
 
+        source_slide_id = source_slide.slide_id
         new_part = clone_slide_part(source_slide.part, policy)
         rId = self.part.relate_to(new_part, RT.SLIDE)
         self._sldIdLst.add_sldId(rId)
         sldId = self._sldIdLst[-1]
         self._sldIdLst.remove(sldId)
         self._sldIdLst.insert(anchor_index + 1, sldId)
+        # -- enroll the copy in the source's section, right after it (custom shows are
+        # -- deliberately not extended: a copy is not part of a curated show)
+        enroll_clone_in_section(self._sldIdLst.getparent(), source_slide_id, sldId.id)
         return new_part.slide
 
     def delete(self, slide: Slide | int) -> None:
@@ -421,12 +425,17 @@ class Slides(ParentedElementProxy):
         graph (the slide, and e.g. its charts and notes if unshared) are never serialized
         again — orphans structurally cannot reach disk. Deleting the last slide is allowed.
         """
+        from pptx.slideops import remove_slide_from_id_lists
+
         target = self._resolve_slide(slide)
         for sldId in self._sldIdLst.sldId_lst:
             if sldId.id == target.slide_id:
-                rId = sldId.rId
+                slide_id, rId = sldId.id, sldId.rId
                 self._sldIdLst.remove(sldId)
                 self.part.drop_rel(rId)
+                # -- sections (by slide id) and custom shows (by rId) reference slides
+                # -- outside the rels graph; purge those entries too (PLAN-v0.1 0.1)
+                remove_slide_from_id_lists(self._sldIdLst.getparent(), slide_id, rId)
                 return
 
     def move(self, slide: Slide | int, to_index: int) -> None:
