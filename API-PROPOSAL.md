@@ -1,0 +1,429 @@
+# API Proposal (PR-0) — paper-pptx v0 organs
+
+Per CONVENTIONS §8: exact signatures, return types, refusal conditions, and usage examples for
+every planned v0 organ, grounded in the actual upstream code (see `ARCHITECTURE-NOTES.md` for
+the grounding evidence). Implementation follows this document; if implementation contradicts an
+approved signature, this document is amended in the same commit — never silently.
+
+Conventions that apply to everything below (CONVENTIONS §2): options after the primary
+positional are keyword-only; new capability is new names (no existing name changes behavior);
+inspection results are typed objects with `.to_dict()` emitting snake_case keys, deterministic
+key order, a top-level `"schema"` string and integer `"version"`; lengths are EMU ints (with
+`*_pt` convenience floats alongside); indices are 0-based.
+
+---
+
+## 0. Cross-cutting: `pptx.errors` (ships with Phase 2, used by all)
+
+New module `src/pptx/errors.py` — the pinned name is free (`pptx.exc` exists but `errors` has
+no collision; verified Phase 0).
+
+```python
+class PaperRefusal(Exception):
+    """Base for all safe refusals: the document (in memory and on disk) is untouched."""
+
+class AmbiguousTargetError(PaperRefusal): ...      # addressing matched more than one target
+class TargetNotFoundError(PaperRefusal): ...       # addressing matched nothing
+class UnsupportedStructureError(PaperRefusal): ... # document structure the API won't touch safely
+class BoundaryViolationError(PaperRefusal): ...    # operation would cross a stated boundary
+class RelationshipPolicyError(PaperRefusal): ...   # relationship graph can't be honored safely
+```
+
+Programmer errors (bad argument types/values) remain `TypeError`/`ValueError`. Every mutating
+organ is structured validate-fully-then-mutate; every documented refusal gets a
+refusal-atomicity test via `tests/paper/contract.py`.
+
+## 0b. Cross-cutting: anchors (ships with Phase 4)
+
+Pinned anchor shape (§2) applied to pptx: **part identifier** = partname string
+(`"/ppt/slides/slide2.xml"`), **block index** = 0-based position of the paragraph block in the
+part's inspection order (shapes in spTree order, paragraphs in document order), **content_hash**
+= first 8 hex chars of SHA-256 of the block's text after Unicode NFC normalization — no
+whitespace trimming ever (whitespace is content, §3).
+
+```python
+@dataclass(frozen=True)
+class BlockAnchor:
+    part: str
+    block_index: int
+    content_hash: str
+    def to_dict(self) -> dict  # {"part": ..., "block_index": ..., "content_hash": ...}
+```
+
+Raw indices alone are never public anchors; the hash detects staleness.
+
+---
+
+## 1. Phase 2 — Bullets: `paragraph.bullet`
+
+**oxml (all additive):** descriptors on `CT_TextParagraphProperties` — `eg_bullet =
+ZeroOrOneChoice(Choice("a:buNone"), Choice("a:buAutoNum"), Choice("a:buChar"))` with
+successors from the existing `_tag_seq`; `buFont` (`a:buFont`, reuses `CT_TextFont`),
+`buSzPct`; `marL`/`indent` `OptionalAttribute`s with new simpletypes `ST_TextMargin`,
+`ST_TextIndent`. New element classes `CT_TextCharBullet` (`char` required),
+`CT_TextAutonumberBullet` (`type` required — new simpletype `ST_TextAutonumberScheme` with the
+full ECMA-376 token set; `startAt` optional), `CT_TextBulletSizePercent`, `CT_TextNoBullet`;
+registered in `pptx.oxml.__init__`. `a:buBlip` is recognized on read, never written.
+
+**Proxy:** `_Paragraph.bullet` (lazyproperty) → `BulletFormat` in `pptx/text/bullet.py`.
+Reads report **local `a:pPr` state only** — `None` means "nothing local; rendering inherits
+from the list-style chain" (effective bullet reporting is Phase 4+ territory).
+
+```python
+class BulletFormat:
+    @property
+    def type(self) -> PP_BULLET_TYPE | None: ...   # NONE | CHARACTER | NUMBERED | PICTURE | None
+    @property
+    def char(self) -> str | None: ...              # a:buChar/@char
+    @property
+    def number_scheme(self) -> str | None: ...     # a:buAutoNum/@type token, e.g. "arabicPeriod"
+    @property
+    def start_at(self) -> int | None: ...          # a:buAutoNum/@startAt
+    @property
+    def font_name(self) -> str | None: ...         # a:buFont/@typeface
+    @property
+    def size_percent(self) -> float | None: ...    # a:buSzPct as fraction, e.g. 0.75
+
+    def set_character(self, char: str = "•", *,
+                      font_name: str | None = None,
+                      size_percent: float | None = None,
+                      left_margin: Length | None = Emu(342900),
+                      hanging_indent: Length | None = Emu(171450)) -> None: ...
+    def set_numbered(self, scheme: str = "arabicPeriod", *,
+                     start_at: int = 1,
+                     font_name: str | None = None,
+                     size_percent: float | None = None,
+                     left_margin: Length | None = Emu(342900),
+                     hanging_indent: Length | None = Emu(171450)) -> None: ...
+    def set_none(self) -> None: ...                # writes a:buNone; margins untouched
+```
+
+`PP_BULLET_TYPE` is a new enum in `pptx.enum.text` (NONE, CHARACTER, NUMBERED, PICTURE).
+Margin defaults mined from the battle-tested reference (`bullet_xml.py`: marL 342900 EMU,
+indent −hanging 171450 EMU); `left_margin=None`/`hanging_indent=None` mean "leave the existing
+attribute alone". Setters replace any existing bullet-choice element via the descriptor
+mechanism (never hand-ordered XML).
+
+**Refusals:** none — invalid `scheme` tokens, non-str `char`, `start_at < 1`,
+`size_percent` outside (0.25, 4.0] are `ValueError`. Post-conditions (tests): extracted text
+contains no fake `"- "`/glyph prefixes; emitted `a:pPr` fragment schema-validates (first
+fragment oracle, CONVENTIONS §4).
+
+```python
+para = shape.text_frame.paragraphs[0]
+para.bullet.set_character()                      # classic • bullet, hanging indent
+para.bullet.set_numbered("arabicParenR", start_at=3)
+para.bullet.set_none()                           # explicit "no bullet", beats inherited one
+assert para.bullet.type == PP_BULLET_TYPE.NONE
+```
+
+## 2. Phase 3 — Autofit (extend `TextFrame`, no parallel API)
+
+**oxml:** add `lnSpcReduction` `OptionalAttribute` to `CT_TextNormalAutofit` (default 0.0,
+same percent simpletype family as the existing `fontScale`).
+
+**Proxy — additive members on `TextFrame`:**
+
+```python
+@property
+def font_scale(self) -> float | None: ...            # 62.5 for fontScale="62500"; None unless normAutofit
+@property
+def line_space_reduction(self) -> float | None: ...  # 20.0 for lnSpcReduction="20000"; None unless normAutofit
+def normalize_autofit(self, *, min_font_size: Length | None = None) -> None: ...
+```
+
+`auto_size` keeps its exact upstream behavior. `normalize_autofit` freezes what the reader
+sees, then sets `a:noAutofit`:
+
+- `normAutofit(fontScale=S)`: every run's explicit size is multiplied by S/100 and written
+  explicitly. Validate-first: if S ≠ 100 and **any run in the frame lacks an explicit size**
+  (run `rPr` or its paragraph `defRPr`), raise `UnsupportedStructureError` naming the shape and
+  paragraph — v0 will not guess inherited sizes (the reference helper's floor-everything
+  behavior is explicitly *not* reproduced; it can shrink inherited text).
+- `normAutofit(lnSpcReduction=R, R ≠ 0)`: paragraphs with explicit percent line spacing get it
+  multiplied by (100−R)/100; if any paragraph lacks explicit line spacing, refuse
+  (`UnsupportedStructureError`) rather than assume 100%.
+- `spAutoFit` / `noAutofit` / unspecified: no size rewriting; element set to `a:noAutofit`
+  (no-op if already).
+- `min_font_size`: applied after freezing; any **explicit** run size below the floor is raised
+  to it. Never touches runs that (legitimately, S == 100) remain inherited.
+
+All-or-nothing: the full validation pass completes before the first write (refusal-atomicity
+tested on the `autofit_normal` fixture with sizes removed).
+
+```python
+tf = shape.text_frame
+if tf.auto_size == MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE and tf.font_scale != 100.0:
+    tf.normalize_autofit(min_font_size=Pt(11))
+```
+
+## 3. Phase 4 — Effective-style inspection (read-only, provenance-bearing)
+
+**oxml (additive):** `CT_SlideMaster.txStyles` descriptor + element classes for `p:txStyles`
+and `a:lstStyle`; presentation-level `p:defaultTextStyle` descriptor. The theme part stays an
+unregistered blob part (re-registering would re-serialize theme XML on save — §1.1 risk);
+Phase 4 parses `theme_part.blob` read-only.
+
+**API:** new module `pptx/inspect.py` plus one additive method on `_Run`:
+
+```python
+# pptx/inspect.py
+@dataclass(frozen=True)
+class ProvenanceStep:
+    level: str                 # e.g. "run", "layout-placeholder lstStyle lvl1", "theme majorFont"
+    part: str | None           # partname consulted, None for in-part levels
+    detail: str                # what was looked at / found
+    supplied: bool             # True on the step that supplied the value
+    def to_dict(self) -> dict
+
+@dataclass(frozen=True)
+class EffectiveValue:
+    value: object | None       # int EMU for sizes; str for names; "RRGGBB" for colors
+    value_pt: float | None     # convenience, sizes only, never instead of EMU
+    resolved: bool             # False = honest "unresolved", value is None
+    provenance: tuple[ProvenanceStep, ...]
+    def to_dict(self) -> dict
+
+@dataclass(frozen=True)
+class EffectiveFont:
+    size: EffectiveValue
+    name: EffectiveValue
+    color_rgb: EffectiveValue  # color transforms (lumMod etc.) are recorded in provenance,
+                               # value is the base resolved RGB; resolved stays True
+    def to_dict(self) -> dict
+
+def effective_font(run: _Run) -> EffectiveFont: ...
+def inspect_text(slide: Slide) -> TextInspection: ...
+
+@dataclass(frozen=True)
+class TextInspection:            # schema "paper-text-inspection", version 1
+    blocks: tuple[TextBlock, ...] # per paragraph: BlockAnchor, shape id/name, level,
+                                  # runs with text + EffectiveFont
+    def to_dict(self) -> dict     # deterministic; byte-identical across runs (golden-tested)
+```
+
+Convenience: `_Run.effective_font()` → `pptx.inspect.effective_font(self)`.
+
+**Pinned resolution walk** (each consulted level appended to provenance):
+run `rPr` → paragraph `pPr/defRPr` → shape `txBody` `lstStyle` `lvl{N}pPr` → (placeholders)
+layout placeholder `lstStyle` (match `idx`, fallback `type`) → master placeholder `lstStyle`
+(match `type`) → master `p:txStyles` (titleStyle for title/ctrTitle; bodyStyle for
+body/subtitle/object &c.; otherStyle) → presentation `p:defaultTextStyle` (non-placeholder
+shapes) → theme (font `+mj-lt`/`+mn-lt` → fontScheme; explicit theme font references). Colors:
+`srgbClr` direct; `schemeClr` through slide `clrMapOvr` → master `clrMap` → theme `clrScheme`
+(`sysClr` uses `lastClr`). Anything genuinely not covered → `resolved=False`, documented —
+never a guessed default.
+
+**Refusals:** none (read-only never mutates; a part that fails to parse raises
+`UnsupportedStructureError` naming the part). Tests: sidecar-driven against
+`branded_template`/`clrmap_remap` (+ LO variants), determinism goldens on `inspect_text` JSON.
+
+```python
+info = run.effective_font()
+assert info.size.value_pt == 26.0
+print([s.level for s in info.size.provenance if s.supplied])  # ["master bodyStyle lvl1"]
+```
+
+## 4. Phase 5 — Package kernel (`pptx.package`)
+
+**Pinned-shape flag (per §8):** `pptx/package.py` already exists upstream (holds
+`Package(OpcPackage)`), so §7's "*new* submodule named `package`" cannot be literally true.
+Resolution adopted here: **extend the existing `pptx.package` module additively** — module-level
+functions, no existing name touched or shadowed. This honors the pinned import path
+(`from pptx.package import patch_save`); recorded in PAPER.md.
+
+```python
+def xml_equivalent(a: bytes | str, b: bytes | str) -> bool: ...
+def diff_package(path_a: str | Path, path_b: str | Path) -> PackageDiff: ...
+def patch_save(original_path: str | Path, document: Presentation,
+               out_path: str | Path) -> PackageDiff: ...
+
+@dataclass(frozen=True)
+class PartDelta:              # one changed part
+    partname: str
+    kind: str                 # "xml" | "binary"
+    change: str               # "added" | "removed" | "changed"
+    detail: str               # sizes/hashes for binary, "semantic" for xml
+@dataclass(frozen=True)
+class PackageDiff:            # schema "paper-package-diff", version 1
+    deltas: tuple[PartDelta, ...]
+    @property
+    def is_empty(self) -> bool
+    def to_dict(self) -> dict
+```
+
+- `xml_equivalent`: lxml-parsed recursive comparison — tag, attributes (order-insensitive),
+  text and tail **byte-for-byte** (meaningful-whitespace preservation is the §7 trap test:
+  two files differing only by a trailing space inside `a:t` are NOT equivalent). Namespace
+  *prefix* spelling differences are equivalent; declaration-only differences are equivalent.
+- `diff_package`: XML parts compared with `xml_equivalent`, all other parts by bytes.
+- `patch_save`: compare-based (no opc-internals changes): save `document` to a temp buffer,
+  then write `out_path` where every part semantically identical to `original_path`'s is
+  restored to the *original bytes*. Deterministic zip: entry order = `[Content_Types].xml`,
+  `_rels/.rels`, then members sorted lexicographically; all entry timestamps fixed to
+  1980-01-01 00:00:00 (zip epoch); compression pinned to deflate. Write via temp file in the
+  destination directory + `os.replace` (failure-injection test proves a mid-write crash leaves
+  any existing `out_path` intact).
+
+**Refusals:** `patch_save` raises `UnsupportedStructureError` if `original_path` isn't a
+readable zip package; `ValueError` for a `document` that isn't a Presentation. Required tests
+pinned by §7: no-op round trip byte-identical; single-part edit budgets exactly; the trailing
+`a:t` space pair compares NOT equivalent; zip determinism; crash injection.
+
+```python
+from pptx.package import diff_package, patch_save
+prs = Presentation("deck.pptx")
+prs.slides[0].shapes.title.text_frame.paragraphs[0].runs[0].text = "New title"
+diff = patch_save("deck.pptx", prs, "out.pptx")
+assert [d.partname for d in diff.deltas] == ["/ppt/slides/slide1.xml"]
+```
+
+## 5. Phase 6 — Speaker notes (existing parts only)
+
+Additive methods on `Slide` (upstream `notes_slide` **auto-creates** the notes graph — these
+never do):
+
+```python
+def read_notes_text(self) -> str: ...
+def replace_notes_text(self, text: str) -> None: ...
+```
+
+- Both raise `UnsupportedStructureError` when the slide has no notes part
+  (`has_notes_slide` is the gate; creating a notes graph is out of v0 — PAPER.md candidate).
+- `replace_notes_text` targets the notes body placeholder only (other notes placeholders —
+  slide number, header — untouched), preserving the first run's formatting: first paragraph's
+  first run keeps its `rPr`, text replaced; additional lines become new paragraphs
+  (`\n`-separated); surplus old paragraphs in the body placeholder are removed. Validation
+  (notes part exists, body placeholder found) completes before any mutation; a notes slide
+  with no body placeholder refuses (`UnsupportedStructureError`).
+- `read_notes_text` returns the body placeholder's text (`""` if the placeholder is empty);
+  refuses only when the notes *part* is absent.
+
+```python
+if slide.has_notes_slide:
+    old = slide.read_notes_text()
+    slide.replace_notes_text(old + "\nReviewed 2026-07-07.")
+```
+
+## 6. Phase 7 — Slide operations: clone / delete / reorder
+
+Additive methods on `Slides` (rewritten in-memory against the opc package; the reference's
+unpack/clean/pack workflow is *not* ported):
+
+```python
+@dataclass(frozen=True)
+class SlideClonePolicy:
+    deep_copy_charts: bool = True      # chart parts + their embedded workbooks
+    deep_copy_notes: bool = True       # notes-slide part (False = clone has no notes)
+    share_media: bool = True           # image/media parts shared (False = deep-copy media)
+
+def clone(self, source: Slide | int, *,
+          after: Slide | int | None = None,          # default: directly after source
+          policy: SlideClonePolicy = SlideClonePolicy()) -> Slide: ...
+def delete(self, slide: Slide | int) -> None: ...
+def reorder(self, new_order: Sequence[int]) -> None: ...
+def move(self, slide: Slide | int, to_index: int) -> None: ...   # single-slide convenience
+```
+
+- **Clone** builds a new `SlidePart` (fresh partname via the add-slide machinery), deep-copies
+  the slide XML, then walks the source slide's relationships applying the policy:
+  `slideLayout` → shared; `image`/`media`/`video`/`audio` → shared (or deep-copied per policy);
+  `chart` → deep-copied **including its embedded workbook part**; `notesSlide` → deep-copied
+  and re-related to the clone (and to the notes master); external rels (hyperlinks) → copied.
+  Any other relationship type on the slide (OLE objects, ActiveX controls, SmartArt diagram
+  parts, comments…) → **`RelationshipPolicyError`** naming the types, before anything mutates.
+  New `sldId` inserted; nothing else in `sldIdLst` moves.
+- **Delete** validates membership, removes the `p:sldId`, drops the presentation→slide rel;
+  orphaned parts never reach disk by construction (iter_parts walks rels). Deleting the last
+  slide is allowed (a zero-slide deck is valid). A slide referenced by another slide's rels is
+  still deletable — the global dangling-reference scan in the tests is the guard.
+- **Reorder** validates `new_order` is an exact permutation of `range(len(slides))`
+  (`ValueError` otherwise), then permutes `sldIdLst` in one pass.
+- Addressing: `Slide | int` (0-based index); a `Slide` not in this presentation →
+  `TargetNotFoundError`.
+
+Required tests (pinned by plan): cross-contamination (mutate clone's chart data → original
+chart XML byte-identical), global dangling-id scan after delete, notes neither dropped nor
+cross-linked, exact changed-part budgets, LO smoke on every output.
+
+```python
+copy = prs.slides.clone(0)                                  # after slide 0, full deep policy
+bare = prs.slides.clone(0, policy=SlideClonePolicy(deep_copy_notes=False))
+prs.slides.delete(3)
+prs.slides.reorder([2, 0, 1])
+```
+
+## 7. Phase 8 — Image replacement (geometry-preserving)
+
+Additive method on `Picture`:
+
+```python
+def replace_image(self, image_file: str | IO[bytes]) -> None: ...
+```
+
+- Position, size, rotation, and crop (`a:srcRect`) are **not touched** — only the
+  `a:blip/@r:embed` target changes (plus part bookkeeping).
+- New image bytes' detected format must match the existing image part's extension
+  (case-insensitive; jpg==jpeg): mismatch → `UnsupportedStructureError` (content-type
+  rewriting is out of v0, per the reference's refusal).
+- Image part obtained via the package's existing dedup (`get_or_add_image_part`); the old
+  relationship is dropped when this picture held the last reference (orphan never serialized).
+  A picture whose `blipFill` has no `r:embed` (e.g. linked-only image) refuses
+  (`UnsupportedStructureError`).
+- The reference's low-res / natural-size math becomes test assertions only, not public API.
+
+```python
+pic = slide.shapes["product_photo"]      # (existing addressing)
+pic.replace_image("new_photo.png")       # same box, same crop, new pixels
+```
+
+## 8. Phase 9 — Chart data (route, don't build)
+
+Additive addressing on `SlideShapes` + safe routing on `Chart` (never touches
+`chart/xmlwriter.py`):
+
+```python
+# SlideShapes
+def chart_by_name(self, name: str) -> Chart: ...
+#   no shape with that name        -> TargetNotFoundError
+#   shape exists but has no chart  -> TargetNotFoundError (message says what it found)
+#   two+ chart shapes share name   -> AmbiguousTargetError
+
+# Chart
+def replace_data_safe(self, categories: Sequence[str],
+                      series: Sequence[tuple[str, Sequence[float | int | None]]], *,
+                      number_format: str | None = None) -> None: ...
+```
+
+`replace_data_safe` validates fully, then routes to upstream `Chart.replace_data` with a
+`CategoryChartData`: chart type must be a category chart exercised by the reference
+(bar/column/line and their stacked variants, pie, doughnut, area) — XY/bubble/stock/surface,
+multi-plot charts, and charts without an embedded workbook → `UnsupportedStructureError`
+naming the chart type. Data-shape problems (empty categories, length mismatch, non-numeric
+values, duplicate series names) are `ValueError` (programmer error). Refusal atomicity: all
+validation precedes the first XML write.
+
+```python
+chart = slide.shapes.chart_by_name("q3_revenue")
+chart.replace_data_safe(["East", "West"], [("Q3", (12.5, 9.1)), ("Q4", (14.0, 11.2))])
+```
+
+---
+
+## Pinned-shape confirmations (§8 checklist)
+
+- **§2 exceptions** — fit as specified; `pptx.errors` name free. ✔
+- **§2 anchors** — fit; pptx mapping pinned above (partname + paragraph block index + NFC
+  text hash). ✔
+- **§4 sidecar schema** — already implemented verbatim in Phase 1; fits. ✔
+- **§7 kernel** — fits **with one flag**: `pptx.package` already exists upstream; resolution =
+  additive extension of the existing module (details in Phase 5 section). ✔ (flagged)
+- **Injectable clock** — no v0 organ stamps dates (tracked edits are a docx concern; pptx v0
+  has none), so no organ takes `tracked`/`author`/`date` kwargs yet. The clock utility and the
+  §2 kwarg shapes stand ready for the first date-stamping organ; nothing to wire in v0. ✔
+
+## Stub tests
+
+`tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,
+`xfail(strict=True)` until its phase lands — flipping to pass exactly when implemented, and
+failing loudly if an implemented signature drifts from the proposal without amending it here.
