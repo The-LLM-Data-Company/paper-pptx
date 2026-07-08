@@ -1,0 +1,119 @@
+{
+  "schema": "paper-deck-manifest",
+  "version": 1,
+  "slide_width": 9144000,
+  "slide_height": 6858000,
+  "slide_count": 1,
+  "slides": [
+    {
+      "part": "/ppt/slides/slide1.xml",
+      "slide_id": 256,
+      "layout_name": "Blank",
+      "has_notes": false,
+      "shapes": [
+        {
+          "shape_id": 2,
+          "name": "top_level_box",
+          "kind": "TEXT_BOX",
+          "z_index": 0,
+          "placeholder_type": null,
+          "x": 457200,
+          "y": 457200,
+          "cx": 2743200,
+          "cy": 731520,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": {
+            "mode": "SHAPE_TO_FIT_TEXT",
+            "font_scale": null,
+            "line_space_reduction": null
+          },
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 3,
+          "name": "outer_group",
+          "kind": "GROUP",
+          "z_index": 1,
+          "placeholder_type": null,
+          "x": 914400,
+          "y": 1828800,
+          "cx": 2743200,
+          "cy": 731520,
+          "rotation": 0.0,
+          "text_block_count": 0,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": [
+            {
+              "shape_id": 4,
+              "name": "in_group_box",
+              "kind": "TEXT_BOX",
+              "z_index": 0,
+              "placeholder_type": null,
+              "x": 914400,
+              "y": 1828800,
+              "cx": 2743200,
+              "cy": 731520,
+              "rotation": 0.0,
+              "text_block_count": 1,
+              "autofit": {
+                "mode": "SHAPE_TO_FIT_TEXT",
+                "font_scale": null,
+                "line_space_reduction": null
+              },
+              "table": null,
+              "chart": null,
+              "image": null,
+              "children": []
+            },
+            {
+              "shape_id": 5,
+              "name": "grouped_table",
+              "kind": "TABLE",
+              "z_index": 1,
+              "placeholder_type": null,
+              "x": 914400,
+              "y": 3200400,
+              "cx": 3657600,
+              "cy": 1371600,
+              "rotation": 0.0,
+              "text_block_count": 0,
+              "autofit": null,
+              "table": {
+                "rows": 2,
+                "cols": 2
+              },
+              "chart": null,
+              "image": null,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "masters": [
+    {
+      "part": "/ppt/slideMasters/slideMaster1.xml",
+      "layouts": [
+        "Title Slide",
+        "Title and Content",
+        "Section Header",
+        "Two Content",
+        "Comparison",
+        "Title Only",
+        "Blank",
+        "Content with Caption",
+        "Picture with Caption",
+        "Title and Vertical Text",
+        "Vertical Title and Text"
+      ]
+    }
+  ]
+}

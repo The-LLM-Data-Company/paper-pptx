@@ -1,0 +1,387 @@
+{
+  "schema": "paper-deck-manifest",
+  "version": 1,
+  "slide_width": 9144000,
+  "slide_height": 6858000,
+  "slide_count": 4,
+  "slides": [
+    {
+      "part": "/ppt/slides/slide1.xml",
+      "slide_id": 256,
+      "layout_name": "Title and Content",
+      "has_notes": false,
+      "shapes": [
+        {
+          "shape_id": 2,
+          "name": "Title 1",
+          "kind": "PLACEHOLDER",
+          "z_index": 0,
+          "placeholder_type": "TITLE",
+          "x": 457200,
+          "y": 274638,
+          "cx": 8229600,
+          "cy": 1143000,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 3,
+          "name": "Content Placeholder 2",
+          "kind": "PLACEHOLDER",
+          "z_index": 1,
+          "placeholder_type": "OBJECT",
+          "x": 457200,
+          "y": 1600200,
+          "cx": 8229600,
+          "cy": 4525963,
+          "rotation": 0.0,
+          "text_block_count": 2,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        }
+      ]
+    },
+    {
+      "part": "/ppt/slides/slide2.xml",
+      "slide_id": 257,
+      "layout_name": "Title Only",
+      "has_notes": true,
+      "shapes": [
+        {
+          "shape_id": 2,
+          "name": "Title 1",
+          "kind": "PLACEHOLDER",
+          "z_index": 0,
+          "placeholder_type": "TITLE",
+          "x": 457200,
+          "y": 274638,
+          "cx": 8229600,
+          "cy": 1143000,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 3,
+          "name": "gauntlet_chart",
+          "kind": "CHART",
+          "z_index": 1,
+          "placeholder_type": null,
+          "x": 914400,
+          "y": 1371600,
+          "cx": 4572000,
+          "cy": 3657600,
+          "rotation": 0.0,
+          "text_block_count": 0,
+          "autofit": null,
+          "table": null,
+          "chart": {
+            "chart_type": "COLUMN_CLUSTERED",
+            "series_names": [
+              "S1"
+            ]
+          },
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 4,
+          "name": "gauntlet_img_1",
+          "kind": "PICTURE",
+          "z_index": 2,
+          "placeholder_type": null,
+          "x": 6400800,
+          "y": 1828800,
+          "cx": 1828800,
+          "cy": 1828800,
+          "rotation": 0.0,
+          "text_block_count": 0,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": {
+            "ext": "png",
+            "natural_size_px": [
+              64,
+              64
+            ],
+            "displayed_size_emu": [
+              1828800,
+              1828800
+            ]
+          },
+          "children": []
+        }
+      ]
+    },
+    {
+      "part": "/ppt/slides/slide3.xml",
+      "slide_id": 258,
+      "layout_name": "Blank",
+      "has_notes": false,
+      "shapes": [
+        {
+          "shape_id": 2,
+          "name": "autofit_none_box",
+          "kind": "TEXT_BOX",
+          "z_index": 0,
+          "placeholder_type": null,
+          "x": 457200,
+          "y": 457200,
+          "cx": 2743200,
+          "cy": 1097280,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": {
+            "mode": "NONE",
+            "font_scale": null,
+            "line_space_reduction": null
+          },
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 3,
+          "name": "autofit_normal_box",
+          "kind": "TEXT_BOX",
+          "z_index": 1,
+          "placeholder_type": null,
+          "x": 457200,
+          "y": 1828800,
+          "cx": 2743200,
+          "cy": 1097280,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": {
+            "mode": "TEXT_TO_FIT_SHAPE",
+            "font_scale": 62.5,
+            "line_space_reduction": 20.0
+          },
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 4,
+          "name": "autofit_shape_box",
+          "kind": "TEXT_BOX",
+          "z_index": 2,
+          "placeholder_type": null,
+          "x": 457200,
+          "y": 3200400,
+          "cx": 2743200,
+          "cy": 1097280,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": {
+            "mode": "SHAPE_TO_FIT_TEXT",
+            "font_scale": null,
+            "line_space_reduction": null
+          },
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 5,
+          "name": "real_bullet_box",
+          "kind": "TEXT_BOX",
+          "z_index": 3,
+          "placeholder_type": null,
+          "x": 3657600,
+          "y": 457200,
+          "cx": 2743200,
+          "cy": 1371600,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": {
+            "mode": "NONE",
+            "font_scale": null,
+            "line_space_reduction": null
+          },
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 6,
+          "name": "gauntlet_table",
+          "kind": "TABLE",
+          "z_index": 4,
+          "placeholder_type": null,
+          "x": 3657600,
+          "y": 2286000,
+          "cx": 3657600,
+          "cy": 1828800,
+          "rotation": 0.0,
+          "text_block_count": 0,
+          "autofit": null,
+          "table": {
+            "rows": 3,
+            "cols": 3
+          },
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 7,
+          "name": "gauntlet_cropped",
+          "kind": "PICTURE",
+          "z_index": 5,
+          "placeholder_type": null,
+          "x": 7772400,
+          "y": 457200,
+          "cx": 1371600,
+          "cy": 1371600,
+          "rotation": 0.0,
+          "text_block_count": 0,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": {
+            "ext": "png",
+            "natural_size_px": [
+              64,
+              64
+            ],
+            "displayed_size_emu": [
+              1371600,
+              1371600
+            ]
+          },
+          "children": []
+        }
+      ]
+    },
+    {
+      "part": "/ppt/slides/slide4.xml",
+      "slide_id": 259,
+      "layout_name": "Title and Content",
+      "has_notes": false,
+      "shapes": [
+        {
+          "shape_id": 2,
+          "name": "Title 1",
+          "kind": "PLACEHOLDER",
+          "z_index": 0,
+          "placeholder_type": "TITLE",
+          "x": 457200,
+          "y": 274638,
+          "cx": 8229600,
+          "cy": 1143000,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 3,
+          "name": "Content Placeholder 2",
+          "kind": "PLACEHOLDER",
+          "z_index": 1,
+          "placeholder_type": "OBJECT",
+          "x": 457200,
+          "y": 1600200,
+          "cx": 8229600,
+          "cy": 4525963,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        },
+        {
+          "shape_id": 4,
+          "name": "gauntlet_img_2",
+          "kind": "PICTURE",
+          "z_index": 2,
+          "placeholder_type": null,
+          "x": 5486400,
+          "y": 3657600,
+          "cx": 1828800,
+          "cy": 1828800,
+          "rotation": 0.0,
+          "text_block_count": 0,
+          "autofit": null,
+          "table": null,
+          "chart": null,
+          "image": {
+            "ext": "png",
+            "natural_size_px": [
+              64,
+              64
+            ],
+            "displayed_size_emu": [
+              1828800,
+              1828800
+            ]
+          },
+          "children": []
+        },
+        {
+          "shape_id": 5,
+          "name": "hyperlink_box",
+          "kind": "TEXT_BOX",
+          "z_index": 3,
+          "placeholder_type": null,
+          "x": 914400,
+          "y": 3657600,
+          "cx": 3657600,
+          "cy": 731520,
+          "rotation": 0.0,
+          "text_block_count": 1,
+          "autofit": {
+            "mode": "NONE",
+            "font_scale": null,
+            "line_space_reduction": null
+          },
+          "table": null,
+          "chart": null,
+          "image": null,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "masters": [
+    {
+      "part": "/ppt/slideMasters/slideMaster1.xml",
+      "layouts": [
+        "Title Slide",
+        "Title and Content",
+        "Section Header",
+        "Two Content",
+        "Comparison",
+        "Title Only",
+        "Blank",
+        "Content with Caption",
+        "Picture with Caption",
+        "Title and Vertical Text",
+        "Vertical Title and Text"
+      ]
+    }
+  ]
+}

@@ -151,9 +151,17 @@ def test_walkthrough_output_loads_in_libreoffice(tmp_path):
 # walkthrough growing the real step.
 
 
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.1: structural deck manifest")
 def test_step_survey_template_with_deck_manifest():
-    from pptx.inspect import inspect_deck  # noqa: F401
+    """Phase 2.1 step (was xfail): the job starts with a structural survey, not guesswork."""
+    from pptx.inspect import inspect_deck
+
+    manifest = inspect_deck(Presentation(str(corpus.fixture_path(GAUNTLET))))
+    assert manifest.slide_count == 4
+    chart_slides = [
+        slide.part for slide in manifest.slides
+        if any(shape.chart for shape in slide.shapes)
+    ]
+    assert chart_slides == ["/ppt/slides/slide2.xml"]
 
 
 def test_step_check_brand_accent_via_effective_shape_format():

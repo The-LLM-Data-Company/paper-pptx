@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from pptx import Presentation
-from pptx.inspect import inspect_text
+from pptx.inspect import inspect_deck, inspect_text
 
 GOLDENS_DIR = Path(__file__).resolve().parent.parent / "goldens"
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
@@ -24,6 +24,12 @@ GOLDENS = (
     ("gauntlet_slide1.inspect.json", "self_generated/gauntlet.pptx", 0),
 )
 
+#: (golden filename, fixture relpath) — whole-deck structural manifests (Phase 2.1)
+MANIFEST_GOLDENS = (
+    ("gauntlet.manifest.json", "self_generated/gauntlet.pptx"),
+    ("tables_in_group.manifest.json", "self_generated/tables_in_group.pptx"),
+)
+
 
 def golden_json(fixture_relpath: str, slide_index: int) -> str:
     """Return the canonical golden serialization for one slide's inspection."""
@@ -32,11 +38,22 @@ def golden_json(fixture_relpath: str, slide_index: int) -> str:
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
+def manifest_golden_json(fixture_relpath: str) -> str:
+    """Return the canonical golden serialization for one deck's structural manifest."""
+    prs = Presentation(str(FIXTURES_DIR / fixture_relpath))
+    payload = inspect_deck(prs).to_dict()
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+
+
 def main() -> None:
     GOLDENS_DIR.mkdir(parents=True, exist_ok=True)
     for golden_name, fixture_relpath, slide_index in GOLDENS:
         out = GOLDENS_DIR / golden_name
         out.write_text(golden_json(fixture_relpath, slide_index), encoding="utf-8")
+        print("wrote", out)
+    for golden_name, fixture_relpath in MANIFEST_GOLDENS:
+        out = GOLDENS_DIR / golden_name
+        out.write_text(manifest_golden_json(fixture_relpath), encoding="utf-8")
         print("wrote", out)
 
 

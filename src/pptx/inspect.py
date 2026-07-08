@@ -303,6 +303,221 @@ def effective_paragraph_format(paragraph) -> EffectiveParagraphFormat:
     )
 
 
+DECK_MANIFEST_SCHEMA = "paper-deck-manifest"
+DECK_MANIFEST_VERSION = 1
+
+
+@dataclass(frozen=True)
+class ShapeManifest:
+    """Structural facts of one shape (paper-pptx v0.1). Group children nest."""
+
+    shape_id: int
+    name: str
+    kind: str  #: e.g. "PICTURE", "TEXT_BOX", "PLACEHOLDER", "GROUP", "GraphicFrame"
+    z_index: int  #: position within the containing collection (0 = backmost)
+    placeholder_type: Optional[str]
+    x: Optional[int]  #: EMU; placeholder geometry is upstream-inherited; None = unresolvable
+    y: Optional[int]
+    cx: Optional[int]
+    cy: Optional[int]
+    rotation: Optional[float]
+    text_block_count: int
+    autofit: Optional[dict]  #: {"mode", "font_scale", "line_space_reduction"} or None
+    table: Optional[dict]  #: {"rows", "cols"} or None
+    chart: Optional[dict]  #: {"chart_type", "series_names"} or None
+    image: Optional[dict]  #: {"ext", "natural_size_px", "displayed_size_emu"} or None
+    children: Tuple["ShapeManifest", ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "shape_id": self.shape_id,
+            "name": self.name,
+            "kind": self.kind,
+            "z_index": self.z_index,
+            "placeholder_type": self.placeholder_type,
+            "x": self.x,
+            "y": self.y,
+            "cx": self.cx,
+            "cy": self.cy,
+            "rotation": self.rotation,
+            "text_block_count": self.text_block_count,
+            "autofit": self.autofit,
+            "table": self.table,
+            "chart": self.chart,
+            "image": self.image,
+            "children": [child.to_dict() for child in self.children],
+        }
+
+
+@dataclass(frozen=True)
+class SlideManifest:
+    """Structural facts of one slide."""
+
+    part: str
+    slide_id: int
+    layout_name: str
+    has_notes: bool
+    shapes: Tuple[ShapeManifest, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "part": self.part,
+            "slide_id": self.slide_id,
+            "layout_name": self.layout_name,
+            "has_notes": self.has_notes,
+            "shapes": [shape.to_dict() for shape in self.shapes],
+        }
+
+
+@dataclass(frozen=True)
+class DeckManifest:
+    """Structural survey of a whole deck. `.to_dict()` is deterministic (golden-tested)."""
+
+    slide_width: Optional[int]  #: EMU
+    slide_height: Optional[int]
+    slides: Tuple[SlideManifest, ...]
+    masters: Tuple[dict, ...]  #: [{"part", "layouts": [names]}]
+
+    @property
+    def slide_count(self) -> int:
+        return len(self.slides)
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": DECK_MANIFEST_SCHEMA,
+            "version": DECK_MANIFEST_VERSION,
+            "slide_width": self.slide_width,
+            "slide_height": self.slide_height,
+            "slide_count": self.slide_count,
+            "slides": [slide.to_dict() for slide in self.slides],
+            "masters": [dict(master) for master in self.masters],
+        }
+
+
+def inspect_deck(prs) -> DeckManifest:
+    """Return a structural |DeckManifest| of `prs` (paper-pptx v0.1, Phase 2.1).
+
+    The survey every brownfield edit starts with, as one deterministic typed payload:
+    per-slide shape inventory (identity, kind, z-order, geometry where explicit, placeholder
+    role, table/chart/image/autofit facts), group children nested, layout and master
+    inventory. Values that are inherited rather than explicit report None — never a guess.
+    Read-only.
+    """
+    slides = []
+    for slide in prs.slides:
+        shapes = tuple(
+            _shape_manifest(shape, z_index) for z_index, shape in enumerate(slide.shapes)
+        )
+        slides.append(
+            SlideManifest(
+                part=str(slide.part.partname),
+                slide_id=slide.slide_id,
+                layout_name=slide.slide_layout.name,
+                has_notes=slide.has_notes_slide,
+                shapes=shapes,
+            )
+        )
+    masters = tuple(
+        {
+            "part": str(master.part.partname),
+            "layouts": [layout.name for layout in master.slide_layouts],
+        }
+        for master in prs.slide_masters
+    )
+    return DeckManifest(
+        slide_width=int(prs.slide_width) if prs.slide_width is not None else None,
+        slide_height=int(prs.slide_height) if prs.slide_height is not None else None,
+        slides=tuple(slides),
+        masters=masters,
+    )
+
+
+def _shape_manifest(shape, z_index: int) -> ShapeManifest:
+    from pptx.shapes.group import GroupShape
+    from pptx.shapes.picture import Picture
+    from pptx.shapes.shapetree import _shape_kind
+
+    placeholder_type = None
+    if shape.is_placeholder:
+        ph_type = shape.placeholder_format.type
+        placeholder_type = ph_type.name if ph_type is not None else None
+
+    autofit = None
+    text_block_count = 0
+    if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
+        text_frame = shape.text_frame
+        text_block_count = len(text_frame.paragraphs)
+        mode = text_frame.auto_size
+        if mode is not None or text_frame.font_scale is not None:
+            autofit = {
+                "mode": mode.name if mode is not None else None,
+                "font_scale": text_frame.font_scale,
+                "line_space_reduction": text_frame.line_space_reduction,
+            }
+
+    table = None
+    if getattr(shape, "has_table", False) and shape.has_table:
+        tbl = shape.table
+        table = {"rows": len(tbl.rows), "cols": len(tbl.columns)}
+
+    chart = None
+    if getattr(shape, "has_chart", False) and shape.has_chart:
+        chart_obj = shape.chart
+        chart = {
+            "chart_type": chart_obj.chart_type.name,
+            "series_names": [series.name for series in chart_obj.series],
+        }
+
+    image = None
+    if isinstance(shape, Picture):
+        try:
+            img = shape.image
+            image = {
+                "ext": img.ext,
+                "natural_size_px": list(img.size),
+                "displayed_size_emu": [
+                    int(shape.width) if shape.width is not None else None,
+                    int(shape.height) if shape.height is not None else None,
+                ],
+            }
+        except (KeyError, ValueError):
+            image = {"ext": None, "natural_size_px": None, "displayed_size_emu": None}
+
+    children = ()
+    if isinstance(shape, GroupShape):
+        children = tuple(
+            _shape_manifest(child, child_index)
+            for child_index, child in enumerate(shape.shapes)
+        )
+
+    def emu_or_none(value):
+        return int(value) if value is not None else None
+
+    try:
+        rotation = float(shape.rotation)
+    except (AttributeError, NotImplementedError):
+        rotation = None
+
+    return ShapeManifest(
+        shape_id=shape.shape_id,
+        name=shape.name,
+        kind=_shape_kind(shape),
+        z_index=z_index,
+        placeholder_type=placeholder_type,
+        x=emu_or_none(shape.left),
+        y=emu_or_none(shape.top),
+        cx=emu_or_none(shape.width),
+        cy=emu_or_none(shape.height),
+        rotation=rotation,
+        text_block_count=text_block_count,
+        autofit=autofit,
+        table=table,
+        chart=chart,
+        image=image,
+        children=children,
+    )
+
+
 @dataclass(frozen=True)
 class EffectiveShapeFormat:
     """Effective solid fill and line color of one shape (paper-pptx v0.1).
