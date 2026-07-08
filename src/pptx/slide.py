@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING, Iterator, cast
 
 from pptx.dml.fill import FillFormat
 from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.errors import UnsupportedStructureError
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.oxml.ns import qn
 from pptx.shapes.shapetree import (
     LayoutPlaceholders,
     LayoutShapes,
@@ -214,6 +218,81 @@ class Slide(_BaseSlide):
     def placeholders(self) -> SlidePlaceholders:
         """Sequence of placeholder shapes in this slide."""
         return SlidePlaceholders(self._element.spTree, self)
+
+    def read_notes_text(self) -> str:
+        """Return the text of this slide's existing speaker notes.
+
+        paper-pptx addition. Unlike :attr:`notes_slide`, this NEVER creates a notes slide:
+        a slide with no notes part raises |UnsupportedStructureError| (as does a notes slide
+        with no body placeholder). Returns "" for an empty existing notes body.
+        """
+        return self._existing_notes_text_frame().text
+
+    def replace_notes_text(self, text: str) -> None:
+        """Replace the text of this slide's existing speaker notes with `text`.
+
+        paper-pptx addition. Only the notes *body* placeholder is touched — slide-number and
+        other notes placeholders are preserved untouched. The first paragraph's properties
+        and its first run's character formatting are kept and applied to the replacement
+        text; `"\\n"` in `text` starts a new paragraph. Never creates a notes slide: a slide
+        with no notes part raises |UnsupportedStructureError| before anything changes
+        (creating the notes part graph is out of v0 scope; see PAPER.md).
+        """
+        if not isinstance(text, str):
+            raise ValueError("text must be a str, got %r" % type(text).__name__)
+        text_frame = self._existing_notes_text_frame()  # -- full validation before mutation
+
+        txBody = text_frame._txBody
+        paragraphs = txBody.p_lst
+        first_p = paragraphs[0]
+        first_r = first_p.find(qn("a:r"))
+        rPr_template = None
+        if first_r is not None:
+            rPr = first_r.find(qn("a:rPr"))
+            if rPr is not None:
+                rPr_template = copy.deepcopy(rPr)
+
+        # -- keep the first a:p element (preserving its a:pPr); drop the rest --
+        for surplus_p in paragraphs[1:]:
+            txBody.remove(surplus_p)
+        for content in first_p.content_children:
+            first_p.remove(content)
+        pPr_template = first_p.find(qn("a:pPr"))
+
+        lines = text.split("\n")
+        for index, line in enumerate(lines):
+            if index == 0:
+                p = first_p
+            else:
+                p = txBody.add_p()
+                if pPr_template is not None:
+                    p.insert(0, copy.deepcopy(pPr_template))
+            if line == "":
+                continue  # -- an empty line is an empty paragraph
+            r = p.add_r()
+            if rPr_template is not None:
+                r.insert(0, copy.deepcopy(rPr_template))
+            r.text = line
+
+    def _existing_notes_text_frame(self) -> TextFrame:
+        """Return the body-placeholder text frame of this slide's EXISTING notes slide.
+
+        Raises |UnsupportedStructureError| (never creates anything) when the slide has no
+        notes part or its notes slide has no body placeholder.
+        """
+        if not self.has_notes_slide:
+            raise UnsupportedStructureError(
+                "slide %d has no notes slide; creating one is out of scope for this API"
+                " (use notes_slide if you explicitly want creation)" % self.slide_id
+            )
+        notes_slide = self.part.part_related_by(RT.NOTES_SLIDE).notes_slide
+        text_frame = notes_slide.notes_text_frame
+        if text_frame is None:
+            raise UnsupportedStructureError(
+                "notes slide of slide %d has no body placeholder to hold notes text"
+                % self.slide_id
+            )
+        return text_frame
 
     @lazyproperty
     def shapes(self) -> SlideShapes:

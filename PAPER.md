@@ -163,6 +163,20 @@ shadowed.
   residual delta is genuine (LO declares Default entries for extensions with no parts;
   regeneration from live parts drops them).
 
+## Organ: Speaker notes (Phase 6)
+
+`Slide.read_notes_text()` / `Slide.replace_notes_text(text)` — existing notes parts only.
+Reference mined: `pptx_helpers/notes_ops.py` (the refuse-when-absent rule); deliberately
+improved: the reference clobbers every `a:t` in the notes part (including slide-number
+fields), while these APIs target the notes *body* placeholder only and preserve the first
+paragraph's properties and first run's character formatting across the replacement.
+
+- Both refuse (`UnsupportedStructureError`, atomically) when the slide has no notes part —
+  unlike upstream's `notes_slide` accessor, they can never trigger notes-graph creation.
+- **Future breaking-change candidate:** creating the notes part graph (notes master
+  dependencies included) for slides without notes is out of v0; if it lands it must be a
+  new explicit API, never a change to these.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

@@ -11,14 +11,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 6 (speaker notes)")
-def test_pr0_notes_api():
-    from pptx.slide import Slide
-
-    assert callable(Slide.read_notes_text)
-    assert callable(Slide.replace_notes_text)
-
-
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 7 (slide operations)")
 def test_pr0_slide_ops_api():
     from pptx.slide import SlideClonePolicy, Slides  # noqa: F401
