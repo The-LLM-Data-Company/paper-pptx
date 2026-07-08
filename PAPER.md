@@ -312,6 +312,31 @@ so). By-name addressing generalizes `chart_by_name`'s contract: `shape_by_name`,
 `chart_by_name` is now group-aware too (it finds charts inside groups it previously
 missed; same refusal contract). Two more walkthrough steps flipped from xfail.
 
+## v0.1 Phase 2: manifest and the evidenced extensions
+
+- **2.1 `pptx.inspect.inspect_deck`** — the structural survey (per-slide shape inventory
+  with kind/z-order/geometry/placeholder role, table/chart/image/autofit facts, nested group
+  children, layout/master inventory) as a deterministic, goldened, schema-versioned payload
+  (`paper-deck-manifest` v1). Placeholder geometry reports upstream's resolved inheritance.
+- **2.2 effective-walk extension** — `EffectiveFont` gains bold/italic/underline (schema
+  defaults resolve explicitly, payload v2, goldens regenerated); new
+  `effective_paragraph_format` (alignment, line spacing) and `effective_shape_format`
+  (explicit fills resolve fully through clrMap/theme; `a:noFill` → "none"; style
+  fill/line references report unresolved with the reference color in provenance — theme
+  format-scheme modulation is not guessed).
+- **2.3 cross-format image replace** — `replace_image(allow_format_change=True)`; the
+  default remains the v0 refusal.
+- **2.4 workbook-less chart update** — `replace_data_safe` now updates
+  LibreOffice/Google-authored charts (no `c:externalData`) through the same series rewriter
+  with the workbook step skipped; previously a documented refusal, lifted deliberately (the
+  gap review's standing red test on `lo_chart_notes` now passes green).
+- **2.5 fields + header/footer flags** — `add_slide_number_field`/`add_datetime_field`
+  (real `a:fld` elements), `HeaderFooters` on layouts/masters over a new `CT_HeaderFooter`;
+  `inspect_text` recognizes fields per block while keeping their volatile display text out
+  of anchors.
+- **Wave complete:** the QBR walkthrough eval runs with zero xfails, satisfying
+  PLAN-v0.1's definition of done.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
