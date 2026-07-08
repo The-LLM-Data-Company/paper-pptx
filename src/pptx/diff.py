@@ -137,21 +137,25 @@ class DeckDiff:
 def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
     """Compare two decks; return the typed |DeckDiff|.
 
-    `detail`: "structure" (slide add/remove/move, shape add/remove, geometry, image
-    replacement), "text" (+ text-block deltas, chart data per series/category, notes),
-    "full" (+ per-run effective-value shifts via the resolver - expensive on large
-    decks, deliberately opt-in).
-    """
-    from pptx import Presentation
+    `path_a`/`path_b` accept a file path, a file-like object, or an already-open
+    |Presentation|. `detail`: "structure" (slide add/remove/move, shape add/remove,
+    geometry, image replacement), "text" (+ text-block deltas, chart data per
+    series/category, notes), "full" (+ per-run effective-value shifts via the resolver
+    - expensive on large decks, deliberately opt-in).
 
+    Matching is by permanent slide id (lineage-derived decks). One declared hazard:
+    slide ids allocate as max+1, so deleting the highest-id slide and then adding a new
+    one RECYCLES the id, and this diff will read that delete-plus-add as one edited
+    slide - order add-before-delete when producing lineage decks you intend to diff.
+    """
     if detail not in _DETAIL_LEVELS:
         raise ValueError(
             "detail must be one of %s, got %r" % (", ".join(_DETAIL_LEVELS), detail)
         )
     from pptx.errors import materialize_slides
 
-    prs_a = Presentation(path_a)
-    prs_b = Presentation(path_b)
+    prs_a = _open_deck(path_a)
+    prs_b = _open_deck(path_b)
 
     order_a = [(slide.slide_id, slide) for slide in materialize_slides(prs_a, "diff_decks")]
     order_b = [(slide.slide_id, slide) for slide in materialize_slides(prs_b, "diff_decks")]
@@ -196,6 +200,23 @@ def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
         slides_moved=slides_moved,
         slide_changes=tuple(changes),
     )
+
+
+def _open_deck(source):
+    """Return a |Presentation| for a path, stream, or Presentation, refusing typed."""
+    from pptx import Presentation
+    from pptx.errors import UnsupportedStructureError
+    from pptx.presentation import Presentation as _PresentationProxy
+
+    if isinstance(source, _PresentationProxy):
+        return source
+    try:
+        return Presentation(source)
+    except Exception as exc:
+        raise UnsupportedStructureError(
+            "diff_decks refused: %r is not a readable presentation package (%s)"
+            % (source, exc)
+        ) from exc
 
 
 # -------------------------------------------------------------------------------- matching
@@ -397,19 +418,41 @@ def _chart_data(chart):
     return categories, series
 
 
-def _diff_text(slide_a, slide_b) -> "List[dict]":
+def _text_blocks_by_stable_key(slide) -> dict:
+    """Blocks keyed (shape_id, block_ordinal-within-shape) - stable across shape
+    adds/removes elsewhere on the slide, unlike the slide-global block index (which
+    would misattribute every edit below an added or removed shape)."""
     from pptx.inspect import inspect_text
 
-    blocks_a = {block.anchor.block_index: block for block in inspect_text(slide_a).blocks}
-    blocks_b = {block.anchor.block_index: block for block in inspect_text(slide_b).blocks}
+    keyed = {}
+    block_ordinals: "Dict[int, int]" = {}
+    for block in inspect_text(slide).blocks:
+        ordinal = block_ordinals.get(block.shape_id, 0)
+        block_ordinals[block.shape_id] = ordinal + 1
+        keyed[(block.shape_id, ordinal)] = block
+    return keyed
+
+
+def _diff_text(slide_a, slide_b) -> "List[dict]":
+    blocks_a = _text_blocks_by_stable_key(slide_a)
+    blocks_b = _text_blocks_by_stable_key(slide_b)
     changes = []
-    for index in sorted(set(blocks_a) | set(blocks_b)):
-        block_a = blocks_a.get(index)
-        block_b = blocks_b.get(index)
+    for key in sorted(set(blocks_a) | set(blocks_b)):
+        block_a = blocks_a.get(key)
+        block_b = blocks_b.get(key)
         text_a = block_a.text if block_a is not None else None
         text_b = block_b.text if block_b is not None else None
         if text_a != text_b:
-            changes.append({"block_index": index, "before": text_a, "after": text_b})
+            reference = block_b if block_b is not None else block_a
+            changes.append(
+                {
+                    "shape_id": key[0],
+                    "shape_name": reference.shape_name,
+                    "block_ordinal": key[1],
+                    "before": text_a,
+                    "after": text_b,
+                }
+            )
     return changes
 
 

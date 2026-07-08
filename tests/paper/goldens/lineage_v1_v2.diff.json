@@ -35,7 +35,9 @@
       "slide_id": 256,
       "text_changes": [
         {
-          "block_index": 0,
+          "shape_id": 2,
+          "shape_name": "Title 1",
+          "block_ordinal": 0,
           "before": "Lineage slide one",
           "after": "Lineage slide one, retitled"
         }

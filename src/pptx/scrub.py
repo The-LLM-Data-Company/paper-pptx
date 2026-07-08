@@ -61,7 +61,14 @@ _CLEARED_CORE_FIELDS = (
 
 @dataclass(frozen=True)
 class ScrubReport:
-    """What one scrub actually did. Deterministic; `.to_dict()` is goldenable."""
+    """What one scrub actually did. Deterministic; `.to_dict()` is goldenable.
+
+    Two addressing conventions, deliberately: the per-category fields name OPC parts by
+    PARTNAME (leading slash, e.g. "/ppt/comments/comment1.xml") because they identify
+    document parts; `parts_removed`/`parts_modified` name ZIP MEMBERS (no leading slash,
+    including `.rels` members and `[Content_Types].xml`, which are not parts) because
+    they are the exact save-output budget a byte-level diff is held against.
+    """
 
     notes_slides_removed: Tuple[str, ...] = ()
     comment_parts_removed: Tuple[str, ...] = ()
@@ -122,9 +129,21 @@ def scrub_presentation(
         if not isinstance(value, bool):
             raise ValueError("%s must be True or False, got %r" % (name, value))
 
-    from pptx.errors import materialize_slides
+    from pptx.errors import UnsupportedStructureError, materialize_slides
 
-    materialize_slides(prs, "scrub")  # -- typed refusal on a broken relationship graph
+    slides = materialize_slides(prs, "scrub")  # -- typed refusal on a broken graph
+    if unused_layouts or unused_masters:
+        # -- the layout-usage pass resolves every slide's layout; validate that NOW so
+        # -- a broken slide->layout relationship refuses BEFORE any pass has mutated
+        # -- anything (refusal atomicity, CONVENTIONS 1.3)
+        try:
+            for slide in slides:
+                slide.slide_layout
+        except KeyError as exc:
+            raise UnsupportedStructureError(
+                "scrub refused: a slide's layout relationship is broken (%s); repair "
+                "the package before operating on it" % exc
+            ) from exc
 
     package = prs.part.package
     before_parts: "Dict[str, object]" = {
@@ -207,10 +226,11 @@ def scrub_presentation(
                 presentation_part.drop_rel(rId)
                 modified.add(_rels_member(presentation_partname))
 
-    # -- 5. unused layouts / masters (usage computed after hidden-slide removal) ----------
-    used_layout_partnames = {str(s.slide_layout.part.partname) for s in prs.slides}
+    # -- 5. unused layouts / masters (usage computed after hidden-slide removal; the
+    # -- layout resolution below was validated up front, so it cannot fail mid-scrub)
     sldMasterIdLst = prs._element.sldMasterIdLst
     if (unused_layouts or unused_masters) and sldMasterIdLst is not None:
+        used_layout_partnames = {str(s.slide_layout.part.partname) for s in prs.slides}
         for master in list(prs.slide_masters):
             master_part = master.part
             layout_rels = [
@@ -278,13 +298,22 @@ def scrub_presentation(
 
     # -- 7. metadata: core-props text fields + app/custom/thumbnail parts -----------------
     if metadata:
-        core = prs.core_properties
-        for field_name in _CLEARED_CORE_FIELDS:
-            if getattr(core, field_name):
-                setattr(core, field_name, "")
-                collected["metadata_fields_cleared"].append(field_name)
-        if collected["metadata_fields_cleared"]:
-            modified.add("docProps/core.xml")
+        # -- upstream's core_properties accessor CREATES a default part when absent;
+        # -- scrub may never create parts, so probe the relationship first
+        from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+
+        has_core_part = any(
+            not rel.is_external and rel.reltype == RT.CORE_PROPERTIES
+            for rel in package._rels.values()
+        )
+        if has_core_part:
+            core = prs.core_properties
+            for field_name in _CLEARED_CORE_FIELDS:
+                if getattr(core, field_name):
+                    setattr(core, field_name, "")
+                    collected["metadata_fields_cleared"].append(field_name)
+            if collected["metadata_fields_cleared"]:
+                modified.add("docProps/core.xml")
         for rId, rel in list(package._rels.items()):
             if rel.is_external:
                 continue
@@ -307,12 +336,28 @@ def scrub_presentation(
             parts_removed.append(_rels_member(partname))
 
     if removed_partnames:
-        remaining_extensions = {
-            posixpath.splitext(partname)[1][1:].lower() for partname in after_partnames
+        # -- [Content_Types].xml changes iff a removed part carried its own Override
+        # -- (its (extension, content_type) is not in the serializer's Default table -
+        # -- e.g. image/svg+xml media), or the last Default-covered part of an
+        # -- extension left. Mirrors opc/serialized.py's actual emission rule.
+        from pptx.opc.spec import default_content_types
+
+        def _is_default_typed(part) -> bool:
+            extension = posixpath.splitext(str(part.partname))[1][1:].lower()
+            return (extension, part.content_type) in default_content_types
+
+        surviving_default_extensions = {
+            posixpath.splitext(str(part.partname))[1][1:].lower()
+            for part in package.iter_parts()
+            if _is_default_typed(part)
         }
         for partname in removed_partnames:
+            removed_part = before_parts[partname]
+            if not _is_default_typed(removed_part):
+                modified.add("[Content_Types].xml")
+                break
             extension = posixpath.splitext(partname)[1][1:].lower()
-            if extension == "xml" or extension not in remaining_extensions:
+            if extension not in surviving_default_extensions:
                 modified.add("[Content_Types].xml")
                 break
 

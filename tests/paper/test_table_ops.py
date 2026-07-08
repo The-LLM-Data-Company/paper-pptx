@@ -88,11 +88,26 @@ def test_insert_row_has_exact_part_budget():
 
 
 def test_insert_row_default_height_copies_neighbor():
+    """The neighbor's height must be DISTINCT from every other row's, or a wrong-source
+    mutant passes (final-review mutation finding); asserted through save->reopen."""
     prs = _open(GAUNTLET)
     table = _gauntlet_table(prs)
-    neighbor_height = table.rows[1].height
-    new_row = table.insert_row(1)
-    assert new_row.height == neighbor_height
+    table.rows[1].height = Emu(777240)  # -- make the neighbor unmistakable
+    table.insert_row(1)
+    reopened_table = _gauntlet_table(save_reopen(prs))
+    assert reopened_table.rows[2].height == Emu(777240)  # -- the new row, at index 2
+    assert reopened_table.rows[1].height == Emu(777240)  # -- the neighbor it copied
+    assert reopened_table.rows[0].height != Emu(777240)
+
+
+def test_insert_column_default_width_copies_the_distinct_neighbor():
+    prs = _open(GAUNTLET)
+    table = _gauntlet_table(prs)
+    table.columns[1].width = Emu(555120)  # -- distinct from columns 0 and 2
+    table.insert_column(1)
+    reopened_table = _gauntlet_table(save_reopen(prs))
+    assert reopened_table.columns[2].width == Emu(555120)  # -- the new column
+    assert reopened_table.columns[0].width != Emu(555120)
 
 
 def test_insert_row_copy_format_from_copies_tcPr_but_never_merges_or_text():
@@ -227,10 +242,14 @@ def test_insert_column_default_width_copies_neighbor_and_updates_frame():
     assert shape.width == Emu(sum(c.width for c in shape.table.columns))
 
 
-def test_insert_column_boundary_inside_horizontal_merge_refuses_atomically():
+@pytest.mark.parametrize("after", [0, 1, 2])
+def test_insert_column_boundary_inside_horizontal_merge_refuses_atomically(after):
+    """Every interior boundary of the header merge (cols 0..3) must refuse - including
+    the left edge (after=0), where an off-by-one in the intersection test would
+    silently split the merge (final-review mutation finding)."""
     prs = _open(MERGED)
     raised = assert_refusal_atomic(
-        prs, lambda p: _merged_table(p).insert_column(1), UnsupportedStructureError
+        prs, lambda p: _merged_table(p).insert_column(after), UnsupportedStructureError
     )
     assert "columns 0..3" in str(raised)
 

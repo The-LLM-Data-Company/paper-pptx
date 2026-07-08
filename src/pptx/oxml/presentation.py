@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, cast
 
-from pptx.oxml.simpletypes import ST_SlideId, ST_SlideSizeCoordinate, XsdString
-from pptx.oxml.xmlchemy import BaseOxmlElement, RequiredAttribute, ZeroOrMore, ZeroOrOne
+from pptx.oxml.simpletypes import ST_SlideId, ST_SlideSizeCoordinate, XsdString, XsdUnsignedInt
+from pptx.oxml.xmlchemy import (
+    BaseOxmlElement,
+    OptionalAttribute,
+    RequiredAttribute,
+    ZeroOrMore,
+    ZeroOrOne,
+)
 
 if TYPE_CHECKING:
     from pptx.util import Length
@@ -17,6 +23,7 @@ class CT_Presentation(BaseOxmlElement):
     get_or_add_sldSz: Callable[[], CT_SlideSize]
     get_or_add_sldIdLst: Callable[[], CT_SlideIdList]
     get_or_add_sldMasterIdLst: Callable[[], CT_SlideMasterIdList]
+    get_or_add_notesMasterIdLst: "Callable[[], CT_NotesMasterIdList]"
 
     sldMasterIdLst: CT_SlideMasterIdList | None = (
         ZeroOrOne(  # pyright: ignore[reportAssignmentType]
@@ -28,6 +35,12 @@ class CT_Presentation(BaseOxmlElement):
                 "p:sldSz",
                 "p:notesSz",
             ),
+        )
+    )
+    notesMasterIdLst: "CT_NotesMasterIdList | None" = (
+        ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+            "p:notesMasterIdLst",
+            successors=("p:handoutMasterIdLst", "p:sldIdLst", "p:sldSz", "p:notesSz"),
         )
     )
     sldIdLst: CT_SlideIdList | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
@@ -111,6 +124,31 @@ class CT_SlideMasterIdListEntry(BaseOxmlElement):
     ``<p:sldMasterId>`` element, child of ``<p:sldMasterIdLst>`` containing
     a reference to a slide master.
     """
+
+    rId: str = RequiredAttribute("r:id", XsdString)  # pyright: ignore[reportAssignmentType]
+    #: document-unique master id, schema minimum 2147483648 (paper-pptx addition)
+    id: int | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "id", XsdUnsignedInt
+    )
+
+
+class CT_NotesMasterIdList(BaseOxmlElement):
+    """`p:notesMasterIdLst` element, child of `p:presentation` (paper-pptx addition).
+
+    Holds the reference to the presentation's notes master (at most one per schema).
+    """
+
+    get_or_add_notesMasterId: "Callable[[], CT_NotesMasterIdListEntry]"
+
+    notesMasterId: "CT_NotesMasterIdListEntry | None" = (
+        ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+            "p:notesMasterId"
+        )
+    )
+
+
+class CT_NotesMasterIdListEntry(BaseOxmlElement):
+    """`p:notesMasterId` element - the reference to the notes master (paper-pptx addition)."""
 
     rId: str = RequiredAttribute("r:id", XsdString)  # pyright: ignore[reportAssignmentType]
 

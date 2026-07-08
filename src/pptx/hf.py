@@ -162,16 +162,18 @@ def _validate_slide_furniture(slide, footer, slide_number, date_format, fixed_da
             )
         # -- nearest explicit p:hf declaration wins (layout over master; absent = inherit),
         # -- mirroring the v0.1 HeaderFooters proxy's tri-state semantics
-        for level_name, hf in (
-            ("layout", layout._element.hf),
-            ("master", layout.slide_master.element.hf),
+        master = layout.slide_master
+        for level_name, owner_name, hf in (
+            ("layout", layout.name or str(layout.part.partname), layout._element.hf),
+            ("master", str(master.part.partname), master.element.hf),
         ):
             flag = getattr(hf, kind) if hf is not None else None
             if flag is False:
                 raise UnsupportedStructureError(
-                    "the %s's p:hf flags disable the %s placeholder, so applied content "
-                    "would not render; clear the flag first via %s.header_footers"
-                    % (level_name, _KIND_LABEL[kind], level_name)
+                    "the %s %r carries p:hf flags disabling the %s placeholder, so "
+                    "applied content would not render; clear the flag first via that "
+                    "%s's header_footers"
+                    % (level_name, owner_name, _KIND_LABEL[kind], level_name)
                 )
             if flag is not None:
                 break
@@ -205,12 +207,17 @@ def _layout_furniture(layout) -> dict:
     return found
 
 
-def _slide_ph(slide, kind):
-    """The slide's own placeholder shape of `kind`, or None."""
-    for shape in slide.shapes:
-        if shape.is_placeholder and shape.element.ph_type == _PH_TYPE_FOR_KIND[kind]:
-            return shape
-    return None
+def _slide_phs(slide, kind):
+    """ALL of the slide's own placeholder shapes of `kind`, in document order.
+
+    Duplicates are schema-legal; each apply sets the dialog's one-per-kind state, so the
+    first is updated and any extras are removed (deterministic, documented).
+    """
+    return [
+        shape
+        for shape in slide.shapes
+        if shape.is_placeholder and shape.element.ph_type == _PH_TYPE_FOR_KIND[kind]
+    ]
 
 
 def _apply_to_slide(slide, number, footer, slide_number, date_format, fixed_date, now):
@@ -218,16 +225,19 @@ def _apply_to_slide(slide, number, footer, slide_number, date_format, fixed_date
     furniture = _layout_furniture(slide.slide_layout) if wanted else {}
 
     for kind in _KINDS:
-        existing = _slide_ph(slide, kind)
+        existing_shapes = _slide_phs(slide, kind)
         if kind not in wanted:
-            if existing is not None:
+            for shape in existing_shapes:
                 # -- the dialog's uncheck removes the shape; delete() keeps rel hygiene
-                slide.shapes.delete(existing)
+                slide.shapes.delete(shape)
             continue
 
+        for extra in existing_shapes[1:]:  # -- the dialog state is one shape per kind
+            slide.shapes.delete(extra)
+        existing = existing_shapes[0] if existing_shapes else None
         if existing is None:
             slide.shapes.clone_placeholder(furniture[kind])
-            existing = _slide_ph(slide, kind)
+            existing = _slide_phs(slide, kind)[0]
         txBody = existing._element.get_or_add_txBody()
 
         if kind == "sldNum":

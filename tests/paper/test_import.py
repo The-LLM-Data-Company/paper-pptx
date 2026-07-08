@@ -171,6 +171,9 @@ def test_bake_drops_furniture_placeholders():
     dest = _open(ALPHA)
     report = dest.import_slide(source, 0, mode="bake")
     assert len(report.dropped_placeholders) == 2  # -- ftr + sldNum
+    # -- dropping shapes must not slip the shift keys: surviving runs are baked and
+    # -- re-resolve identically, so there are NO shifts, phantom or real
+    assert report.run_shifts == ()
     reopened = save_reopen(dest)
     imported = reopened.slides[3]
     texts = [s.text_frame.text for s in imported.shapes if s.has_text_frame]
@@ -244,9 +247,11 @@ def test_section_enrollment_named_and_adjacent():
     saved = save_to_bytes(dest)
     _assert_clean(saved)  # -- the id-list scan proves every section id resolves
 
-    # -- adjacent enrollment: inserting at position 1 lands in "Intro" (slide 1's section)
+    # -- adjacent enrollment: inserting at position 1 lands in "Intro" (slide 1's
+    # -- section), DIRECTLY AFTER slide 1's entry, and the report says which section
     dest2 = _open(SECTIONS)
-    dest2.import_slide(source, 0, mode="adopt_theme", position=1)
+    report2 = dest2.import_slide(source, 0, mode="adopt_theme", position=1)
+    assert report2.section == "Intro"  # -- actual enrollment, not the (None) argument
     saved2 = save_to_bytes(dest2)
     _assert_clean(saved2)
     from lxml import etree
@@ -258,13 +263,21 @@ def test_section_enrollment_named_and_adjacent():
         for s in presentation.findall(".//{%s}section" % P14)
         if s.get("name") == "Intro"
     )
-    assert len(intro.findall(".//{%s}sldId" % P14)) == 2
+    intro_ids = [e.get("id") for e in intro.findall(".//{%s}sldId" % P14)]
+    P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    deck_ids = [
+        e.get("id") for e in presentation.findall(".//{%s}sldIdLst/{%s}sldId" % (P, P))
+    ]
+    # -- section order mirrors deck order: [slide 1's id, the imported slide's id]
+    assert intro_ids == [deck_ids[0], deck_ids[1]]
 
 
-def test_missing_section_refuses():
+def test_missing_section_refuses_atomically():
     dest = _open(SECTIONS)
+    before = save_to_bytes(dest)
     with pytest.raises(TargetNotFoundError):
         dest.import_slide(_open(BETA), 0, mode="adopt_theme", section="No Such Section")
+    assert_changed_parts(before, save_to_bytes(dest))  # -- empty budget
 
 
 # --------------------------------------------------------------------------- append_deck
@@ -391,6 +404,105 @@ def test_import_from_libreoffice_authored_source():
     _assert_clean(saved)
     reopened = Presentation(io.BytesIO(saved))
     assert len(reopened.slide_masters) == 2
+
+
+def test_import_delete_scrub_reimport_never_duplicates_partnames():
+    """Regression (v0.11 final review, critical): the fingerprint-dedupe cache must not
+    resurrect parts that scrub removed - a ghost hit re-relates a part whose freed
+    partname a later import reallocated, producing duplicate zip members with different
+    content. The cycle below must yield a clean, fully-registered package."""
+    import warnings
+    import zipfile
+
+    dest = Presentation()
+    dest.slides.add_slide(dest.slide_layouts[6])
+    source_alpha = _open(ALPHA)
+    source_beta = _open(BETA)
+    dest.import_slide(source_alpha, 0, mode="keep_appearance")
+    dest.slides.delete(len(dest.slides) - 1)
+    dest.scrub(unused_layouts=True, unused_masters=True)
+    dest.import_slide(source_beta, 0, mode="keep_appearance")
+    dest.import_slide(source_alpha, 0, mode="keep_appearance")
+
+    buf = io.BytesIO()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # -- zipfile's 'Duplicate name' warning = failure
+        dest.save(buf)
+    saved = buf.getvalue()
+    names = zipfile.ZipFile(io.BytesIO(saved)).namelist()
+    assert len(names) == len(set(names))
+    partnames = [str(p.partname) for p in dest.part.package.iter_parts()]
+    assert len(partnames) == len(set(partnames))
+    _assert_clean(saved)
+    reopened = Presentation(io.BytesIO(saved))
+    reachable_masters = {
+        str(p.partname)
+        for p in reopened.part.package.iter_parts()
+        if "slideMasters/slideMaster" in str(p.partname) and str(p.partname).endswith(".xml")
+    }
+    assert len(reachable_masters) == len(reopened.slide_masters)
+
+
+def test_import_placeholder_picture_slide_under_reconciling_modes():
+    """Regression (final review): a placeholder PICTURE has no text frame; bake and
+    adopt_theme must not crash on it."""
+    source = Presentation()
+    layout = source.slide_layouts[8]  # -- "Picture with Caption"
+    slide = source.slides.add_slide(layout)
+    slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Pic ph source"
+    picture_ph = next(
+        ph for ph in slide.placeholders if ph.placeholder_format.type.name == "PICTURE"
+    )
+    from PIL import Image as PILImage
+
+    png = io.BytesIO()
+    PILImage.new("RGB", (16, 16), (5, 50, 100)).save(png, format="PNG")
+    picture_ph.insert_picture(io.BytesIO(png.getvalue()))
+
+    from pptx.shapes.picture import Picture
+
+    for mode in ("bake", "adopt_theme"):
+        dest = _open(ALPHA)
+        report = dest.import_slide(source, 0, mode=mode)
+        assert report.mode == mode
+        saved = save_to_bytes(dest)
+        _assert_clean(saved)
+        reopened = Presentation(io.BytesIO(saved))
+        blobs = [
+            shape.image.blob
+            for shape in reopened.slides[3].shapes
+            if isinstance(shape, Picture) or (
+                shape.is_placeholder and hasattr(shape, "image")
+            )
+        ]
+        assert any(blob == png.getvalue() for blob in blobs)
+
+
+def test_append_deck_corrupt_source_refuses_typed():
+    dest = _open(ALPHA)
+    corrupt = Presentation(
+        str(corpus.fixture_path("self_generated/corrupt_dangling_sldid.pptx"))
+    )
+    before = save_to_bytes(dest)
+    with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
+        dest.append_deck(corrupt, mode="bake")
+    assert_changed_parts(before, save_to_bytes(dest))  # -- empty budget
+
+
+def test_notes_import_enrolls_destination_notes_master():
+    """Regression (final review): a destination without a notes master gets one created
+    on notes import; it must be enrolled in p:notesMasterIdLst, not just related."""
+    dest = _open(ALPHA)  # -- alpha has no notes, hence no notes master
+    assert dest._element.notesMasterIdLst is None
+    source = _open(GAUNTLET)
+    dest.import_slide(source, 1, mode="adopt_theme", notes=True)
+    reopened = save_reopen(dest)
+    notesMasterIdLst = reopened._element.notesMasterIdLst
+    assert notesMasterIdLst is not None
+    entry = notesMasterIdLst.notesMasterId
+    assert entry is not None
+    target = reopened.part.related_part(entry.rId)
+    assert "notesMaster" in str(target.partname)
 
 
 def test_scrub_removes_transplanted_master_once_its_slides_go():

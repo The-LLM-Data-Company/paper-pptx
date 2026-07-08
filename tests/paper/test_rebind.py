@@ -206,6 +206,45 @@ def test_explicit_map_validation():
         slide.rebind_layout(target, placeholder_map=[("a", "b")])
 
 
+def test_exact_matches_settle_before_lower_idx_placeholders_can_steal_slots():
+    """Regression (final review): auto-match runs exact type+idx as a GLOBAL first
+    pass. Previously a lower-idx placeholder fell through to its family fallback and
+    claimed a higher-idx placeholder's exact slot before that placeholder was even
+    considered - orphaning the rightful owner."""
+    import copy
+
+    from pptx.enum.shapes import PP_PLACEHOLDER
+    from pptx.rebind import _compute_mapping
+
+    prs = _open(GAUNTLET)
+    slide = prs.slides[0]
+    target = prs.slide_layouts[3]  # -- "Two Content": TITLE@0, OBJECT@1, OBJECT@2
+    # -- make the target's OBJECT@1 slot a CHART slot: OBJECT@2 is now the only content
+    # -- slot, and it is ph@2's EXACT match
+    target_obj1 = next(
+        ph for ph in target.placeholders if ph.element.ph_idx == 1
+    )
+    target_obj1.element.ph.type = PP_PLACEHOLDER.CHART
+
+    # -- slide: BODY@1 (family-matches OBJECT only) plus an OBJECT@2 copy (exact match)
+    body_ph = next(s for s in slide.shapes if s.element.ph_idx == 1)
+    body_ph.element.ph.type = PP_PLACEHOLDER.BODY
+    duplicate = copy.deepcopy(body_ph._element)
+    duplicate.nvSpPr.cNvPr.set("id", "97")
+    duplicate.nvSpPr.cNvPr.set("name", "Rightful Owner")
+    duplicate.ph.type = PP_PLACEHOLDER.OBJECT
+    duplicate.ph.idx = 2
+    body_ph._element.addnext(duplicate)
+
+    slide_phs = [s for s in slide.shapes if s.is_placeholder]
+    mapping = _compute_mapping(slide_phs, target, "auto")
+    # -- ph@2 keeps its exact OBJECT@2 slot; the BODY ph@1 has nowhere to go and
+    # -- orphans honestly (previously it stole slot 2 and ph@2 was orphaned instead)
+    assert mapping[2] == (PP_PLACEHOLDER.OBJECT, 2)
+    assert mapping[1] is None
+    assert mapping[0][1] == 0
+
+
 # ------------------------------------------------------------------------------- refusals
 
 

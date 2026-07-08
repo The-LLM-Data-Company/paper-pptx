@@ -8,7 +8,6 @@ vs diff of input/output) live with the standing eval jobs in test_walkthrough_*.
 
 from __future__ import annotations
 
-import io
 import json
 
 import pytest
@@ -65,7 +64,9 @@ def test_lineage_pair_reports_the_exact_edit_list():
     changes = {change.slide_id: change for change in report.slide_changes}
     assert changes[256].text_changes == (
         {
-            "block_index": 0,
+            "shape_id": 2,
+            "shape_name": "Title 1",
+            "block_ordinal": 0,
             "before": "Lineage slide one",
             "after": "Lineage slide one, retitled",
         },
@@ -148,29 +149,33 @@ def test_bad_detail_raises_valueerror():
 # ---------------------------------------------------------------------- matching contract
 
 
-def test_rebuilt_deck_does_not_match_by_design():
-    """The declared contract: id matching serves lineage; decks rebuilt from scratch
-    read as full replacement, never as spurious matches."""
-    prs = Presentation(_path("self_generated/minimal_clean.pptx"))
+def test_id_matching_contract_on_rebuilt_and_re_idd_decks():
+    """The declared contract, asserted for real (the final review flagged the previous
+    version as vacuous): colliding ids on a rebuilt deck MATCH and surface the content
+    difference honestly; distinct ids read as full replacement."""
     rebuilt = Presentation()
     slide = rebuilt.slides.add_slide(rebuilt.slide_layouts[0])
-    slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Minimal clean fixture"
-    buf = io.BytesIO()
-    rebuilt.save(buf)
-    import tempfile
-    from pathlib import Path
+    slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Rebuilt title"
 
-    with tempfile.TemporaryDirectory() as tmp:
-        out = Path(tmp) / "rebuilt.pptx"
-        out.write_bytes(buf.getvalue())
-        report = diff_decks(_path("self_generated/minimal_clean.pptx"), str(out))
-    # -- same ids by coincidence of construction would match; the CONTRACT is only that
-    # -- the answer is deterministic and honest. minimal_clean's slide id and a fresh
-    # -- template's first id are both 256, so they match here - and that is the declared
-    # -- hazard: rebuilt decks may collide on early ids. The report still surfaces the
-    # -- content difference (or none) rather than guessing.
-    assert isinstance(report.is_empty, bool)
-    del prs
+    # -- id collision (both decks start at 256): matched slide, text delta surfaced
+    report = diff_decks(_path("self_generated/minimal_clean.pptx"), rebuilt)
+    report_text = diff_decks(
+        _path("self_generated/minimal_clean.pptx"), rebuilt, detail="text"
+    )
+    assert report.slides_added == ()
+    assert report.slides_removed == ()
+    changed_texts = [
+        (c["before"], c["after"])
+        for change in report_text.slide_changes
+        for c in change.text_changes
+    ]
+    assert ("Minimal clean fixture", "Rebuilt title") in changed_texts
+
+    # -- distinct ids: full replacement, never a spurious match
+    rebuilt._element.sldIdLst.sldId_lst[0].set("id", "300")
+    report2 = diff_decks(_path("self_generated/minimal_clean.pptx"), rebuilt)
+    assert [ref.slide_id for ref in report2.slides_added] == [300]
+    assert [ref.slide_id for ref in report2.slides_removed] == [256]
 
 
 def test_unnamed_shape_fallback_keys_are_deterministic():
@@ -191,6 +196,76 @@ def test_unnamed_shape_fallback_keys_are_deterministic():
         report = diff_decks(_path("self_generated/minimal_clean.pptx"), str(out))
     change = report.slide_changes[0]
     assert set(change.shapes_added) == {"sp#2", "sp#3"}  # -- synthetic keys, stable
+
+
+# ------------------------------------------------------------- final-review regressions
+
+
+def test_trailing_whitespace_edit_is_a_reported_text_change():
+    """Regression (final review): whitespace is content (CONVENTIONS 3). The frozen
+    trailing-space pair must diff as a text change, never as 'identical'."""
+    report = diff_decks(
+        _path("self_generated/whitespace_trailing_a.pptx"),
+        _path("self_generated/whitespace_trailing_b.pptx"),
+        detail="text",
+    )
+    deltas = [
+        (c["before"], c["after"])
+        for change in report.slide_changes
+        for c in change.text_changes
+    ]
+    assert ("Trailing space ", "Trailing space") in deltas
+
+
+def test_full_detail_sees_emphasis_shifts():
+    """Regression (final review): bold/italic/underline participate in resolution-state
+    comparison - a mutant dropping them must fail here."""
+    prs_b = Presentation(_path("self_generated/minimal_clean.pptx"))
+    run = prs_b.slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
+    run.font.bold = True
+    run.font.italic = True
+    diff = diff_decks(_path("self_generated/minimal_clean.pptx"), prs_b, detail="full")
+    shifts = [s for change in diff.slide_changes for s in change.effective_shifts]
+    assert len(shifts) == 1
+    shift = shifts[0]
+    assert shift.before["bold"]["value"] is False
+    assert shift.after["bold"]["value"] is True
+    assert shift.before["italic"]["value"] is False
+    assert shift.after["italic"]["value"] is True
+
+
+def test_shape_removal_does_not_misattribute_later_blocks():
+    """Regression (final review): text/effective comparison keys are shape-scoped, so
+    removing an early shape must read as that shape's blocks disappearing - never as
+    edits to the shapes below it."""
+    prs_b = Presentation(_path("self_generated/gauntlet.pptx"))
+    slide = prs_b.slides[0]
+    title = slide.shapes.title
+    slide.shapes.delete(title)
+    diff = diff_decks(_path("self_generated/gauntlet.pptx"), prs_b, detail="full")
+    change = next(c for c in diff.slide_changes)
+    assert "Title 1" in change.shapes_removed
+    # -- the title's block reads as removed (after=None); the body blocks are untouched
+    for delta in change.text_changes:
+        assert delta["after"] is None, delta
+    assert change.effective_shifts == ()  # -- no phantom shifts from index slippage
+
+
+def test_diff_accepts_presentation_objects():
+    """Regression (final review): the natural first attempt - passing open decks."""
+    prs_a = Presentation(_path(V1))
+    prs_b = Presentation(_path(V2))
+    report = diff_decks(prs_a, prs_b, detail="structure")
+    assert [ref.slide_id for ref in report.slides_added] == [261]
+
+
+def test_unreadable_package_refuses_typed(tmp_path):
+    from pptx.errors import UnsupportedStructureError
+
+    garbage = tmp_path / "not-a-deck.pptx"
+    garbage.write_bytes(b"this is not a zip archive")
+    with pytest.raises(UnsupportedStructureError, match="not a readable presentation"):
+        diff_decks(str(garbage), _path(V1))
 
 
 # ------------------------------------------------------------------ typed refusals on bad input

@@ -291,6 +291,69 @@ def test_bad_arguments_raise_valueerror_before_any_change(kwargs):
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
 
 
+# ------------------------------------------------------------- final-review regressions
+
+
+def test_duplicate_furniture_placeholders_converge_to_dialog_state():
+    """Regression (final review): duplicated furniture placeholders (schema-legal) must
+    converge to the dialog's one-per-kind state on apply, and ALL must go on uncheck."""
+    import copy
+
+    prs = _open(MINIMAL)
+    prs.apply_footers(footer="Original", now=NOW)
+    slide = prs.slides[0]
+    ftr_sp = next(
+        s._element for s in slide.shapes
+        if s.is_placeholder and s.element.ph.get("type") == "ftr"
+    )
+    duplicate = copy.deepcopy(ftr_sp)
+    duplicate.nvSpPr.cNvPr.set("id", str(int(duplicate.nvSpPr.cNvPr.get("id")) + 50))
+    ftr_sp.addnext(duplicate)
+
+    prs.slides[0].apply_footers(footer="Converged", now=NOW)
+    reopened = save_reopen(prs)
+    footers = [
+        s for s in reopened.slides[0].shapes
+        if s.is_placeholder and s.element.ph.get("type") == "ftr"
+    ]
+    assert len(footers) == 1
+    assert footers[0].text_frame.text == "Converged"
+
+    prs.slides[0].apply_footers()  # -- uncheck removes every footer placeholder
+    reopened2 = save_reopen(prs)
+    assert not any(
+        s.is_placeholder and s.element.ph.get("type") == "ftr"
+        for s in reopened2.slides[0].shapes
+    )
+
+
+def test_field_formatting_survives_reapplication():
+    """Regression (final review): rPr preservation must hold on the FIELD path too, not
+    just the literal-footer path."""
+    prs = _open(MINIMAL)
+    prs.apply_footers(slide_number=True, footer="F1", now=NOW)
+    slide = prs.slides[0]
+    sldnum_sp = next(
+        s._element for s in slide.shapes
+        if s.is_placeholder and s.element.ph.get("type") == "sldNum"
+    )
+    fld = sldnum_sp.findall(".//{%s}fld" % _A)[0]
+    rPr = fld.find("{%s}rPr" % _A)
+    if rPr is None:  # -- a freshly-applied field carries no rPr yet
+        rPr = fld.makeelement("{%s}rPr" % _A, {})
+        fld.insert(0, rPr)
+    rPr.set("b", "1")  # -- user styles the page number bold
+
+    prs.slides[0].apply_footers(slide_number=True, footer="F2", now=NOW)
+    reopened = save_reopen(prs)
+    reopened_fld = next(
+        s._element for s in reopened.slides[0].shapes
+        if s.is_placeholder and s.element.ph.get("type") == "sldNum"
+    ).findall(".//{%s}fld" % _A)[0]
+    assert reopened_fld.find("{%s}rPr" % _A).get("b") == "1"
+    assert reopened_fld.get("type") == "slidenum"
+
+
 # ---------------------------------------------------------------- fields stay fields
 
 

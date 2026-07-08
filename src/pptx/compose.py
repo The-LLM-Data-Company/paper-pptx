@@ -154,8 +154,13 @@ def append_deck(
     The COMPLETE source deck validates before the first destination write: a refusal on
     any source slide leaves the destination untouched.
     """
+    from pptx.errors import materialize_slides
+    from pptx.presentation import Presentation as _Presentation
+
+    if not isinstance(source_prs, _Presentation):
+        raise ValueError("source_prs must be a Presentation, got %r" % (source_prs,))
     staged = []
-    for source_slide in source_prs.slides:
+    for source_slide in materialize_slides(source_prs, "append_deck"):
         source_slide = _validate_arguments(
             dest_prs, source_prs, source_slide, mode, None, notes, None, None
         )
@@ -385,7 +390,12 @@ def _validate_support_chain(source_layout) -> None:
 
 
 def _resolved_run_values(shape) -> list:
-    """[(paragraph_idx, run_idx, {facet: value})] of RESOLVED effective values only."""
+    """[(paragraph_idx, run_idx, {facet: value})] of RESOLVED effective values only.
+
+    Shapes without a text frame (placeholder pictures, graphic frames) have no runs.
+    """
+    if not shape.has_text_frame:
+        return []
     resolved = []
     for p_idx, paragraph in enumerate(shape.text_frame.paragraphs):
         for r_idx, run in enumerate(paragraph.runs):
@@ -462,7 +472,7 @@ def _perform_import(
     dest_package = dest_prs.part.package
     before_partnames = {str(part.partname) for part in dest_package.iter_parts()}
     reused: "List[str]" = []
-    allocated: "set" = set()
+    allocated = _ImportSession()
 
     # -- keep_appearance: the support chain first (fingerprint-deduped) ------------------
     if mode == "keep_appearance":
@@ -534,7 +544,9 @@ def _perform_import(
         sldIdLst.sldId_lst[final_position].addprevious(sldId)
     new_slide_id = int(sldId.get("id"))
 
-    _enroll_in_section(dest_prs._element, new_slide_id, final_position, section)
+    enrolled_section = _enroll_in_section(
+        dest_prs._element, new_slide_id, final_position, section
+    )
 
     # -- report ----------------------------------------------------------------------------
     after_state = _resolution_state(new_slide_part.slide)
@@ -554,7 +566,7 @@ def _perform_import(
         parts_reused=tuple(sorted(set(reused))),
         notes_copied=notes_copied,
         comments_dropped=comments_dropped,
-        section=section,
+        section=enrolled_section,
         baked_shapes=tuple(baked_names),
         dropped_placeholders=tuple(dropped_names),
         run_shifts=shifts,
@@ -613,12 +625,49 @@ def _reconcile_copied_placeholders(new_slide_part, mode, prep):
 # --------------------------------------------------------------- support-part transplant
 
 
+class _ImportSession(set):
+    """The partname-allocation set for one import call, plus the parts it created.
+
+    Behaves as the plain `allocated` set the shared `_allocate_partname` machinery
+    expects, and additionally records every cache-registered part created during THIS
+    import so `_live_cache_hit` can recognize parts that are legitimate hits but not yet
+    reachable (the new slide is enrolled only at the end of the import).
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.created_parts = []
+
+
 def _dedupe_cache(package) -> dict:
     cache = getattr(package, "_paper_compose_fingerprints", None)
     if cache is None:
         cache = {}
         package._paper_compose_fingerprints = cache
     return cache
+
+
+def _live_cache_hit(dest_package, cache, fingerprint, allocated):
+    """Return the cached destination part for `fingerprint` only if it is still LIVE.
+
+    The cache survives across imports on the destination package, but cached parts can
+    leave the package afterwards (imported slide deleted, then scrub removes the
+    transplanted chain). Reusing such a ghost re-relates a part whose freed partname an
+    intervening import may have reallocated - two live parts sharing one partname, and
+    save() writing duplicate zip members with different content (the v0.11 final-review
+    critical). A hit therefore counts only when the part is reachable from the package
+    root, or was created earlier in this same import call; anything else is evicted.
+    """
+    hit = cache.get(fingerprint)
+    if hit is None:
+        return None
+    created = getattr(allocated, "created_parts", ())
+    if any(part is hit for part in created):
+        return hit
+    if any(part is hit for part in dest_package.iter_parts()):
+        return hit
+    del cache[fingerprint]
+    return None
 
 
 def _fingerprint(part, depth: int = 0, visiting=None) -> str:
@@ -650,7 +699,7 @@ def _import_support_part(dest_package, part, allocated, reused):
     """Copy a leaf-ish part (media, theme) into `dest_package` with fingerprint dedupe."""
     cache = _dedupe_cache(dest_package)
     fingerprint = _fingerprint(part)
-    hit = cache.get(fingerprint)
+    hit = _live_cache_hit(dest_package, cache, fingerprint, allocated)
     if hit is not None:
         reused.append(str(hit.partname))
         return hit
@@ -676,6 +725,8 @@ def _import_support_part(dest_package, part, allocated, reused):
     if rId_mapping and isinstance(new_part, XmlPart):
         _rewrite_r_references(new_part._element, rId_mapping)
     cache[fingerprint] = new_part
+    if hasattr(allocated, "created_parts"):
+        allocated.created_parts.append(new_part)
     return new_part
 
 
@@ -703,6 +754,13 @@ def _import_notes_part(dest_prs, notes_part, new_slide_part, allocated):
     """Copy a notes part, re-linked to the NEW slide and the DESTINATION notes master."""
     new_notes = _import_leaf_into(dest_prs.part.package, notes_part, allocated)
     dest_notes_master_part = dest_prs.notes_master.part  # -- created if absent (documented)
+    # -- upstream's lazy notes-master creation relates the part but never enrolls it in
+    # -- p:notesMasterIdLst; consumers discover the notes master through that list, so
+    # -- enroll it here (no-op when an entry already exists)
+    notes_master_rId = dest_prs.part.relate_to(dest_notes_master_part, RT.NOTES_MASTER)
+    notesMasterIdLst = dest_prs._element.get_or_add_notesMasterIdLst()
+    if notesMasterIdLst.notesMasterId is None:
+        notesMasterIdLst.get_or_add_notesMasterId().rId = notes_master_rId
     rId_mapping = {}
     for rId in sorted(notes_part.rels, key=_rId_sort_key):
         rel = notes_part.rels[rId]
@@ -738,7 +796,7 @@ def _transplant_layout_chain(dest_prs, source_layout, allocated, reused):
     cache = _dedupe_cache(dest_package)
     layout_part = source_layout.part
     layout_fingerprint = _fingerprint(layout_part)
-    hit = cache.get(layout_fingerprint)
+    hit = _live_cache_hit(dest_package, cache, layout_fingerprint, allocated)
     if hit is not None:
         reused.append(str(hit.partname))
         return hit
@@ -760,19 +818,16 @@ def _transplant_layout_chain(dest_prs, source_layout, allocated, reused):
             )
     _rewrite_r_references(new_layout._element, rId_mapping)
 
-    # -- enroll the layout in the transplanted master
+    # -- enroll the layout in the transplanted master (via the oxml id-list machinery)
     master_rId = dest_master_part.relate_to(new_layout, RT.SLIDE_LAYOUT)
     sldLayoutIdLst = dest_master_part._element.get_or_add_sldLayoutIdLst()
-    entry = sldLayoutIdLst.makeelement(
-        "{http://schemas.openxmlformats.org/presentationml/2006/main}sldLayoutId", {}
+    sldLayoutIdLst._add_sldLayoutId(
+        rId=master_rId, id=_next_layout_or_master_id(dest_prs)
     )
-    entry.set("id", str(_next_layout_or_master_id(dest_prs)))
-    entry.set(
-        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", master_rId
-    )
-    sldLayoutIdLst.append(entry)
 
     cache[layout_fingerprint] = new_layout
+    if hasattr(allocated, "created_parts"):
+        allocated.created_parts.append(new_layout)
     return new_layout
 
 
@@ -781,7 +836,7 @@ def _transplant_master(dest_prs, source_master, allocated, reused):
     cache = _dedupe_cache(dest_package)
     master_part = source_master.part
     master_fingerprint = _fingerprint(master_part)
-    hit = cache.get(master_fingerprint)
+    hit = _live_cache_hit(dest_package, cache, master_fingerprint, allocated)
     if hit is not None:
         reused.append(str(hit.partname))
         return hit
@@ -813,19 +868,16 @@ def _transplant_master(dest_prs, source_master, allocated, reused):
             )
     _rewrite_r_references(new_master._element, rId_mapping)
 
-    # -- enroll the master in the destination presentation
+    # -- enroll the master in the destination presentation (via the oxml machinery)
     pres_rId = dest_prs.part.relate_to(new_master, RT.SLIDE_MASTER)
     sldMasterIdLst = dest_prs._element.get_or_add_sldMasterIdLst()
-    entry = sldMasterIdLst.makeelement(
-        "{http://schemas.openxmlformats.org/presentationml/2006/main}sldMasterId", {}
+    sldMasterIdLst._add_sldMasterId(
+        rId=pres_rId, id=_next_layout_or_master_id(dest_prs)
     )
-    entry.set("id", str(_next_layout_or_master_id(dest_prs)))
-    entry.set(
-        "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", pres_rId
-    )
-    sldMasterIdLst.append(entry)
 
     cache[master_fingerprint] = new_master
+    if hasattr(allocated, "created_parts"):
+        allocated.created_parts.append(new_master)
     return new_master
 
 
@@ -851,13 +903,17 @@ def _find_section(presentation_elm, name: str):
     return None
 
 
-def _enroll_in_section(presentation_elm, new_slide_id, final_position, section_name) -> None:
-    """Enroll the imported slide: named section, or adjacent to the insertion point."""
+def _enroll_in_section(presentation_elm, new_slide_id, final_position, section_name):
+    """Enroll the imported slide: named section, or adjacent to the insertion point.
+
+    Returns the name of the section actually enrolled in (None when the destination has
+    no sections) so the report can carry the real disposition, not the argument.
+    """
     sections = presentation_elm.findall(
         ".//{%s}sectionLst/{%s}section" % (_P14_NS, _P14_NS)
     )
     if not sections:
-        return
+        return None
     if section_name is not None:
         section = _find_section(presentation_elm, section_name)
         sldIdLst = section.find("{%s}sldIdLst" % _P14_NS)
@@ -866,7 +922,7 @@ def _enroll_in_section(presentation_elm, new_slide_id, final_position, section_n
             section.insert(0, sldIdLst)
         entry = sldIdLst.makeelement("{%s}sldId" % _P14_NS, {"id": str(new_slide_id)})
         sldIdLst.append(entry)
-        return
+        return section_name
     # -- adjacent enrollment: after the preceding slide's entry; first section if none
     P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
     deck_sldIds = presentation_elm.findall(".//%ssldIdLst/%ssldId" % (P, P))
@@ -881,10 +937,11 @@ def _enroll_in_section(presentation_elm, new_slide_id, final_position, section_n
                         "{%s}sldId" % _P14_NS, {"id": str(new_slide_id)}
                     )
                     entry.addnext(new_entry)
-                    return
+                    return section.get("name")
     first_sldIdLst = sections[0].find("{%s}sldIdLst" % _P14_NS)
     if first_sldIdLst is None:
         first_sldIdLst = sections[0].makeelement("{%s}sldIdLst" % _P14_NS, {})
         sections[0].insert(0, first_sldIdLst)
     entry = first_sldIdLst.makeelement("{%s}sldId" % _P14_NS, {"id": str(new_slide_id)})
     first_sldIdLst.insert(0, entry)
+    return sections[0].get("name")

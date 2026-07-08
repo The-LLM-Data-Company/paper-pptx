@@ -521,8 +521,9 @@ visibility-complete text layer for block deltas, upstream chart data access for
 per-series/category deltas ("FY/South: 20.0 → 25.1"-style) with an honest opaque flag
 for non-category families (kernel `xml_equivalent` decides changed/unchanged), media
 hashes to tell image replacement from move/resize, and the resolver for opt-in
-`detail="full"` effective shifts. `diff(A, A)` is empty across the entire 34-fixture
-corpus (parametrized); the lineage pair reproduces its sidecar's edit list exactly;
+`detail="full"` effective shifts. `diff(A, A)` is empty across all 33 non-corrupt
+fixtures (parametrized; the corrupt-by-construction fixture instead proves the typed
+refusal); the lineage pair reproduces its sidecar's edit list exactly;
 output is goldened and deterministic. Matching contract declared honestly: id matching
 serves lineage-derived decks; rebuilt decks don't match; content-fingerprint fallback is
 a future flag; the id-recycling hazard (delete max id then add) is documented where it
@@ -551,6 +552,49 @@ ends with the Phase 6 self-consistency check — the operation's own report and
 - **Rebind job** (`test_pitchbook_rebind_report_agrees_with_full_diff` + the Phase 6
   equivalent): the rebind report's run shifts equal the full-detail diff's effective
   shifts, run for run.
+
+## v0.11 hardening: final adversarial review findings, all fixed
+
+A five-dimension review panel (additivity, organ bug-hunting, conventions, test quality,
+consumer experience; 35 agents, every finding adversarially verified) ran against the
+complete wave. The additivity audit passed with **no violations**. 29 findings confirmed
+(1 critical, 11 major, 17 minor), every one fixed with a regression test:
+
+- **Critical — resurrected ghost parts:** the compose fingerprint-dedupe cache survived
+  parts leaving the package (imported slide deleted, then scrub removed the transplanted
+  chain); a later import of the same source re-related the ghost while a fresh import had
+  reclaimed its freed partname — two live parts sharing one partname, duplicate zip
+  members with different content, a master reachable but unregistered. Cache hits are now
+  liveness-checked (reachable from the package root, or created in the same import call)
+  and stale entries evicted; the exact import/delete/scrub/reimport cycle is a test.
+- **Majors:** scrub resolved every slide's layout unconditionally and AFTER mutating
+  passes — a broken layout relationship crashed raw and non-atomically, and even
+  all-toggles-False scrub crashed instead of returning its promised empty report (now
+  gated + validated up front, typed refusal); the `[Content_Types].xml` budget heuristic
+  missed override-typed media like SVG (now mirrors the serializer's actual Default/
+  Override rule); shift detection keyed runs by slide-global block index, pairing
+  unrelated runs whenever a shape was added or removed — rebind/import/diff states are
+  now keyed `(shape_id, block_ordinal, run_index)` and the diff's text deltas by the
+  same stable scheme (the pinned-anchor-rule violation in text matching, fixed
+  together); placeholder pictures crashed the reconciling import modes
+  (`has_text_frame` guard); rebind auto-matching interleaved its tiers per placeholder,
+  letting a lower-idx placeholder steal a higher-idx placeholder's exact slot (now three
+  global passes); `append_deck` leaked a raw KeyError on a broken source;
+  `ImportReport.section` reported the argument, not the actual (adjacent) enrollment;
+  plus five test-quality majors — left-edge merge-guard boundary, whitespace text
+  deltas in diff, all-eleven metadata fields, emphasis-facet shifts, field-path rPr
+  preservation — each now a real test that a mutant fails.
+- **Minors:** scrub(metadata) no longer creates a core-properties part on decks without
+  one; duplicate furniture placeholders converge to the dialog's one-per-kind state;
+  an import-created notes master is enrolled in `p:notesMasterIdLst` (upstream's lazy
+  creation relates but never enrolls); compose id-list entries build through the oxml
+  machinery (new `CT_NotesMasterIdList`/entry classes; `id` attributes modeled on the
+  layout/master entries); `diff_decks` accepts open Presentations and refuses typed on
+  unreadable packages, and its docstring declares the id-recycling hazard; hf refusals
+  name the flag-carrying layout/master; the vacuous rebuilt-deck diff test asserts the
+  real contract; section-enrollment order and refusal atomicity asserted; ScrubReport's
+  two addressing conventions documented; PAPER's "entire corpus" self-diff claim
+  corrected to the 33 non-corrupt fixtures.
 
 ## Publishing Safety
 

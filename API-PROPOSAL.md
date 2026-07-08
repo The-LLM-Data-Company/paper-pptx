@@ -600,6 +600,13 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
   - `RebindReport` (typed, `.to_dict()`, `"paper-rebind-report"` v1): layouts, the
     mapping used, baked orphans, and `run_shifts` — every run whose *resolved* effective
     values changed, with full before/after payloads. Required output, never optional.
+    Shift entries identify runs by `(shape_id, block_ordinal, run_index)` — stable keys
+    that survive shapes appearing/disappearing elsewhere on the slide (hardening
+    amendment; a slide-global block index would pair unrelated runs).
+  - Auto-matching runs as three GLOBAL passes — every exact type+idx match settles
+    before any type match, and every type match before any family fallback (hardening
+    amendment: interleaving the tiers per-placeholder let a lower-idx placeholder steal
+    a higher-idx placeholder's exact slot).
   - Refusals: `UnsupportedStructureError` for orphans-under-refuse, `mc:AlternateContent`
     slides, un-bakeable orphans; `ValueError` for cross-package targets, the current
     layout, bad maps/policies.
@@ -632,11 +639,14 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
         Visually stable without importing masters; blind regions (table cells) carry
         their explicit formatting as-is.
     - `position`: 0-based insertion index (None = append). `notes`: copy the speaker
-      notes part (re-linked to the new slide, sharing the destination notes master) or
-      drop it. `section`: name of an existing destination section to enroll in
-      (`TargetNotFoundError` if absent); None = enroll adjacent to the insertion point
-      when the destination has sections. `target_layout`: destination |SlideLayout|
-      override for adopt_theme/bake; `ValueError` with keep_appearance.
+      notes part (re-linked to the new slide, sharing the destination notes master —
+      created AND enrolled in `p:notesMasterIdLst` when absent) or drop it. `section`:
+      name of an existing destination section to enroll in (`TargetNotFoundError` if
+      absent); None = enroll adjacent to the insertion point when the destination has
+      sections. `ImportReport.section` carries the section actually enrolled in
+      (hardening amendment: the adjacent enrollment is visible, not just the argument).
+      `target_layout`: destination |SlideLayout| override for adopt_theme/bake;
+      `ValueError` with keep_appearance.
   - `Presentation.append_deck(source_prs, *, mode, notes=True) ->
     tuple[ImportReport, ...]` — imports every source slide in order at the end, built
     on `import_slide`. The COMPLETE source deck validates before the first write (a
@@ -662,13 +672,17 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     from Phase 0 applies to delete-then-import sequences; the diff organ declares it).
 
 - **Phase 6 — deck diff** (new `pptx.diff`):
-  - `diff_decks(path_a, path_b, *, detail="structure") -> DeckDiff` — detail levels:
+  - `diff_decks(path_a, path_b, *, detail="structure") -> DeckDiff` — inputs accept a
+    path, a stream, or an open |Presentation| (hardening amendment); an unreadable
+    package refuses typed. Detail levels:
     `"structure"` (slide add/remove/move by permanent slide id; shape add/remove by
     unique name with the declared `<kind>#<ordinal>` fallback for unnamed/duplicate
     names; geometry deltas; image replacement by media hash), `"text"` (+ text-block
-    deltas via the visibility-complete text layer, chart data per series/category with
-    an honest opaque flag for non-category families, notes changes), `"full"`
-    (+ per-run effective-value shifts via the resolver — expensive, opt-in).
+    deltas via the visibility-complete text layer — entries keyed by
+    `(shape_id, block_ordinal)`, stable across shape adds/removes (hardening
+    amendment) — chart data per series/category with an honest opaque flag for
+    non-category families, notes changes), `"full"` (+ per-run effective-value shifts
+    via the resolver — expensive, opt-in).
   - `DeckDiff` / `SlideChange` / `SlideRef` / `MovedSlide` (typed, `.to_dict()`,
     `"paper-deck-diff"` v1, goldenable; `is_empty` for the keystone checks).
   - Matching contract, declared: permanent slide ids serve lineage-derived decks;

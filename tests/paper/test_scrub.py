@@ -266,6 +266,108 @@ def _distinct_png():
     return buf.getvalue()
 
 
+# ------------------------------------------------------------- final-review regressions
+
+
+def test_metadata_clears_every_documented_field():
+    """Regression (final review): all 11 documented core fields clear, not just the 3
+    the fixture happens to populate."""
+    from pptx.scrub import _CLEARED_CORE_FIELDS
+
+    prs = _open(SCRUB_GAUNTLET)
+    core = prs.core_properties
+    for field_name in _CLEARED_CORE_FIELDS:
+        setattr(core, field_name, "populated-%s" % field_name)
+    before = save_to_bytes(prs)
+    prs2 = Presentation(io.BytesIO(before))
+    report = prs2.scrub(metadata=True)
+    assert report.metadata_fields_cleared == tuple(sorted(_CLEARED_CORE_FIELDS))
+    after = save_to_bytes(prs2)
+    assert_changed_parts(
+        before, after, expect_changed=report.parts_modified,
+        expect_removed=report.parts_removed,
+    )
+    reopened = Presentation(io.BytesIO(after))
+    for field_name in _CLEARED_CORE_FIELDS:
+        assert getattr(reopened.core_properties, field_name) == "", field_name
+
+
+def test_scrub_with_broken_layout_relationship():
+    """Regression (final review): a broken slide->layout relationship must (a) not stop
+    the all-False scrub from returning its promised empty report, and (b) refuse TYPED
+    and ATOMICALLY before the layout-usage passes - never mutate-then-KeyError."""
+    from pptx.errors import UnsupportedStructureError
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    def _broken_deck():
+        prs = Presentation()
+        slide_one = prs.slides.add_slide(prs.slide_layouts[6])
+        slide_two = prs.slides.add_slide(prs.slide_layouts[6])
+        slide_two.notes_slide.notes_text_frame.text = "must survive the refusal"
+        for rId, rel in list(slide_one.part.rels.items()):
+            if rel.reltype == RT.SLIDE_LAYOUT:
+                slide_one.part.rels.pop(rId)
+        return prs
+
+    prs = _broken_deck()
+    report = prs.scrub()  # -- all toggles False: empty report, no crash
+    assert report.parts_removed == ()
+    assert report.parts_modified == ()
+
+    prs2 = _broken_deck()
+    with pytest.raises(UnsupportedStructureError, match="layout relationship is broken"):
+        prs2.scrub(notes=True, unused_layouts=True)
+    # -- atomic: the notes pass must NOT have run before the refusal
+    assert prs2.slides[1].has_notes_slide
+
+
+def test_scrub_metadata_without_core_properties_part_is_a_noop():
+    """Regression (final review): a package with no core-properties part must not have
+    one CREATED by the metadata pass (scrub may never create parts)."""
+    prs = Presentation("tests/test_files/no-core-props.pptx")
+    before = save_to_bytes(prs)
+    report = prs.scrub(metadata=True)
+    assert report.metadata_fields_cleared == ()
+    assert_changed_parts(
+        before,
+        save_to_bytes(prs),
+        expect_changed=report.parts_modified,
+        expect_removed=report.parts_removed,
+    )
+    assert "docProps/core.xml" not in zip_member_map(save_to_bytes(prs))
+
+
+def test_content_types_budget_covers_override_typed_media():
+    """Regression (final review): a removed media part carrying its own Override (e.g.
+    image/svg+xml) changes [Content_Types].xml even when other parts share its
+    extension - the budget must say so (and the exact-budget helper proves it)."""
+    prs = _open(SCRUB_GAUNTLET)
+    package = prs.part.package
+    unused_media = next(
+        part
+        for part in package.iter_parts()
+        if str(part.partname) == "/ppt/media/image_unused_layout.png"
+    )
+    unused_media._content_type = "image/svg+xml"  # -- forces an Override for this part
+    before = save_to_bytes(prs)
+    report = prs.scrub(unused_layouts=True)
+    assert "ppt/media/image_unused_layout.png" in report.parts_removed
+    assert "[Content_Types].xml" in report.parts_modified
+    assert_changed_parts(
+        before,
+        save_to_bytes(prs),
+        expect_changed=report.parts_modified,
+        expect_removed=report.parts_removed,
+    )
+
+
+def test_notes_master_retained_reports_false_when_none_exists():
+    prs = _open("self_generated/minimal_clean.pptx")
+    report = prs.scrub(notes=True)
+    assert report.notes_slides_removed == ()
+    assert report.notes_master_retained is False
+
+
 # --------------------------------------------------------------------------------- lo_smoke
 
 

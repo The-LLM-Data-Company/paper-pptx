@@ -49,10 +49,17 @@ _MC_ALTERNATE_CONTENT = (
 
 @dataclass(frozen=True)
 class RunShift:
-    """One run whose resolved effective values changed across the rebind."""
+    """One run whose resolved effective values changed across the rebind.
+
+    Runs are identified by (shape_id, block_ordinal-within-shape, run_index) - a STABLE
+    key that survives shapes being added or removed elsewhere on the slide. Keying by
+    the slide-global block index would pair unrelated runs the moment any earlier shape
+    disappears (a v0.11 final-review finding).
+    """
 
     part: str
-    block_index: int
+    shape_id: int
+    block_ordinal: int
     run_index: int
     text: str
     before: dict
@@ -61,7 +68,8 @@ class RunShift:
     def to_dict(self) -> dict:
         return {
             "part": self.part,
-            "block_index": self.block_index,
+            "shape_id": self.shape_id,
+            "block_ordinal": self.block_ordinal,
             "run_index": self.run_index,
             "text": self.text,
             "before": self.before,
@@ -252,34 +260,52 @@ def _compute_mapping(slide_phs, target_layout, placeholder_map):
             mapping[source_idx] = slot_by_idx[target_idx]
             claimed.add(target_idx)
 
-    # -- auto pass, deterministic by source idx: exact type+idx, then type, then family --
-    for shape in sorted(slide_phs, key=lambda s: s.element.ph_idx):
+    # -- auto matching in three GLOBAL passes: every exact type+idx match settles before
+    # -- any type-matching, and every type match before any family fallback. Interleaving
+    # -- the tiers per-placeholder would let a lower-idx placeholder steal a higher-idx
+    # -- placeholder's exact slot (a v0.11 final-review finding).
+    unmatched = sorted(
+        (shape for shape in slide_phs if shape.element.ph_idx not in mapping),
+        key=lambda s: s.element.ph_idx,
+    )
+
+    still_unmatched = []
+    for shape in unmatched:
         source_idx = shape.element.ph_idx
-        if source_idx in mapping:
-            continue
-        source_type = shape.element.ph_type
         exact = slot_by_idx.get(source_idx)
-        if exact is not None and exact[0] == source_type and source_idx not in claimed:
+        if exact is not None and exact[0] == shape.element.ph_type and (
+            source_idx not in claimed
+        ):
             mapping[source_idx] = exact
             claimed.add(source_idx)
-            continue
+        else:
+            still_unmatched.append(shape)
+
+    unmatched, still_unmatched = still_unmatched, []
+    for shape in unmatched:
+        source_type = shape.element.ph_type
         same_type = [
             slot for slot in slots if slot[0] == source_type and slot[1] not in claimed
         ]
         if same_type:
-            mapping[source_idx] = same_type[0]
+            mapping[shape.element.ph_idx] = same_type[0]
             claimed.add(same_type[0][1])
-            continue
+        else:
+            still_unmatched.append(shape)
+
+    for shape in still_unmatched:
+        source_type = shape.element.ph_type
         family = next((f for f in _TYPE_FAMILIES if source_type in f), None)
-        if family is not None:
-            familial = [
-                slot for slot in slots if slot[0] in family and slot[1] not in claimed
-            ]
-            if familial:
-                mapping[source_idx] = familial[0]
-                claimed.add(familial[0][1])
-                continue
-        mapping[source_idx] = None
+        familial = (
+            [slot for slot in slots if slot[0] in family and slot[1] not in claimed]
+            if family is not None
+            else []
+        )
+        if familial:
+            mapping[shape.element.ph_idx] = familial[0]
+            claimed.add(familial[0][1])
+        else:
+            mapping[shape.element.ph_idx] = None
     return mapping
 
 
@@ -287,14 +313,21 @@ def _compute_mapping(slide_phs, target_layout, placeholder_map):
 
 
 def _resolution_state(slide):
-    """(comparable value state, full payload) per run, keyed (block_index, run_index)."""
+    """(comparable values, payload) per run, keyed (shape_id, block_ordinal, run_index).
+
+    The key is shape-scoped so shapes appearing or disappearing elsewhere on the slide
+    (a baked-away furniture placeholder, an added shape) can never pair unrelated runs.
+    """
     from pptx.inspect import inspect_text
 
     state = {}
+    block_ordinals: dict = {}
     for block in inspect_text(slide).blocks:
+        ordinal = block_ordinals.get(block.shape_id, 0)
+        block_ordinals[block.shape_id] = ordinal + 1
         for run_index, run in enumerate(block.runs):
             font = run.font
-            key = (block.anchor.block_index, run_index)
+            key = (block.shape_id, ordinal, run_index)
             values = (
                 font.size.value,
                 font.name.value,
@@ -316,8 +349,9 @@ def _shifts_between(before_state, after_state) -> "Tuple[RunShift, ...]":
             shifts.append(
                 RunShift(
                     part=part,
-                    block_index=key[0],
-                    run_index=key[1],
+                    shape_id=key[0],
+                    block_ordinal=key[1],
+                    run_index=key[2],
                     text=text,
                     before=before_payload,
                     after=after_payload,
