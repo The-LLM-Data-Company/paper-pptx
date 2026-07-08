@@ -1,0 +1,45 @@
+{
+  "fixture": "tables_in_group.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py for PLAN-v0.1 Phase 0. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "table_inside_group",
+    "group_shape",
+    "table"
+  ],
+  "ground_truth": {
+    "slide_count": 1,
+    "top_level_textbox": {
+      "name": "top_level_box",
+      "text": "Top-level text"
+    },
+    "group_name": "outer_group",
+    "in_group_textbox": {
+      "name": "in_group_box",
+      "text": "In-group text"
+    },
+    "grouped_table": {
+      "name": "grouped_table",
+      "rows": 2,
+      "cols": 2,
+      "cell_texts_row_major": [
+        "cell r0c0",
+        "cell r0c1",
+        "cell r1c0",
+        "cell r1c1"
+      ]
+    },
+    "group_children_localnames": [
+      "nvGrpSpPr",
+      "grpSpPr",
+      "sp",
+      "graphicFrame"
+    ],
+    "note": "PowerPoint UI does not group tables; the schema allows it and third-party producers emit it. graphicFrame moved into p:grpSp by element surgery."
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

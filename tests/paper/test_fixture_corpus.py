@@ -468,6 +468,94 @@ def test_lo_branded_template_ground_truth():
     assert run_sizes == [baked["title"], baked["body_paragraph_0"], baked["body_paragraph_1"]]
 
 
+def test_sections_ground_truth():
+    relpath = "self_generated/sections.pptx"
+    ground_truth = _ground_truth(relpath)
+    p14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    presentation = _member_xml(relpath, "ppt/presentation.xml")
+
+    entries = [
+        {"id": sldId.get("id"), "r_id": sldId.get("{%s}id" % _R)}
+        for sldId in presentation.find("{%s}sldIdLst" % _P)
+    ]
+    assert entries == ground_truth["sldid_entries"]
+
+    sections = [
+        {
+            "name": section.get("name"),
+            "slide_ids": [s.get("id") for s in section.iter("{%s}sldId" % p14)],
+        }
+        for section in presentation.iter("{%s}section" % p14)
+    ]
+    assert sections == ground_truth["sections"]
+    ext_uris = [e.get("uri") for e in presentation.iter("{%s}ext" % _P)]
+    assert ground_truth["section_ext_uri"] in ext_uris
+
+    custom_shows = [
+        {
+            "name": show.get("name"),
+            "slide_r_ids": [s.get("{%s}id" % _R) for s in show.iter("{%s}sld" % _P)],
+        }
+        for show in presentation.iter("{%s}custShow" % _P)
+    ]
+    assert custom_shows == ground_truth["custom_shows"]
+
+
+def test_tables_in_group_ground_truth():
+    relpath = "self_generated/tables_in_group.pptx"
+    ground_truth = _ground_truth(relpath)
+    slide = _member_xml(relpath, "ppt/slides/slide1.xml")
+    group = slide.find(".//{%s}grpSp" % _P)
+    assert [etree.QName(c).localname for c in group] == (
+        ground_truth["group_children_localnames"]
+    )
+    cell_texts = [
+        t.text
+        for tbl in group.iter("{%s}tbl" % _A)
+        for t in tbl.iter("{%s}t" % _A)
+    ]
+    assert cell_texts == ground_truth["grouped_table"]["cell_texts_row_major"]
+    in_group_texts = [
+        t.text for sp in group.iter("{%s}sp" % _P) for t in sp.iter("{%s}t" % _A)
+    ]
+    assert in_group_texts == [ground_truth["in_group_textbox"]["text"]]
+
+
+def test_nested_groups_ground_truth():
+    relpath = "self_generated/nested_groups.pptx"
+    ground_truth = _ground_truth(relpath)
+    slide = _member_xml(relpath, "ppt/slides/slide1.xml")
+
+    def max_depth(element, depth=0):
+        children = element.findall("{%s}grpSp" % _P)
+        return depth if not children else max(max_depth(c, depth + 1) for c in children)
+
+    assert max_depth(slide.find(".//{%s}spTree" % _P)) == ground_truth["max_group_depth"]
+    all_texts = sorted(t.text for t in slide.iter("{%s}t" % _A))
+    expected = sorted(v["text"] for v in ground_truth["texts_by_level"].values())
+    assert all_texts == expected
+
+
+def test_autofit_inherited_ground_truth():
+    relpath = "self_generated/autofit_inherited.pptx"
+    ground_truth = _ground_truth(relpath)
+    slide = _member_xml(relpath, "ppt/slides/slide1.xml")
+    autofits = [
+        (etree.QName(child).localname, dict(child.attrib))
+        for bodyPr in slide.iter("{%s}bodyPr" % _A)
+        for child in bodyPr
+    ]
+    assert autofits == [("normAutofit", {"fontScale": ground_truth["fontscale_attr"]})]
+    body_runs_with_size = [
+        r for r in slide.iter("{%s}r" % _A)
+        if r.find("{%s}rPr" % _A) is not None and r.find("{%s}rPr" % _A).get("sz")
+    ]
+    assert bool(body_runs_with_size) == ground_truth["body_runs_carry_local_size"]
+    master = _member_xml(relpath, "ppt/slideMasters/slideMaster1.xml")
+    body_l1 = master.find("{%s}txStyles/{%s}bodyStyle/{%s}lvl1pPr/{%s}defRPr" % (_P, _P, _A, _A))
+    assert int(body_l1.get("sz")) == ground_truth["master_body_lvl1_sz_centipoints"]
+
+
 # ------------------------------------------------------------------- independent loader smoke
 
 

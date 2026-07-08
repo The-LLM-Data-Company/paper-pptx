@@ -1,0 +1,29 @@
+{
+  "fixture": "autofit_inherited.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py for PLAN-v0.1 Phase 0. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "autofit_normautofit",
+    "inherited_placeholder_font_size"
+  ],
+  "ground_truth": {
+    "slide_count": 1,
+    "bodypr_autofit_element": "a:normAutofit",
+    "fontscale_attr": "62500",
+    "lnspcreduction_attr": null,
+    "body_runs_carry_local_size": false,
+    "master_body_lvl1_sz_centipoints": 2600,
+    "master_body_lvl2_sz_centipoints": 2200,
+    "expected_normalize_with_resolve": {
+      "paragraph_0_frozen_sz_centipoints": 1625,
+      "paragraph_1_frozen_sz_centipoints": 1375,
+      "derivation": "resolved master size x fontScale 62.5% (2600->1625, 2200->1375)"
+    },
+    "note": "normalize_autofit() must refuse without resolution and succeed with resolve=True (PLAN-v0.1 Phase 0.4). fontScale only: spacing resolution stays a refusal."
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}
