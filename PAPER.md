@@ -261,6 +261,30 @@ finding was fixed with a regression test:
   is byte-exact; API-PROPOSAL.md amendments ledgered (notes body-placeholder refusal, slide
   int-addressing IndexError semantics, Phase 8 example fixed).
 
+## v0.1 Phase 0: integrity wave
+
+Per `agent_docs/PLAN-v0.1.md`, all fixture-first, all additive:
+
+- **0.1 sections/custom shows** — `Slides.delete` purges `p14:sectionLst` (by slide id) and
+  `p:custShowLst` (by rId) entries; `clone` enrolls the copy in the source's section directly
+  after it (custom shows deliberately not extended). New `tests/paper/idlists.py` scan
+  (dangling/duplicate section ids) runs on every fixture and every slide-op output — the
+  failure class is covered structurally, not spot-patched. Empty sections/show lists are
+  schema-valid and preserved, matching PowerPoint.
+- **0.2/0.3 visibility-complete inspection** — `inspect_text` now sees grouped shapes
+  (recursive, depth-guarded) and table cells (row-major, as typed counted *blind regions*:
+  text reported, effective values honestly unresolved pending a table-style walk). Payload
+  schema v2; goldens regenerated via the documented command.
+- **0.4 autofit ↔ resolver wiring** — `normalize_autofit(resolve=True)` freezes inherited
+  sizes through the Phase 4 effective walk (the template-placeholder case its own v0 refusal
+  message pointed at). Spacing resolution remains a refusal. Default unchanged.
+- **Walkthrough eval** — `tests/paper/test_walkthrough_qbr.py` runs the canonical template
+  job end-to-end with shipped API on every suite run; unshipped v0.1 steps are strict xfails
+  that force integration as each organ lands. v0.1's definition of done includes zero
+  Phase 0–2 xfails in this file.
+- New frozen fixtures: `sections`, `tables_in_group`, `nested_groups`, `autofit_inherited`
+  (+ FIXTURE-REQUESTS.md R8 for the real-PowerPoint sectioned deck).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

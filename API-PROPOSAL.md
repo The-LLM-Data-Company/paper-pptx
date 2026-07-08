@@ -437,6 +437,24 @@ chart.replace_data_safe(["East", "West"], [("Q3", (12.5, 9.1)), ("Q4", (14.0, 11
   has none), so no organ takes `tracked`/`author`/`date` kwargs yet. The clock utility and the
   §2 kwarg shapes stand ready for the first date-stamping organ; nothing to wire in v0. ✔
 
+## v0.1 amendments (PLAN-v0.1)
+
+Signatures added or changed by the v0.1 wave; each lands here before its implementation.
+
+- **Phase 0.2/0.3** — `inspect_text` is visibility-complete: depth-first document order over
+  top-level shapes, grouped shapes (recursive, `MAX_GROUP_DEPTH = 16`, deeper refuses), and
+  table cells (row-major). `TextBlock` gains `container: str` ("shape" | "group" |
+  "table-cell"), `container_detail: str | None` (group path / `"frame!r{r}c{c}"`), and
+  `blind: bool`; `TextInspection` gains `blind_region_count`. Payload schema version 1 → 2.
+  Table-cell runs report text with honestly-unresolved effective values (table-style
+  inheritance is not walked in v0.1).
+- **Phase 0.4** — `TextFrame.normalize_autofit(*, min_font_size=None, resolve: bool = False)`:
+  `resolve=True` resolves locally-unresolvable font sizes through the effective-style walk
+  before freezing; spacing resolution remains a refusal. Default behavior byte-identical to
+  v0.
+- **Phase 1 amendment placeholder** — the anchor-consuming write pattern (call shape,
+  staleness semantics, refind) is pinned here before Phase 1 implementation begins.
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,

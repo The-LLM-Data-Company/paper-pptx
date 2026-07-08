@@ -166,7 +166,9 @@ class TextFrame(Subshape):
     def margin_top(self, emu: Length):
         self._bodyPr.tIns = emu
 
-    def normalize_autofit(self, *, min_font_size: Length | None = None) -> None:
+    def normalize_autofit(
+        self, *, min_font_size: Length | None = None, resolve: bool = False
+    ) -> None:
         """Freeze this frame's rendered text metrics and set explicit no-autofit.
 
         paper-pptx addition. What the reader currently sees is made explicit, then the frame's
@@ -175,11 +177,13 @@ class TextFrame(Subshape):
         - `a:normAutofit` with a font scale: every explicit font size in the frame (run,
           paragraph-default, and end-paragraph properties) is multiplied by the scale. If any
           run's size is not locally resolvable (neither its own `sz` nor its paragraph's
-          default), |UnsupportedStructureError| is raised — this API never guesses inherited
-          sizes.
+          default), |UnsupportedStructureError| is raised — unless `resolve=True`, in which
+          case the size is resolved through the effective-style walk (placeholder → layout →
+          master → theme) and frozen from the resolved value; what the walk cannot resolve
+          still refuses. This API never silently guesses.
         - `a:normAutofit` with a line-spacing reduction: every paragraph's explicit line
           spacing is reduced accordingly; any paragraph without explicit line spacing raises
-          |UnsupportedStructureError|.
+          |UnsupportedStructureError| (`resolve` covers font sizes only in this version).
         - `a:spAutoFit`, `a:noAutofit`, or no autofit element: no text metrics change.
 
         `min_font_size` (a |Length|, e.g. `Pt(11)`) is applied after freezing: explicit sizes
@@ -190,6 +194,8 @@ class TextFrame(Subshape):
         reduction = self.line_space_reduction
         scale = 100.0 if scale is None else scale
         reduction = 0.0 if reduction is None else reduction
+        if not isinstance(resolve, bool):
+            raise ValueError("resolve must be a bool, got %r" % (resolve,))
         if min_font_size is not None and (
             isinstance(min_font_size, bool)
             or not isinstance(min_font_size, int)
@@ -199,6 +205,7 @@ class TextFrame(Subshape):
                 "min_font_size must be a positive Length (EMU int) or None, got %r"
                 % (min_font_size,)
             )
+        resolved_run_sizes = {}  # -- run element -> resolved centipoints (resolve=True plan)
 
         # -- validation pass: complete before any mutation (refusal atomicity). Raw-XML reads
         # -- only: the font/paragraph proxy accessors are get-or-add and would themselves
@@ -214,10 +221,16 @@ class TextFrame(Subshape):
                     rPr = r.find(qn("a:rPr"))
                     run_has_size = rPr is not None and rPr.get("sz") is not None
                     if not run_has_size and not para_has_size:
+                        if resolve:
+                            resolved = self._resolve_run_size(r)
+                            if resolved is not None:
+                                resolved_run_sizes[r] = resolved
+                                continue
                         raise UnsupportedStructureError(
                             "cannot freeze font scale %.1f%%: %s in paragraph %d of shape %r"
                             " has no locally resolvable font size (set explicit sizes first,"
-                            " or resolve effective values before normalizing)"
+                            " or pass resolve=True to resolve effective values before"
+                            " normalizing)"
                             % (
                                 scale,
                                 "field" if r.tag == qn("a:fld") else "run",
@@ -237,6 +250,10 @@ class TextFrame(Subshape):
         if scale != 100.0:
             for rPr in self._iter_explicitly_sized_rPrs():
                 rPr.sz = max(100, int(round(rPr.sz * scale / 100.0)))
+            for r, resolved_centipoints in resolved_run_sizes.items():
+                r.get_or_add_rPr().sz = max(
+                    100, int(round(resolved_centipoints * scale / 100.0))
+                )
         if reduction != 0.0:
             for paragraph in self.paragraphs:
                 spacing = paragraph.line_spacing
@@ -253,6 +270,22 @@ class TextFrame(Subshape):
                 if rPr.sz < floor_centipoints:
                     rPr.sz = floor_centipoints
         self.auto_size = MSO_AUTO_SIZE.NONE
+
+    def _resolve_run_size(self, r):
+        """Return `r`'s effective font size in centipoints via the inheritance walk, or None.
+
+        Used by `normalize_autofit(resolve=True)`. Import is deferred: `pptx.inspect` is a
+        leaf module and importing it at module scope would be a cycle.
+        """
+        from pptx.inspect import _FontResolver
+
+        sp = self._txBody.getparent()
+        if sp is None or sp.tag != qn("p:sp"):
+            return None  # -- only p:sp text bodies resolve through the placeholder chain
+        effective = _FontResolver(self.part).effective_font(r, sp)
+        if not effective.size.resolved:
+            return None
+        return Emu(effective.size.value).centipoints
 
     def _iter_explicitly_sized_rPrs(self):
         """Generate every rPr-family element in this frame carrying an explicit `sz`.
