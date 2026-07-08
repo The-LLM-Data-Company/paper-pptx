@@ -1,0 +1,71 @@
+{
+  "schema": "paper-deck-diff",
+  "version": 1,
+  "detail": "text",
+  "slides_added": [
+    {
+      "slide_id": 261,
+      "position": 4,
+      "title": "Lineage slide six, new"
+    }
+  ],
+  "slides_removed": [
+    {
+      "slide_id": 260,
+      "position": 4,
+      "title": "Lineage slide five"
+    }
+  ],
+  "slides_moved": [
+    {
+      "slide_id": 256,
+      "from_position": 0,
+      "to_position": 1
+    }
+  ],
+  "slide_changes": [
+    {
+      "slide_id": 257,
+      "notes_change": {
+        "before": "Original notes for slide two.",
+        "after": "Updated notes for slide two."
+      }
+    },
+    {
+      "slide_id": 256,
+      "text_changes": [
+        {
+          "block_index": 0,
+          "before": "Lineage slide one",
+          "after": "Lineage slide one, retitled"
+        }
+      ]
+    },
+    {
+      "slide_id": 258,
+      "chart_data_changes": [
+        {
+          "chart": "lineage_chart",
+          "series": "FY",
+          "category": "South",
+          "before": 20.0,
+          "after": 25.0
+        }
+      ]
+    },
+    {
+      "slide_id": 259,
+      "geometry_changes": [
+        {
+          "shape": "lineage_box",
+          "facet": "left",
+          "before": 3657600,
+          "after": 4572000
+        }
+      ],
+      "images_replaced": [
+        "lineage_pic"
+      ]
+    }
+  ]
+}

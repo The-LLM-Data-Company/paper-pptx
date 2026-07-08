@@ -73,6 +73,18 @@ def import_golden_json() -> str:
     return json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n"
 
 
+def diff_golden_json() -> str:
+    """Return the canonical golden for the lineage v1->v2 diff (v0.11 Phase 6)."""
+    from pptx.diff import diff_decks
+
+    report = diff_decks(
+        str(FIXTURES_DIR / "self_generated/lineage_v1.pptx"),
+        str(FIXTURES_DIR / "self_generated/lineage_v2.pptx"),
+        detail="text",
+    )
+    return json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n"
+
+
 def main() -> None:
     GOLDENS_DIR.mkdir(parents=True, exist_ok=True)
     for golden_name, fixture_relpath, slide_index in GOLDENS:
@@ -88,6 +100,9 @@ def main() -> None:
     print("wrote", out)
     out = GOLDENS_DIR / "import_beta_keep.import.json"
     out.write_text(import_golden_json(), encoding="utf-8")
+    print("wrote", out)
+    out = GOLDENS_DIR / "lineage_v1_v2.diff.json"
+    out.write_text(diff_golden_json(), encoding="utf-8")
     print("wrote", out)
 
 

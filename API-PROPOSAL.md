@@ -661,6 +661,23 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
   - Slide ids allocate as max+1 in the destination (the documented id-reuse hazard
     from Phase 0 applies to delete-then-import sequences; the diff organ declares it).
 
+- **Phase 6 — deck diff** (new `pptx.diff`):
+  - `diff_decks(path_a, path_b, *, detail="structure") -> DeckDiff` — detail levels:
+    `"structure"` (slide add/remove/move by permanent slide id; shape add/remove by
+    unique name with the declared `<kind>#<ordinal>` fallback for unnamed/duplicate
+    names; geometry deltas; image replacement by media hash), `"text"` (+ text-block
+    deltas via the visibility-complete text layer, chart data per series/category with
+    an honest opaque flag for non-category families, notes changes), `"full"`
+    (+ per-run effective-value shifts via the resolver — expensive, opt-in).
+  - `DeckDiff` / `SlideChange` / `SlideRef` / `MovedSlide` (typed, `.to_dict()`,
+    `"paper-deck-diff"` v1, goldenable; `is_empty` for the keystone checks).
+  - Matching contract, declared: permanent slide ids serve lineage-derived decks;
+    rebuilt decks don't match (a content-fingerprint fallback is a future flag, not a
+    v0.11 promise); moves are the ids off the longest common subsequence (tie
+    attribution deterministic but arbitrary, with from/to positions carried);
+    the delete-max-then-add id-recycling hazard is documented.
+  - Report-only: no annotated rendering, no visual diffing, no similarity scoring.
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,

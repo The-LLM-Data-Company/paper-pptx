@@ -511,6 +511,24 @@ no longer fingerprints like its source across sessions. Cross-phase: scrub remov
 transplanted master (and its chain) once its slides are deleted — the unused-masters
 positive case.
 
+## v0.11 Phase 6: deck diff
+
+`pptx.diff.diff_decks(path_a, path_b, *, detail)` → `DeckDiff` — the verification mirror
+the deck side never had, assembled (not researched) from shipped ingredients: permanent
+slide ids for add/remove/move (moves = ids off the longest common subsequence, so the
+reorder-only fixture reads as exactly one move, never delete-plus-add), the
+visibility-complete text layer for block deltas, upstream chart data access for
+per-series/category deltas ("FY/South: 20.0 → 25.1"-style) with an honest opaque flag
+for non-category families (kernel `xml_equivalent` decides changed/unchanged), media
+hashes to tell image replacement from move/resize, and the resolver for opt-in
+`detail="full"` effective shifts. `diff(A, A)` is empty across the entire 34-fixture
+corpus (parametrized); the lineage pair reproduces its sidecar's edit list exactly;
+output is goldened and deterministic. Matching contract declared honestly: id matching
+serves lineage-derived decks; rebuilt decks don't match; content-fingerprint fallback is
+a future flag; the id-recycling hazard (delete max id then add) is documented where it
+belongs. Report-only per the plan's prohibition — rendering and scoring are harness
+products built on the report.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
