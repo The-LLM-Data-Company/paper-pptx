@@ -1,0 +1,24 @@
+{
+  "schema": "paper-import-report",
+  "version": 1,
+  "mode": "keep_appearance",
+  "source_slide": "/ppt/slides/slide1.xml",
+  "dest_slide": "/ppt/slides/slide4.xml",
+  "dest_slide_id": 259,
+  "position": 3,
+  "layout_binding": "/ppt/slideLayouts/slideLayout12.xml",
+  "layout_binding_method": "transplant",
+  "parts_added": [
+    "/ppt/slideLayouts/slideLayout12.xml",
+    "/ppt/slideMasters/slideMaster2.xml",
+    "/ppt/slides/slide4.xml",
+    "/ppt/theme/theme2.xml"
+  ],
+  "parts_reused": [],
+  "notes_copied": false,
+  "comments_dropped": 0,
+  "section": null,
+  "baked_shapes": [],
+  "dropped_placeholders": [],
+  "run_shifts": []
+}

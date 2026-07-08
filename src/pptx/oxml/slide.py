@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Callable, cast
 from pptx.oxml import parse_from_template, parse_xml
 from pptx.oxml.dml.fill import CT_GradientFillProperties
 from pptx.oxml.ns import nsdecls, qn
-from pptx.oxml.simpletypes import XsdBoolean, XsdString
+from pptx.oxml.simpletypes import XsdBoolean, XsdString, XsdUnsignedInt
 from pptx.oxml.xmlchemy import (
     BaseOxmlElement,
     Choice,
@@ -302,6 +302,10 @@ class CT_SlideLayoutIdListEntry(BaseOxmlElement):
     """
 
     rId: str = RequiredAttribute("r:id", XsdString)  # pyright: ignore[reportAssignmentType]
+    #: document-unique layout id, schema minimum 2147483648 (paper-pptx addition)
+    id: int | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "id", XsdUnsignedInt
+    )
 
 
 class CT_SlideMaster(_BaseSlideElement):

@@ -25,6 +25,8 @@ from pptx.shared import ElementProxy, ParentedElementProxy, PartElementProxy
 from pptx.util import lazyproperty
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from pptx.oxml.presentation import CT_SlideIdList, CT_SlideMasterIdList
     from pptx.oxml.slide import (
         CT_CommonSlideData,
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
     from pptx.parts.presentation import PresentationPart
     from pptx.parts.slide import SlideLayoutPart, SlideMasterPart, SlidePart
     from pptx.presentation import Presentation
+    from pptx.rebind import RebindReport
     from pptx.shapes.placeholder import LayoutPlaceholder, MasterPlaceholder
     from pptx.shapes.shapetree import NotesSlidePlaceholder
     from pptx.text.text import TextFrame
@@ -182,6 +185,67 @@ class Slide(_BaseSlide):
     """Slide object. Provides access to shapes and slide-level properties."""
 
     part: SlidePart  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    def apply_footers(
+        self,
+        *,
+        footer: str | None = None,
+        slide_number: bool = False,
+        date_format: str | None = None,
+        fixed_date: str | None = None,
+        now: "datetime | None" = None,
+    ) -> None:
+        """Apply the complete footer state to this slide only (the dialog's "Apply").
+
+        paper-pptx addition (v0.11 Phase 2). Same parameters, mechanism, and refusals as
+        :meth:`.Presentation.apply_footers`, restricted to this slide — the per-slide
+        override path (e.g. removing just this slide's footer while the rest of the deck
+        keeps it). Each call sets this slide's full three-element state.
+        """
+        from pptx.hf import apply_slide_footers
+
+        apply_slide_footers(
+            self,
+            footer=footer,
+            slide_number=slide_number,
+            date_format=date_format,
+            fixed_date=fixed_date,
+            now=now,
+        )
+
+    def rebind_layout(
+        self,
+        target_layout: "SlideLayout",
+        *,
+        placeholder_map="auto",
+        orphan_policy: str = "refuse",
+    ) -> "RebindReport":
+        """Move this slide to `target_layout`; return the required |RebindReport|.
+
+        paper-pptx addition (v0.11 Phase 4) — the template-migration *primitive*
+        (bulk-migration workflows stay in the harness). Placeholders reconcile against the
+        target layout: auto-matching binds by exact type+idx, then same type, then
+        interchangeable type family (title/ctrTitle; body/object/subTitle); pass
+        `placeholder_map={source_idx: target_idx | None}` to override any of it (None
+        force-orphans a source). Source placeholders with no destination follow
+        `orphan_policy`: "refuse" (default; typed, atomic) or "bake" — convert to a free
+        shape with inherited geometry materialized and each run's *resolved* effective
+        formatting written locally, so the text keeps its look.
+
+        The report is not optional: the effective-value resolver runs before and after,
+        and every run whose resolved values changed appears with its before/after payloads
+        — a rebind never shifts appearance silently. Same-package only (cross-package
+        composition is `import_slide`'s job); slides carrying `mc:AlternateContent`
+        refuse (shapes inside are invisible to reconciliation).
+        """
+        from pptx.rebind import rebind_layout
+
+        return rebind_layout(
+            self,
+            target_layout,
+            placeholder_map=placeholder_map,
+            orphan_policy=orphan_policy,
+        )
 
     @property
     def follow_master_background(self):

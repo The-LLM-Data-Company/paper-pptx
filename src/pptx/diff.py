@@ -1,0 +1,467 @@
+"""Deck diff - the verification mirror (paper-pptx, v0.11 Phase 6).
+
+PPTX carries no revision markup: a deck is amnesiac about its own history, so "what
+changed between v3 and v4?" has no programmable answer anywhere in the ecosystem. This
+organ provides it as a typed report beside the file - the deck-format analogue of a
+redline - assembled from ingredients v0/v0.1 shipped: permanent slide ids, the
+visibility-complete text layer, the effective-value resolver, and the kernel's semantic
+XML comparison.
+
+The matching contract, declared honestly: slides match by their PERMANENT slide id,
+which serves lineage-derived decks (v4 saved from v3 - the actual use case). Decks
+rebuilt from scratch get fresh ids and will not match; a content-fingerprint fallback is
+a declared future flag, not a v0.11 promise. One documented hazard: deleting the max-id
+slide then adding a new one recycles the id (upstream allocates max+1), which id-based
+matching reads as one edited slide - order add-before-delete when building lineage.
+
+Report-only: no annotated-copy rendering, no visual diffing, no similarity scoring -
+those are harness products built ON this report.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+SCHEMA_NAME = "paper-deck-diff"
+SCHEMA_VERSION = 1
+
+_DETAIL_LEVELS = ("structure", "text", "full")
+
+
+@dataclass(frozen=True)
+class SlideRef:
+    slide_id: int
+    position: int
+    title: Optional[str]
+
+    def to_dict(self) -> dict:
+        return {"slide_id": self.slide_id, "position": self.position, "title": self.title}
+
+
+@dataclass(frozen=True)
+class MovedSlide:
+    slide_id: int
+    from_position: int
+    to_position: int
+
+    def to_dict(self) -> dict:
+        return {
+            "slide_id": self.slide_id,
+            "from_position": self.from_position,
+            "to_position": self.to_position,
+        }
+
+
+@dataclass(frozen=True)
+class SlideChange:
+    """Within-slide deltas for one id-matched slide pair. Empty facets are omitted
+    from the payload, so an all-empty change never appears in `slide_changes`."""
+
+    slide_id: int
+    shapes_added: Tuple[str, ...] = ()
+    shapes_removed: Tuple[str, ...] = ()
+    geometry_changes: Tuple[dict, ...] = ()
+    images_replaced: Tuple[str, ...] = ()
+    chart_data_changes: Tuple[dict, ...] = ()
+    text_changes: Tuple[dict, ...] = ()
+    notes_change: Optional[dict] = None
+    effective_shifts: tuple = ()
+
+    @property
+    def is_empty(self) -> bool:
+        return not (
+            self.shapes_added
+            or self.shapes_removed
+            or self.geometry_changes
+            or self.images_replaced
+            or self.chart_data_changes
+            or self.text_changes
+            or self.notes_change
+            or self.effective_shifts
+        )
+
+    def to_dict(self) -> dict:
+        payload: dict = {"slide_id": self.slide_id}
+        if self.shapes_added:
+            payload["shapes_added"] = list(self.shapes_added)
+        if self.shapes_removed:
+            payload["shapes_removed"] = list(self.shapes_removed)
+        if self.geometry_changes:
+            payload["geometry_changes"] = list(self.geometry_changes)
+        if self.images_replaced:
+            payload["images_replaced"] = list(self.images_replaced)
+        if self.chart_data_changes:
+            payload["chart_data_changes"] = list(self.chart_data_changes)
+        if self.text_changes:
+            payload["text_changes"] = list(self.text_changes)
+        if self.notes_change is not None:
+            payload["notes_change"] = self.notes_change
+        if self.effective_shifts:
+            payload["effective_shifts"] = [s.to_dict() for s in self.effective_shifts]
+        return payload
+
+
+@dataclass(frozen=True)
+class DeckDiff:
+    """The whole comparison. `.to_dict()` is deterministic and goldenable."""
+
+    detail: str
+    slides_added: Tuple[SlideRef, ...] = ()
+    slides_removed: Tuple[SlideRef, ...] = ()
+    slides_moved: Tuple[MovedSlide, ...] = ()
+    slide_changes: Tuple[SlideChange, ...] = field(default_factory=tuple)
+
+    @property
+    def is_empty(self) -> bool:
+        return not (
+            self.slides_added
+            or self.slides_removed
+            or self.slides_moved
+            or self.slide_changes
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": SCHEMA_NAME,
+            "version": SCHEMA_VERSION,
+            "detail": self.detail,
+            "slides_added": [ref.to_dict() for ref in self.slides_added],
+            "slides_removed": [ref.to_dict() for ref in self.slides_removed],
+            "slides_moved": [move.to_dict() for move in self.slides_moved],
+            "slide_changes": [change.to_dict() for change in self.slide_changes],
+        }
+
+
+def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
+    """Compare two decks; return the typed |DeckDiff|.
+
+    `path_a`/`path_b` accept a file path, a file-like object, or an already-open
+    |Presentation|. `detail`: "structure" (slide add/remove/move, shape add/remove,
+    geometry, image replacement), "text" (+ text-block deltas, chart data per
+    series/category, notes), "full" (+ per-run effective-value shifts via the resolver
+    - expensive on large decks, deliberately opt-in).
+
+    Matching is by permanent slide id (lineage-derived decks). One declared hazard:
+    slide ids allocate as max+1, so deleting the highest-id slide and then adding a new
+    one RECYCLES the id, and this diff will read that delete-plus-add as one edited
+    slide - order add-before-delete when producing lineage decks you intend to diff.
+    """
+    if detail not in _DETAIL_LEVELS:
+        raise ValueError(
+            "detail must be one of %s, got %r" % (", ".join(_DETAIL_LEVELS), detail)
+        )
+    from pptx.errors import materialize_slides
+
+    prs_a = _open_deck(path_a)
+    prs_b = _open_deck(path_b)
+
+    order_a = [(slide.slide_id, slide) for slide in materialize_slides(prs_a, "diff_decks")]
+    order_b = [(slide.slide_id, slide) for slide in materialize_slides(prs_b, "diff_decks")]
+    ids_a = [slide_id for slide_id, _ in order_a]
+    ids_b = [slide_id for slide_id, _ in order_b]
+    position_a = {slide_id: index for index, (slide_id, _) in enumerate(order_a)}
+    position_b = {slide_id: index for index, (slide_id, _) in enumerate(order_b)}
+    common = set(ids_a) & set(ids_b)
+
+    slides_added = tuple(
+        SlideRef(slide_id, position_b[slide_id], _title_of(slide))
+        for slide_id, slide in order_b
+        if slide_id not in common
+    )
+    slides_removed = tuple(
+        SlideRef(slide_id, position_a[slide_id], _title_of(slide))
+        for slide_id, slide in order_a
+        if slide_id not in common
+    )
+
+    common_a = [slide_id for slide_id in ids_a if slide_id in common]
+    common_b = [slide_id for slide_id in ids_b if slide_id in common]
+    stationary = _longest_common_subsequence(common_a, common_b)
+    slides_moved = tuple(
+        MovedSlide(slide_id, position_a[slide_id], position_b[slide_id])
+        for slide_id in common_b  # -- destination order, deterministic
+        if slide_id not in stationary
+    )
+
+    slide_a_by_id = dict(order_a)
+    slide_b_by_id = dict(order_b)
+    changes = []
+    for slide_id in common_b:
+        change = _diff_slide(slide_id, slide_a_by_id[slide_id], slide_b_by_id[slide_id], detail)
+        if not change.is_empty:
+            changes.append(change)
+
+    return DeckDiff(
+        detail=detail,
+        slides_added=slides_added,
+        slides_removed=slides_removed,
+        slides_moved=slides_moved,
+        slide_changes=tuple(changes),
+    )
+
+
+def _open_deck(source):
+    """Return a |Presentation| for a path, stream, or Presentation, refusing typed."""
+    from pptx import Presentation
+    from pptx.errors import UnsupportedStructureError
+    from pptx.presentation import Presentation as _PresentationProxy
+
+    if isinstance(source, _PresentationProxy):
+        return source
+    try:
+        return Presentation(source)
+    except Exception as exc:
+        raise UnsupportedStructureError(
+            "diff_decks refused: %r is not a readable presentation package (%s)"
+            % (source, exc)
+        ) from exc
+
+
+# -------------------------------------------------------------------------------- matching
+
+
+def _longest_common_subsequence(sequence_a: "List[int]", sequence_b: "List[int]") -> set:
+    """Ids that kept their relative order; everything else in common reads as moved.
+
+    Between equally-minimal move explanations the DP backtrack is deterministic
+    (preferring earlier pairs); move attribution in a genuine tie is arbitrary but
+    stable, and the from/to positions in each entry show the actual displacement.
+    """
+    len_a, len_b = len(sequence_a), len(sequence_b)
+    dp = [[0] * (len_b + 1) for _ in range(len_a + 1)]
+    for i in range(len_a - 1, -1, -1):
+        for j in range(len_b - 1, -1, -1):
+            if sequence_a[i] == sequence_b[j]:
+                dp[i][j] = dp[i + 1][j + 1] + 1
+            else:
+                dp[i][j] = max(dp[i + 1][j], dp[i][j + 1])
+    kept = set()
+    i = j = 0
+    while i < len_a and j < len_b:
+        if sequence_a[i] == sequence_b[j]:
+            kept.add(sequence_a[i])
+            i += 1
+            j += 1
+        elif dp[i + 1][j] >= dp[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return kept
+
+
+def _title_of(slide) -> "Optional[str]":
+    title = slide.shapes.title
+    if title is None or not title.has_text_frame:
+        return None
+    return title.text_frame.text or None
+
+
+# ---------------------------------------------------------------------- within one slide
+
+
+def _shape_keys(slide) -> "Dict[str, object]":
+    """Deterministic shape key map: unique name, else `<kind>#<ordinal>` (declared
+    fallback for unnamed shapes; duplicate names get the synthetic key too - honest
+    ambiguity handling rather than a guess)."""
+    from lxml import etree
+
+    shapes = list(slide.shapes)
+    names = [shape.name for shape in shapes]
+    keyed = {}
+    kind_counters: "Dict[str, int]" = {}
+    for shape, name in zip(shapes, names):
+        kind = etree.QName(shape._element.tag).localname
+        ordinal = kind_counters.get(kind, 0)
+        kind_counters[kind] = ordinal + 1
+        if name and names.count(name) == 1:
+            keyed[name] = shape
+        else:
+            keyed["%s#%d" % (kind, ordinal)] = shape
+    return keyed
+
+
+def _diff_slide(slide_id, slide_a, slide_b, detail) -> SlideChange:
+    shapes_a = _shape_keys(slide_a)
+    shapes_b = _shape_keys(slide_b)
+    shapes_added = tuple(sorted(set(shapes_b) - set(shapes_a)))
+    shapes_removed = tuple(sorted(set(shapes_a) - set(shapes_b)))
+
+    geometry_changes: "List[dict]" = []
+    images_replaced: "List[str]" = []
+    chart_changes: "List[dict]" = []
+    for key in sorted(set(shapes_a) & set(shapes_b)):
+        shape_a, shape_b = shapes_a[key], shapes_b[key]
+        for facet in ("left", "top", "width", "height", "rotation"):
+            value_a = getattr(shape_a, facet, None)
+            value_b = getattr(shape_b, facet, None)
+            if value_a != value_b:
+                geometry_changes.append(
+                    {"shape": key, "facet": facet, "before": value_a, "after": value_b}
+                )
+        if _image_hash(shape_a) is not None and _image_hash(shape_a) != _image_hash(shape_b):
+            images_replaced.append(key)
+        if detail in ("text", "full") and getattr(shape_a, "has_chart", False) and getattr(
+            shape_b, "has_chart", False
+        ):
+            chart_changes.extend(_diff_chart(key, shape_a.chart, shape_b.chart))
+
+    text_changes: "List[dict]" = []
+    notes_change = None
+    if detail in ("text", "full"):
+        text_changes = _diff_text(slide_a, slide_b)
+        notes_a = _notes_text(slide_a)
+        notes_b = _notes_text(slide_b)
+        if notes_a != notes_b:
+            notes_change = {"before": notes_a, "after": notes_b}
+
+    effective_shifts: tuple = ()
+    if detail == "full":
+        from pptx.rebind import _resolution_state, _shifts_between
+
+        effective_shifts = _shifts_between(
+            _resolution_state(slide_a), _resolution_state(slide_b)
+        )
+
+    return SlideChange(
+        slide_id=slide_id,
+        shapes_added=shapes_added,
+        shapes_removed=shapes_removed,
+        geometry_changes=tuple(geometry_changes),
+        images_replaced=tuple(images_replaced),
+        chart_data_changes=tuple(chart_changes),
+        text_changes=tuple(text_changes),
+        notes_change=notes_change,
+        effective_shifts=effective_shifts,
+    )
+
+
+def _image_hash(shape) -> "Optional[str]":
+    from pptx.shapes.picture import Picture
+
+    if not isinstance(shape, Picture):
+        return None
+    try:
+        return hashlib.sha256(shape.image.blob).hexdigest()[:16]
+    except (KeyError, ValueError):  # pragma: no cover - unloadable image reference
+        return "unreadable"
+
+
+def _diff_chart(key, chart_a, chart_b) -> "List[dict]":
+    """Per-series/category data deltas; falls back to an honest opaque flag when the
+    chart family cannot be read as category data."""
+    from pptx.package import xml_equivalent
+
+    try:
+        data_a = _chart_data(chart_a)
+        data_b = _chart_data(chart_b)
+    except Exception:  # noqa: BLE001 - non-category families: honest opaque comparison
+        from lxml import etree
+
+        equivalent = xml_equivalent(
+            etree.tostring(chart_a._chartSpace), etree.tostring(chart_b._chartSpace)
+        )
+        if equivalent:
+            return []
+        return [
+            {
+                "chart": key,
+                "opaque": True,
+                "note": "chart XML differs (family not comparable per-point)",
+            }
+        ]
+
+    deltas = []
+    categories_a, series_a = data_a
+    categories_b, series_b = data_b
+    if categories_a != categories_b:
+        deltas.append(
+            {"chart": key, "categories_before": categories_a, "categories_after": categories_b}
+        )
+    for series_name in sorted(set(series_a) | set(series_b)):
+        if series_name not in series_a:
+            deltas.append({"chart": key, "series_added": series_name})
+            continue
+        if series_name not in series_b:
+            deltas.append({"chart": key, "series_removed": series_name})
+            continue
+        values_a, values_b = series_a[series_name], series_b[series_name]
+        length = max(len(values_a), len(values_b))
+        for index in range(length):
+            value_a = values_a[index] if index < len(values_a) else None
+            value_b = values_b[index] if index < len(values_b) else None
+            if value_a != value_b:
+                category = None
+                if index < len(categories_b):
+                    category = categories_b[index]
+                elif index < len(categories_a):
+                    category = categories_a[index]
+                deltas.append(
+                    {
+                        "chart": key,
+                        "series": series_name,
+                        "category": category,
+                        "before": value_a,
+                        "after": value_b,
+                    }
+                )
+    return deltas
+
+
+def _chart_data(chart):
+    categories = [str(category) for category in chart.plots[0].categories]
+    series = {}
+    for plot in chart.plots:
+        for one_series in plot.series:
+            series[one_series.name] = tuple(one_series.values)
+    return categories, series
+
+
+def _text_blocks_by_stable_key(slide) -> dict:
+    """Blocks keyed (shape_id, block_ordinal-within-shape) - stable across shape
+    adds/removes elsewhere on the slide, unlike the slide-global block index (which
+    would misattribute every edit below an added or removed shape)."""
+    from pptx.inspect import inspect_text
+
+    keyed = {}
+    block_ordinals: "Dict[int, int]" = {}
+    for block in inspect_text(slide).blocks:
+        ordinal = block_ordinals.get(block.shape_id, 0)
+        block_ordinals[block.shape_id] = ordinal + 1
+        keyed[(block.shape_id, ordinal)] = block
+    return keyed
+
+
+def _diff_text(slide_a, slide_b) -> "List[dict]":
+    blocks_a = _text_blocks_by_stable_key(slide_a)
+    blocks_b = _text_blocks_by_stable_key(slide_b)
+    changes = []
+    for key in sorted(set(blocks_a) | set(blocks_b)):
+        block_a = blocks_a.get(key)
+        block_b = blocks_b.get(key)
+        text_a = block_a.text if block_a is not None else None
+        text_b = block_b.text if block_b is not None else None
+        if text_a != text_b:
+            reference = block_b if block_b is not None else block_a
+            changes.append(
+                {
+                    "shape_id": key[0],
+                    "shape_name": reference.shape_name,
+                    "block_ordinal": key[1],
+                    "before": text_a,
+                    "after": text_b,
+                }
+            )
+    return changes
+
+
+def _notes_text(slide) -> "Optional[str]":
+    from pptx.errors import UnsupportedStructureError
+
+    if not slide.has_notes_slide:
+        return None
+    try:
+        return slide.read_notes_text()
+    except UnsupportedStructureError:  # pragma: no cover - notes part without a body
+        return None

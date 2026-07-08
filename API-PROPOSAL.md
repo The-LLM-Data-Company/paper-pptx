@@ -533,6 +533,165 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     C0 control characters are rejected in find/replace; `SlideShapes.add_copy` validates
     chart child relationships exactly like `Slides.clone`.
 
+## v0.11 amendments (per `agent_docs/PLAN-v0.11-paper-pptx.md`)
+
+- **Phase 1 — table structure operations** (methods on the existing `Table` proxy):
+  - `Table.insert_row(after: int, *, copy_format_from: int | None = None) -> _Row` — new
+    empty row immediately after 0-based row `after` (`-1` = before the first row). Height
+    and per-cell `a:tcPr` formatting copy from `copy_format_from` when given (merge
+    attributes and text never copy); otherwise height copies from the neighboring row.
+  - `Table.delete_row(row_idx: int) -> None`
+  - `Table.insert_column(after: int, *, width: Length | None = None) -> _Column` — width
+    defaults to the neighboring column's.
+  - `Table.delete_column(col_idx: int) -> None`
+  - Grid bookkeeping: every row always holds exactly one `a:tc` per `a:gridCol`
+    (continuation cells included), and the graphic frame's extents are recalculated from
+    the row/column sums after every operation.
+  - Merged-cell guards are **cell-wise** (`UnsupportedStructureError`, atomic, message
+    names each conflicting region): an operation refuses only when its path would cut
+    through a merged region — inserting through a `rowSpan` (rows) or `gridSpan`
+    (columns), deleting a row/column a merge extends beyond. A merge wholly contained in
+    the deleted row/column is removed with it; a merged header never poisons body-row
+    operations.
+  - Programmer errors are `ValueError`: non-int/bool/out-of-range indices, non-positive
+    `width`, deleting the last remaining row or column.
+
+- **Phase 2 — real fields and footer machinery** (machinery in new `pptx.hf`):
+  - `Presentation.apply_footers(*, footer: str | None = None, slide_number: bool = False,
+    date_format: str | None = None, fixed_date: str | None = None,
+    skip_title_slides: bool = False, now: datetime | None = None) -> None` — the dialog's
+    "Apply to All": sets the complete three-element state on every slide (unchecked =
+    placeholder removed). `date_format` takes the ISO 29500 `datetime`..`datetime13`
+    tokens (automatic field); `fixed_date` is the dialog's literal mode; both together is
+    `ValueError`. `now` is the injectable clock seeding datetime cached text.
+  - `Slide.apply_footers(*, footer=..., slide_number=..., date_format=..., fixed_date=...,
+    now=...) -> None` — the per-slide "Apply" (override path).
+  - Persistence contract (per the Phase 0 mechanism findings): minimal placeholder `p:sp`
+    bound to layout furniture by idx; `a:fld` for slide number / automatic date with
+    consumer-refreshed cached text; field ids persist across re-application (identical
+    re-apply is a byte-level no-op); `p:hf` flags never written or flipped.
+  - Refusals (`UnsupportedStructureError`, deck-wide validation before the first write):
+    layout without the needed furniture placeholder; explicit `p:hf` flags disabling a
+    wanted element (nearest declaration wins, layout over master).
+
+- **Phase 3 — scrub** (machinery in new `pptx.scrub`):
+  - `Presentation.scrub(*, notes=False, comments=False, metadata=False,
+    hidden_slides=False, unused_layouts=False, unused_masters=False,
+    unreachable_media=False, embedded_fonts=False) -> ScrubReport` — removes exactly the
+    toggled targets; all-False is a proven no-op. Non-bool toggles are `ValueError`.
+  - `ScrubReport` (typed, frozen, `.to_dict()` with `"paper-scrub-report"` v1): per-
+    category removal lists, `metadata_fields_cleared`, `notes_master_retained`, and the
+    exact zip-member budget (`parts_removed`, `parts_modified`) that tests hold the
+    actual changed-part diff to.
+  - Reachability contract: removals are rel-graph surgery only; anything reachable from
+    a live slide/layout/master cannot be removed. Declared: notes master retained;
+    created/modified/revision core properties retained; modern (2018/10) comment
+    reltypes matched (fixture pending, R12).
+
+- **Phase 4 — layout rebind** (machinery in new `pptx.rebind`):
+  - `Slide.rebind_layout(target_layout, *, placeholder_map="auto",
+    orphan_policy="refuse") -> RebindReport` — same-package only. Auto-match: exact
+    type+idx → same type → type family ({title, ctrTitle}, {body, object, subTitle});
+    slide `p:ph` type/idx rewritten to the bound target slot. `placeholder_map` is
+    `{source_idx: target_idx | None}` overriding auto per entry (None force-orphans).
+  - `orphan_policy`: `"refuse"` (typed, atomic, names the unmatched placeholders) or
+    `"bake"` (free shape with inherited geometry materialized and resolved effective
+    run formatting written locally; field-bearing or geometry-less placeholders refuse).
+  - `RebindReport` (typed, `.to_dict()`, `"paper-rebind-report"` v1): layouts, the
+    mapping used, baked orphans, and `run_shifts` — every run whose *resolved* effective
+    values changed, with full before/after payloads. Required output, never optional.
+    Shift entries identify runs by `(shape_id, block_ordinal, run_index)` — stable keys
+    that survive shapes appearing/disappearing elsewhere on the slide (hardening
+    amendment; a slide-global block index would pair unrelated runs).
+  - Auto-matching runs as three GLOBAL passes — every exact type+idx match settles
+    before any type match, and every type match before any family fallback (hardening
+    amendment: interleaving the tiers per-placeholder let a lower-idx placeholder steal
+    a higher-idx placeholder's exact slot).
+  - Refusals: `UnsupportedStructureError` for orphans-under-refuse, `mc:AlternateContent`
+    slides, un-bakeable orphans; `ValueError` for cross-package targets, the current
+    layout, bad maps/policies.
+
+- **Phase 5 — slide import and deck merge** (machinery in new `pptx.compose`; this
+  section is the PR-gated API proposal the plan requires before implementation):
+  - `Presentation.import_slide(source_prs, slide, *, mode, position=None, notes=True,
+    section=None, target_layout=None) -> ImportReport`
+    - `source_prs`: a different `Presentation` (same-package import is `Slides.clone`;
+      `ValueError` otherwise). The source is read-only — never mutated (the
+      cross-contamination guarantee, byte-tested).
+    - `slide`: a source |Slide| or 0-based int index.
+    - `mode` is REQUIRED with no default — the caller must choose consciously:
+      - `"adopt_theme"`: transplant the slide's content, rebind it (Phase 4 machinery)
+        to a destination layout — auto-selected by layout name, then layout `type`
+        token, else refuse (pass `target_layout`). Placeholders with no destination
+        slot are baked from their SOURCE-resolved effective values. Appearance shifts
+        are reported per run, never silent.
+      - `"keep_appearance"`: transplant the source layout + master + theme chain.
+        Support parts deduplicate by content fingerprint (SHA-256 over the blob with
+        rId tokens normalized, plus child fingerprints): importing ten slides from one
+        source yields ONE master, and a master already transplanted gains additional
+        layouts on demand. Name collisions with existing destination layouts/masters
+        are allowed (names are display strings; parts are distinct).
+      - `"bake"`: snapshot every resolvable run's effective values into explicit
+        properties (source-side resolution), drop dt/ftr/sldNum furniture placeholders
+        (the destination's own `apply_footers` state governs), convert remaining
+        placeholders to free shapes, and attach to a destination layout (auto by
+        name → type → blank-type layout → first layout; `target_layout` overrides).
+        Visually stable without importing masters; blind regions (table cells) carry
+        their explicit formatting as-is.
+    - `position`: 0-based insertion index (None = append). `notes`: copy the speaker
+      notes part (re-linked to the new slide, sharing the destination notes master —
+      created AND enrolled in `p:notesMasterIdLst` when absent) or drop it. `section`:
+      name of an existing destination section to enroll in (`TargetNotFoundError` if
+      absent); None = enroll adjacent to the insertion point when the destination has
+      sections. `ImportReport.section` carries the section actually enrolled in
+      (hardening amendment: the adjacent enrollment is visible, not just the argument).
+      `target_layout`: destination |SlideLayout| override for adopt_theme/bake;
+      `ValueError` with keep_appearance.
+  - `Presentation.append_deck(source_prs, *, mode, notes=True) ->
+    tuple[ImportReport, ...]` — imports every source slide in order at the end, built
+    on `import_slide`. The COMPLETE source deck validates before the first write (a
+    refusal on source slide 7 leaves the destination untouched). Source sections are
+    not copied (destination section structure governs; declared).
+  - `ImportReport` (typed, `.to_dict()`, `"paper-import-report"` v1, deterministic and
+    goldenable): mode, source/destination slide partnames, new slide id, position,
+    layout binding (partname + method: name-match / type-match / explicit /
+    transplanted / blank-fallback / first-fallback), `parts_added`, `parts_reused`
+    (dedupe hits), notes/comments disposition, section enrolled, baked shape names,
+    dropped furniture placeholders, and `run_shifts` (same shape as the rebind
+    report's; expected empty for keep_appearance — a tested invariant).
+  - Transplant policy (the refusal ledger, all validated BEFORE any destination write):
+    charts deep-copy with embedded workbooks and Microsoft style parts (v0 chart-child
+    validation); media ALWAYS copies cross-package (never shared across packages;
+    destination-side blob dedupe applies); external hyperlinks copy; SmartArt carries
+    opaquely (its dgm parts leaf-copied, one media level deep, never edited);
+    comments are dropped (reported — review artifacts don't travel);
+    `RelationshipPolicyError` for OLE objects, ActiveX controls, internal
+    slide-jump hyperlinks, and any relationship type not in the ledger; embedded
+    fonts never travel (presentation-level, out of a slide's graph anyway).
+  - Slide ids allocate as max+1 in the destination (the documented id-reuse hazard
+    from Phase 0 applies to delete-then-import sequences; the diff organ declares it).
+
+- **Phase 6 — deck diff** (new `pptx.diff`):
+  - `diff_decks(path_a, path_b, *, detail="structure") -> DeckDiff` — inputs accept a
+    path, a stream, or an open |Presentation| (hardening amendment); an unreadable
+    package refuses typed. Detail levels:
+    `"structure"` (slide add/remove/move by permanent slide id; shape add/remove by
+    unique name with the declared `<kind>#<ordinal>` fallback for unnamed/duplicate
+    names; geometry deltas; image replacement by media hash), `"text"` (+ text-block
+    deltas via the visibility-complete text layer — entries keyed by
+    `(shape_id, block_ordinal)`, stable across shape adds/removes (hardening
+    amendment) — chart data per series/category with an honest opaque flag for
+    non-category families, notes changes), `"full"` (+ per-run effective-value shifts
+    via the resolver — expensive, opt-in).
+  - `DeckDiff` / `SlideChange` / `SlideRef` / `MovedSlide` (typed, `.to_dict()`,
+    `"paper-deck-diff"` v1, goldenable; `is_empty` for the keystone checks).
+  - Matching contract, declared: permanent slide ids serve lineage-derived decks;
+    rebuilt decks don't match (a content-fingerprint fallback is a future flag, not a
+    v0.11 promise); moves are the ids off the longest common subsequence (tie
+    attribution deterministic but arbitrary, with from/to positions carried);
+    the delete-max-then-add id-recycling hazard is documented.
+  - Report-only: no annotated rendering, no visual diffing, no similarity scoring.
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,

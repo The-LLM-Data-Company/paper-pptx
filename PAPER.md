@@ -366,6 +366,236 @@ regression test:
   `add_copy`, `effective_paragraph_format`, `add_datetime_field`, `table_by_name`, and the
   stale-anchor → `refind` recovery path.
 
+## v0.11 Phase 0: mechanism findings and fixture corpus
+
+Per `agent_docs/PLAN-v0.11-paper-pptx.md`, established from the spec (ISO/IEC 29500-1 §19.3.1.25
+hf, §21.1.2.2.4 fld; the -4 transitional schemas) plus probing real files (PowerPoint-authored
+upstream test decks, the default template, LibreOffice round-trips) — not from memory:
+
+- **Header/footer mechanism.** `p:hf` exists ONLY on layout/master/notesMaster/handoutMaster —
+  never on a slide — and all four attributes (`dt`/`ftr`/`hdr`/`sldNum`) default **true**
+  ("enabled"). Masters and layouts carry dt/ftr/sldNum *placeholder furniture* (default
+  template: master idx 2/3/4, every layout idx 10/11/12; LibreOffice instead numbers layout
+  furniture sequentially and puts none on the master). A slide *shows* footer content only when
+  the placeholder shapes are **materialized on the slide itself** — the dialog's per-slide
+  fingerprint; no upstream-shipped file has them (none has dialog-applied footers), which is
+  exactly what FIXTURE-REQUESTS.md R9 exists to provide. Slide-number/date content is an
+  `a:fld` (`slidenum`, `datetime`–`datetime13`) with a GUID `id` unique per document and a
+  cached-text child that consuming applications refresh on open; footer text is a literal run.
+  Producer evidence: LibreOffice consumed our dialog-style fixture and round-tripped the
+  furniture per slide, honored the slide-3 footer override, **renumbered every `slidenum`
+  cached text** (1–5), and normalized our generic `datetime` fld to `datetime1` with re-cached
+  text — confirming cached text is consumer-owned and fields must never be baked as literals.
+- **Hidden slides.** `show="0"` lives on the slide part's root `p:sld` element (CT_Slide),
+  NOT on `p:sldId` — first probed in the wrong place during authoring, worth writing down.
+  LibreOffice preserves the flag through a round trip.
+- **Table merges.** Origin cells carry `gridSpan`/`rowSpan`; continuation cells are
+  *physically present* with `hMerge`/`vMerge` — so every `a:tr` always holds exactly one
+  `a:tc` per `a:gridCol` (the grid invariant Phase 1 must maintain). LibreOffice round-trips
+  the attributes and cell counts identically to what upstream `_Cell.merge` writes.
+- **Slide-id allocation hazard (for Phase 6 diff).** Upstream `add_slide` allocates slide ids
+  as max+1, so deleting the max-id slide then adding a new one **recycles the deleted id** —
+  id-based lineage matching would read that delete+add as one edited slide. The lineage
+  fixtures pin the clean case (add before delete → fresh id) and the hazard is documented in
+  the `lineage_v2` sidecar for the diff organ's declared contract.
+- **Corpus** grew from 23 to 34 frozen fixtures: `merged_tables`, `footers_applied` (dialog
+  mechanism + hidden slide), `scrub_gauntlet` (classic comments, custom props, embedded font,
+  unused-layout media — zip surgery, honestly labeled), `template_alpha`/`template_beta`
+  (retheme + layout-name collision contract for import/rebind), `lineage_v1`/`v2`/`reorder`
+  (diff ground truth, v2 built from v1's frozen bytes with shipped APIs; exact edit list in
+  the sidecar), plus `lo_merged_tables`/`lo_footers_applied`/`lo_template_alpha` producer
+  variants. Real-PowerPoint counterparts filed day-one as FIXTURE-REQUESTS.md **R9–R14**.
+
+## v0.11 Phase 1: table structure operations
+
+`Table.insert_row/delete_row/insert_column/delete_column` (v0.11 plan Phase 1) — the last
+nearly-API-dark core object gains structure surgery. oxml: `insert_tr_at`/`insert_tc_at`/
+`insert_gridCol_at` position new elements relative to their own siblings so a trailing
+`extLst` stays last. Grid bookkeeping proven directly: after every operation each `a:tr`
+holds exactly one `a:tc` per `a:gridCol` and the graphic frame extents equal the row/column
+sums; whole emitted `a:tbl` elements are schema-validated (fragval oracle, global element —
+no wrapper schema). Merged-cell guards are cell-wise per the plan: refuse only operations
+whose path intersects a merged region (typed, atomic, message names every conflicting
+region); a merged header row is deliberately deletable and never poisons body-row
+operations. `copy_format_from` copies row height and per-cell `a:tcPr` only — merge
+attributes and text never copy. Insert-then-delete round-trips to an empty changed-part
+budget. Cell text edits stay routed through the v0.1 anchored-write path — an integration
+test proves `replace_text`/`replace_text_at` reach table cells including merge origins.
+Producer diversity: the same guards and surgery run against LibreOffice-authored merged
+tables (`lo_merged_tables`).
+
+## v0.11 Phase 2: real fields and footer machinery
+
+`Presentation.apply_footers` / `Slide.apply_footers` (machinery in new `pptx.hf`) — the
+author-and-delegate footer trio, persisting exactly what the dialog persists per the Phase 0
+findings: minimal placeholder shapes materialized per slide (via upstream's own
+`clone_placeholder`, so idx/sz/orient bind to the layout furniture), `slidenum`/`datetime*`
+content as real `a:fld` elements, footer text and fixed dates as literal runs, unchecked
+elements *removed* (with the v0.1 relationship-hygiene delete), `p:hf` never written. The
+package authors fields and never computes their values: `a:fld` cached text is seeded (slide
+position honoring `firstSlideNum`; an injectable `now` for dates) as the consumer-refreshed
+hint the format defines, proven by the LibreOffice renumbering probe. Field ids persist per
+ISO 29500 §21.1.2.2.4, making identical re-application a byte-level no-op. Refusals, atomic
+and validated deck-wide before the first write: layout lacking the furniture to inherit
+from; explicit `p:hf` flags disabling a wanted element (nearest declaration wins,
+layout-over-master; the API never flips flags silently). `inspect_text` reports the applied
+fields as fields with display text excluded from anchors (v0.1 semantics). The static-text
+page-number anti-pattern from the reference's `deck_furniture.py` is dead: renumbering after
+slide moves belongs to consumers, tested structurally. Real-PowerPoint verification is
+RELEASE-CHECKLIST item 11 + FIXTURE-REQUESTS R9.
+
+## v0.11 Phase 3: scrub (the exit gate)
+
+`Presentation.scrub(...)` → `ScrubReport` (new `pptx.scrub`). Every toggle defaults to
+touch-nothing; every removal is relationship-graph surgery, so a part reachable from any
+live slide, layout, or master structurally cannot be removed (parts leave the package only
+by becoming unreachable — the v0 slideops insight, now load-bearing). Targets: notes (notes
+master retained, declared), comments (classic parts in the corpus; modern 2018/10 reltypes
+matched too, real fixture tracked as R12), metadata (core text fields cleared;
+app/custom/thumbnail parts removed; created/modified/revision declared retained),
+hidden slides (via the section-maintaining v0.1 delete), unused layouts (their exclusive
+media orphans with them), unused masters, unreachable media (drops only media rels no XML
+reference uses — referenced media provably untouched), embedded fonts (`p:embeddedFontLst`
++ fntdata parts). The report carries the exact zip-member budget (`parts_removed` computed
+from actual before/after reachability, `parts_modified` tracked per touched member incl.
+the content-types rule) and every test holds the real diff to it member for member; the
+full-scrub report is goldened. Acceptance proven job-shaped: scrub_gauntlet →
+scrub(everything) → reopens clean (relint + section scan + LO smoke), 3 visibly-identical
+slides, zero notes/comments/metadata/fonts, file half the size.
+
+## v0.11 Phase 4: layout rebind
+
+`Slide.rebind_layout(target_layout, *, placeholder_map="auto", orphan_policy="refuse")`
+→ `RebindReport` (new `pptx.rebind`) — the template-migration *primitive*; the migration
+workflow stays in the harness per the plan's prohibition. Auto-matching binds slide
+placeholders by exact type+idx, then same type, then interchangeable family
+(title/ctrTitle; body/object/subTitle — what PowerPoint does when switching layouts),
+rewriting slide `p:ph` type/idx so inheritance binds; an explicit map overrides any of it
+(None force-orphans). Orphans refuse atomically by default or `"bake"`: geometry
+materialized from the resolved inheritance chain (all four values read before any write —
+writing `left` creates an `a:off y="0"` that would poison a later `top` read; found by the
+contract tests), each run's *resolved* effective size/name/color/emphasis written locally
+(underline bakes the exact `u` token — collapsing "none"/"sng" to a bool was a bug this
+phase's own report caught), fields refuse (a baked field freezes volatile content).
+**The report is required, not optional**: the resolver runs before and after and every run
+whose resolved values changed is reported with full before/after payloads — including
+layout-level lstStyle overrides gained/lost (Two Content's 28pt/24pt body overrides show
+up exactly). Baked orphans re-resolve identically (zero shift entries — the bake-fidelity
+proof). Same-package only; `mc:AlternateContent` slides refuse. Cross-template rebind is
+exercised through Phase 5's adopt_theme mode, which consumes this machinery.
+
+## v0.11 Phase 5: slide import and deck merge
+
+`Presentation.import_slide(source_prs, slide, *, mode, position, notes, section,
+target_layout)` and `append_deck` (new `pptx.compose`; API proposed before implementation
+per the plan's PR gate — see API-PROPOSAL.md v0.11 Phase 5). `mode` is required, no
+default: **adopt_theme** (content transplants, rebinds to a destination layout by
+name→type→explicit via the Phase 4 machinery, orphans bake from SOURCE-resolved values,
+shifts reported — Courier New→Georgia shows up run by run), **keep_appearance** (the
+layout+master+theme chain transplants, fingerprint-deduplicated: three imports from one
+source produce ONE master that gains layouts on demand; the zero-shift invariant is
+tested), **bake** (source-side resolution written local, furniture placeholders dropped,
+placeholders freed, attached by name→type→blank→first; zero shifts by construction).
+Transplant core reuses the v0 clone recipes cross-package with the allocated-set partname
+fix. Refusal ledger, typed and validated before any destination write: OLE objects,
+controls, internal slide links, unknown reltypes (`RelationshipPolicyError`); comments
+drop (reported); media ALWAYS copies cross-package; SmartArt carries opaquely (dgm parts
++ media children); charts deep-copy with workbooks; notes re-link to the DESTINATION
+notes master. `mc:AlternateContent` slides refuse for the reconciling modes, transplant
+opaquely under keep_appearance. `append_deck` validates the complete source deck before
+the first write (poisoned-last-slide test). Section enrollment: named section or adjacent
+to the insertion point; id-list scans stay clean. Import report goldened; source
+byte-identity proven after editing the imported chart. Declared: fingerprint dedupe is
+guaranteed within one destination session; a transplanted master pruned to fewer layouts
+no longer fingerprints like its source across sessions. Cross-phase: scrub removes a
+transplanted master (and its chain) once its slides are deleted — the unused-masters
+positive case.
+
+## v0.11 Phase 6: deck diff
+
+`pptx.diff.diff_decks(path_a, path_b, *, detail)` → `DeckDiff` — the verification mirror
+the deck side never had, assembled (not researched) from shipped ingredients: permanent
+slide ids for add/remove/move (moves = ids off the longest common subsequence, so the
+reorder-only fixture reads as exactly one move, never delete-plus-add), the
+visibility-complete text layer for block deltas, upstream chart data access for
+per-series/category deltas ("FY/South: 20.0 → 25.1"-style) with an honest opaque flag
+for non-category families (kernel `xml_equivalent` decides changed/unchanged), media
+hashes to tell image replacement from move/resize, and the resolver for opt-in
+`detail="full"` effective shifts. `diff(A, A)` is empty across all 33 non-corrupt
+fixtures (parametrized; the corrupt-by-construction fixture instead proves the typed
+refusal); the lineage pair reproduces its sidecar's edit list exactly;
+output is goldened and deterministic. Matching contract declared honestly: id matching
+serves lineage-derived decks; rebuilt decks don't match; content-fingerprint fallback is
+a future flag; the id-recycling hazard (delete max id then add) is documented where it
+belongs. Report-only per the plan's prohibition — rendering and scoring are harness
+products built on the report.
+
+## v0.11 release evals: the jobs, frozen, ending in the keystone
+
+Per the plan's definition of done, three job-shaped evals run as standing tests and each
+ends with the Phase 6 self-consistency check — the operation's own report and
+`diff_decks(input, output)` are two independent evidence systems that must agree:
+
+- **QBR refresh** (`test_walkthrough_qbr.py`, extended): the v0.1 hand-rolled per-slide
+  page-number rail is retired for `apply_footers` (real fields; one caption keeps the
+  Phase 2.5 field primitive in play), and the job now ends at the scrub exit gate (talk-
+  track notes kept, metadata/unused layouts/unreachable media gone). The new
+  self-consistency test holds the diff to the job's every action: clones as adds, the
+  autofit slide as the removal, the anchored retitle, the per-category chart delta, the
+  notes replacement, the picture delete, and image-swap-as-replacement.
+- **Pitch-book assembly** (`test_walkthrough_pitchbook.py`, new): library deck + second
+  source, one slide per import mode (adopt takes Georgia, keep travels Courier New with
+  zero shifts, bake freezes locally), the rebind job on a library page, renumbering, and
+  scrub. Self-consistency: import reports and diff agree on exactly the added slide ids;
+  footer application shows as pure additions (before=None) — any edit to library content
+  would fail the eval.
+- **Rebind job** (`test_pitchbook_rebind_report_agrees_with_full_diff` + the Phase 6
+  equivalent): the rebind report's run shifts equal the full-detail diff's effective
+  shifts, run for run.
+
+## v0.11 hardening: final adversarial review findings, all fixed
+
+A five-dimension review panel (additivity, organ bug-hunting, conventions, test quality,
+consumer experience; 35 agents, every finding adversarially verified) ran against the
+complete wave. The additivity audit passed with **no violations**. 29 findings confirmed
+(1 critical, 11 major, 17 minor), every one fixed with a regression test:
+
+- **Critical — resurrected ghost parts:** the compose fingerprint-dedupe cache survived
+  parts leaving the package (imported slide deleted, then scrub removed the transplanted
+  chain); a later import of the same source re-related the ghost while a fresh import had
+  reclaimed its freed partname — two live parts sharing one partname, duplicate zip
+  members with different content, a master reachable but unregistered. Cache hits are now
+  liveness-checked (reachable from the package root, or created in the same import call)
+  and stale entries evicted; the exact import/delete/scrub/reimport cycle is a test.
+- **Majors:** scrub resolved every slide's layout unconditionally and AFTER mutating
+  passes — a broken layout relationship crashed raw and non-atomically, and even
+  all-toggles-False scrub crashed instead of returning its promised empty report (now
+  gated + validated up front, typed refusal); the `[Content_Types].xml` budget heuristic
+  missed override-typed media like SVG (now mirrors the serializer's actual Default/
+  Override rule); shift detection keyed runs by slide-global block index, pairing
+  unrelated runs whenever a shape was added or removed — rebind/import/diff states are
+  now keyed `(shape_id, block_ordinal, run_index)` and the diff's text deltas by the
+  same stable scheme (the pinned-anchor-rule violation in text matching, fixed
+  together); placeholder pictures crashed the reconciling import modes
+  (`has_text_frame` guard); rebind auto-matching interleaved its tiers per placeholder,
+  letting a lower-idx placeholder steal a higher-idx placeholder's exact slot (now three
+  global passes); `append_deck` leaked a raw KeyError on a broken source;
+  `ImportReport.section` reported the argument, not the actual (adjacent) enrollment;
+  plus five test-quality majors — left-edge merge-guard boundary, whitespace text
+  deltas in diff, all-eleven metadata fields, emphasis-facet shifts, field-path rPr
+  preservation — each now a real test that a mutant fails.
+- **Minors:** scrub(metadata) no longer creates a core-properties part on decks without
+  one; duplicate furniture placeholders converge to the dialog's one-per-kind state;
+  an import-created notes master is enrolled in `p:notesMasterIdLst` (upstream's lazy
+  creation relates but never enrolls); compose id-list entries build through the oxml
+  machinery (new `CT_NotesMasterIdList`/entry classes; `id` attributes modeled on the
+  layout/master entries); `diff_decks` accepts open Presentations and refuses typed on
+  unreadable packages, and its docstring declares the id-recycling hazard; hf refusals
+  name the flag-carrying layout/master; the vacuous rebuilt-deck diff test asserts the
+  real contract; section-enrollment order and refusal atomicity asserted; ScrubReport's
+  two addressing conventions documented; PAPER's "entire corpus" self-diff claim
+  corrected to the 33 non-corrupt fixtures.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

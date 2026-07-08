@@ -70,3 +70,21 @@ def assert_bodyPr_fragment_valid(text_frame) -> None:
     assert not errors, (
         "emitted a:bodyPr fragment fails schema validation:\n%s" % "\n".join(errors)
     )
+
+
+def assert_tbl_fragment_valid(table) -> None:
+    """Assert a table's complete `a:tbl` element validates against ECMA-376 CT_Table.
+
+    The v0.11 Phase 1 oracle: row/column surgery rewrites `a:tr`/`a:tc`/`a:gridCol`
+    structure, so the whole emitted table element is validated, not just one fragment.
+    `a:tbl` is already a global element in dml-main.xsd, so no wrapper schema is needed.
+    """
+    key = ("__global__", "tbl")
+    if key not in _schema_cache:
+        _schema_cache[key] = etree.XMLSchema(etree.parse(str(_SPEC_XSD_DIR / "dml-main.xsd")))
+    schema = _schema_cache[key]
+    fragment = etree.fromstring(etree.tostring(table._tbl))
+    assert schema.validate(fragment), (
+        "emitted a:tbl fragment fails schema validation:\n%s"
+        % "\n".join(str(entry) for entry in schema.error_log)
+    )

@@ -38,6 +38,14 @@ normalize autofit — whichever organs the release ships). Once the real-PowerPo
 10. **Save-and-reopen from PowerPoint** — File → Save As a new copy from PowerPoint, reopen
     that copy with this package (`Presentation(path)`), and confirm it loads. This catches
     output PowerPoint tolerates but silently rewrites.
+11. **Live fields and footers (v0.11 Phase 2)** — generate a deck with
+    `prs.apply_footers(footer="Checklist", slide_number=True, date_format="datetime1")` and
+    open it in PowerPoint: every slide shows the footer, a date, and a *live* slide number.
+    Drag a slide to a new position — the numbers renumber immediately (they are fields, not
+    literals). Open Insert → Header & Footer: the dialog shows the applied state (boxes
+    checked, footer text present), and clicking "Apply to All" from that dialog does NOT
+    duplicate or orphan the placeholders our API wrote (slide count of footer shapes stays
+    one per slide; PowerPoint recognizes ours as its own).
 
 Any failure: file it with a frozen fixture reproducing the problem and a failing test before
 the fix merges ("no fix without a fixture", CONVENTIONS §4).

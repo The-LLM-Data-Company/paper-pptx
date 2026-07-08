@@ -581,6 +581,228 @@ def test_hf_flags_ground_truth():
     assert layout_hf_proxy.footer_visible is None
 
 
+# ------------------------------------------------------------------- v0.11 Phase 0 fixtures
+
+
+def _table_rows(relpath):
+    slide = _member_xml(relpath, "ppt/slides/slide1.xml")
+    tbl = slide.find(".//{%s}tbl" % _A)
+    assert tbl is not None
+    grid_cols = tbl.find("{%s}tblGrid" % _A).findall("{%s}gridCol" % _A)
+    rows = tbl.findall("{%s}tr" % _A)
+    return grid_cols, [tr.findall("{%s}tc" % _A) for tr in rows]
+
+
+@pytest.mark.parametrize(
+    "relpath", ["self_generated/merged_tables.pptx", "libreoffice_export/lo_merged_tables.pptx"]
+)
+def test_merged_tables_ground_truth(relpath):
+    ground_truth = _ground_truth(relpath)
+    grid_cols, rows = _table_rows(relpath)
+    assert len(grid_cols) == ground_truth["grid_col_count"]
+    assert len(rows) == ground_truth["row_count"]
+    # -- the grid invariant: every row holds exactly one a:tc per a:gridCol
+    assert all(len(row) == len(grid_cols) for row in rows)
+    assert rows[0][0].get("gridSpan") == "4"
+    assert all(rows[0][col].get("hMerge") == "1" for col in (1, 2, 3))
+    assert rows[2][0].get("rowSpan") == "2"
+    assert rows[3][0].get("vMerge") == "1"
+    header_text = "".join(t.text or "" for t in rows[0][0].iter("{%s}t" % _A))
+    assert header_text == "Merged header"
+
+
+def _hf_placeholders(slide):
+    """Map ph type -> (idx, fld types, all text) for dt/ftr/sldNum placeholders on `slide`."""
+    found = {}
+    for sp in slide.iter("{%s}sp" % _P):
+        ph = sp.find(".//{%s}nvSpPr/{%s}nvPr/{%s}ph" % (_P, _P, _P))
+        if ph is None or ph.get("type") not in ("dt", "ftr", "sldNum"):
+            continue
+        flds = [f.get("type") for f in sp.findall(".//{%s}fld" % _A)]
+        text = "".join(t.text or "" for t in sp.iter("{%s}t" % _A))
+        found[ph.get("type")] = (int(ph.get("idx")), flds, text)
+    return found
+
+
+@pytest.mark.parametrize(
+    "relpath",
+    ["self_generated/footers_applied.pptx", "libreoffice_export/lo_footers_applied.pptx"],
+)
+def test_footers_applied_ground_truth(relpath):
+    ground_truth = _ground_truth(relpath)
+    for ordinal in range(1, 6):
+        slide = _member_xml(relpath, "ppt/slides/slide%d.xml" % ordinal)
+        found = _hf_placeholders(slide)
+        assert ("ftr" in found) == (ordinal in ground_truth["slides_with_ftr_placeholder"])
+        assert "dt" in found
+        assert "sldNum" in found
+        sldnum_idx, sldnum_flds, sldnum_text = found["sldNum"]
+        assert sldnum_flds == ["slidenum"]
+        if ground_truth["sldNum_cached_text_equals_ordinal"]:
+            assert sldnum_text == str(ordinal)
+        if "ftr" in found:
+            assert found["ftr"][2] == ground_truth["footer_text"]
+            assert found["ftr"][1] == []  # -- footer is a literal, never a field
+    if "hidden_slide_ordinal" in ground_truth:
+        # -- `show` lives on the slide part's ROOT `p:sld` element (CT_Slide), never on
+        # -- the presentation's p:sldId entries (a Phase 0 mechanism finding)
+        hidden = [
+            ordinal
+            for ordinal in range(1, 6)
+            if _member_xml(relpath, "ppt/slides/slide%d.xml" % ordinal).get("show") == "0"
+        ]
+        assert hidden == [ground_truth["hidden_slide_ordinal"]]
+
+
+def test_footers_applied_hf_absent_everywhere():
+    ground_truth = _ground_truth("self_generated/footers_applied.pptx")
+    assert ground_truth["p_hf_absent_everywhere"] is True
+    for member in _member_names("self_generated/footers_applied.pptx"):
+        if member.startswith(("ppt/slides/slide", "ppt/slideLayouts/", "ppt/slideMasters/")):
+            if not member.endswith(".xml"):
+                continue
+            root = _member_xml("self_generated/footers_applied.pptx", member)
+            assert root.find("{%s}hf" % _P) is None, member
+
+
+def test_scrub_gauntlet_ground_truth():
+    relpath = "self_generated/scrub_gauntlet.pptx"
+    ground_truth = _ground_truth(relpath)
+    members = _member_names(relpath)
+    assert ground_truth["comments_part"] in members
+    assert ground_truth["comment_authors_part"] in members
+    assert ground_truth["custom_props_part"] in members
+    assert ground_truth["embedded_font_part"] in members
+    assert ground_truth["unused_layout_media_part"] in members
+
+    comments = _member_xml(relpath, ground_truth["comments_part"])
+    texts = [t.text for t in comments.iter("{%s}text" % _P)]
+    assert texts == ground_truth["comment_texts"]
+    authors = _member_xml(relpath, ground_truth["comment_authors_part"])
+    assert [a.get("name") for a in authors] == [ground_truth["comment_author_name"]]
+
+    presentation = _member_xml(relpath, "ppt/presentation.xml")
+    fontLst = presentation.find("{%s}embeddedFontLst" % _P)
+    assert fontLst is not None
+    typeface = fontLst.find(".//{%s}font" % _P).get("typeface")
+    assert typeface == ground_truth["embedded_font_typeface"]
+
+    # -- the unused-layout picture is the ONLY reference to its media part
+    layout = _member_xml(relpath, ground_truth["unused_layout_part"])
+    assert layout.find(".//{%s}pic" % _P) is not None
+    # -- no slide references the unused layout (that is what makes it unused)
+    for member in members:
+        if member.startswith("ppt/slides/_rels/"):
+            rels = _member_xml(relpath, member)
+            targets = [r.get("Target") for r in rels]
+            assert not any("slideLayout4.xml" in t for t in targets)
+
+    notes_members = [m for m in members if m.startswith("ppt/notesSlides/notesSlide")]
+    assert len(notes_members) == len(ground_truth["slides_with_notes"])
+
+
+@pytest.mark.parametrize(
+    ("relpath", "expect"),
+    [
+        ("self_generated/template_alpha.pptx", ("Paper Alpha", "Georgia", "Verdana", "AA3311")),
+        (
+            "libreoffice_export/lo_template_alpha.pptx",
+            ("Paper Alpha", "Georgia", "Verdana", "AA3311"),
+        ),
+        (
+            "self_generated/template_beta.pptx",
+            ("Paper Beta", "Courier New", "Times New Roman", "1166BB"),
+        ),
+    ],
+)
+def test_template_identity_ground_truth(relpath, expect):
+    name, major, minor, accent1 = expect
+    theme = _member_xml(relpath, "ppt/theme/theme1.xml")
+    assert theme.get("name") == name
+    font_scheme = theme.find("{%s}themeElements/{%s}fontScheme" % (_A, _A))
+    assert font_scheme.find("{%s}majorFont/{%s}latin" % (_A, _A)).get("typeface") == major
+    assert font_scheme.find("{%s}minorFont/{%s}latin" % (_A, _A)).get("typeface") == minor
+    accent = theme.find(
+        "{%s}themeElements/{%s}clrScheme/{%s}accent1/{%s}srgbClr" % (_A, _A, _A, _A)
+    )
+    assert accent.get("val") == accent1
+
+
+def test_template_pair_layout_name_contract():
+    """Every alpha layout name exists in beta except beta's renamed 'Beta Special' —
+    the import-collision fixture requirement (FIXTURE-REQUESTS.md R10)."""
+
+    def layout_names(relpath):
+        names = set()
+        for member in _member_names(relpath):
+            if member.startswith("ppt/slideLayouts/slideLayout") and member.endswith(".xml"):
+                root = _member_xml(relpath, member)
+                names.add(root.find("{%s}cSld" % _P).get("name"))
+        return names
+
+    alpha = layout_names("self_generated/template_alpha.pptx")
+    beta = layout_names("self_generated/template_beta.pptx")
+    assert "Beta Special" in beta
+    assert "Beta Special" not in alpha
+    assert "Title Only" in alpha
+    assert "Title Only" not in beta
+    assert alpha - {"Title Only"} == beta - {"Beta Special"}  # -- everything else collides
+
+
+def _slide_ids(relpath):
+    presentation = _member_xml(relpath, "ppt/presentation.xml")
+    return [int(s.get("id")) for s in presentation.find("{%s}sldIdLst" % _P)]
+
+
+def test_lineage_slide_id_ground_truth():
+    assert _slide_ids("self_generated/lineage_v1.pptx") == [256, 257, 258, 259, 260]
+    assert _slide_ids("self_generated/lineage_v2.pptx") == [257, 256, 258, 259, 261]
+    assert _slide_ids("self_generated/lineage_reorder.pptx") == [260, 256, 257, 258, 259]
+    # -- the sidecars carry the same claim (they are the diff organ's ground truth)
+    for name in ("lineage_v1", "lineage_v2", "lineage_reorder"):
+        ground_truth = _ground_truth("self_generated/%s.pptx" % name)
+        assert ground_truth["slide_ids"] == _slide_ids("self_generated/%s.pptx" % name)
+
+
+def test_lineage_reorder_is_content_identical_to_v1():
+    """The reorder-only variant differs from v1 ONLY in presentation.xml slide order:
+    every slide/notes/chart member byte-matches some member of v1."""
+    v1_map = zip_member_map(corpus.fixture_path("self_generated/lineage_v1.pptx").read_bytes())
+    reorder_map = zip_member_map(
+        corpus.fixture_path("self_generated/lineage_reorder.pptx").read_bytes()
+    )
+    assert set(v1_map) == set(reorder_map)
+    for member, payload in reorder_map.items():
+        if member.startswith(("ppt/slides/slide", "ppt/notesSlides/", "ppt/charts/")):
+            assert payload in v1_map.values(), "%s not byte-identical to any v1 member" % member
+
+
+def test_lineage_v2_edits_ground_truth():
+    relpath = "self_generated/lineage_v2.pptx"
+    ground_truth = _ground_truth(relpath)
+    ops = {edit["op"] for edit in ground_truth["edits"]}
+    assert ops == {
+        "text", "chart_data", "notes", "geometry", "image_replace",
+        "add_slide", "delete_slide", "move_slide",
+    }
+    # -- spot-verify against bytes: retitle landed, deleted title gone, new title present.
+    # -- Slide partnames are NOT contiguous after delete+add (slide5.xml gone, slide6.xml
+    # -- new) - iterate the actual members.
+    def all_text(root):
+        return "".join(t.text or "" for t in root.iter("{%s}t" % _A))
+
+    slide_members = sorted(
+        m
+        for m in _member_names(relpath)
+        if m.startswith("ppt/slides/slide") and m.endswith(".xml")
+    )
+    assert len(slide_members) == 5
+    texts = [all_text(_member_xml(relpath, member)) for member in slide_members]
+    assert any("Lineage slide one, retitled" in t for t in texts)
+    assert not any("Lineage slide five" in t for t in texts)
+    assert any("Lineage slide six, new" in t for t in texts)
+
+
 # ------------------------------------------------------------------- independent loader smoke
 
 
