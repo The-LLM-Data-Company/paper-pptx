@@ -75,14 +75,15 @@ def _build_qbr_deck(tmp_path):
     # -- declutter the chart slide (Phase 1.2): drop its decorative picture, rel-safely
     chart_slide.shapes.delete(chart_slide.shapes.picture_by_name("gauntlet_img_1"))
 
-    # -- image swap by name (Phase 1.3), geometry preserved (same-format PNG)
+    # -- image swap by name (Phase 1.3), across formats (Phase 2.3: the brand asset arrives
+    # -- as a JPEG), geometry preserved
     from PIL import Image as PILImage
 
     replacement = io.BytesIO()
-    PILImage.new("RGB", (64, 64), (10, 90, 160)).save(replacement, format="PNG")
+    PILImage.new("RGB", (64, 64), (10, 90, 160)).save(replacement, format="JPEG")
     closing = prs.slides[-1]
     picture = closing.shapes.picture_by_name("gauntlet_img_2")
-    picture.replace_image(io.BytesIO(replacement.getvalue()))
+    picture.replace_image(io.BytesIO(replacement.getvalue()), allow_format_change=True)
     # -- and pull the footer rail behind everything on the closing slide (z-order)
     closing.shapes.move(closing.shapes[-1], 0)
 
@@ -157,24 +158,20 @@ def test_step_check_brand_accent_via_effective_shape_format():
     from pptx.inspect import effective_shape_format  # noqa: F401
 
 
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.3: cross-format image replace")
-def test_step_swap_logo_across_image_formats(tmp_path):
-    import inspect as stdlib_inspect
-
-    from pptx.shapes.picture import Picture
-
-    assert "allow_format_change" in stdlib_inspect.signature(
-        Picture.replace_image
-    ).parameters
-
-
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.4: workbook-less chart update")
 def test_step_update_libreoffice_authored_chart():
+    """Phase 2.4 step (was xfail): the externally-produced deck's chart takes new numbers."""
     prs = Presentation(str(corpus.fixture_path("libreoffice_export/lo_chart_notes.pptx")))
-    chart = prs.slides[0].shapes[1].chart if prs.slides[0].shapes[1].has_chart else (
-        next(sh.chart for sh in prs.slides[0].shapes if sh.has_chart)
-    )
-    chart.replace_data_safe(["A", "B"], [("S1", (1.0, 2.0))])  # -- refuses today
+    chart = next(sh.chart for sh in prs.slides[0].shapes if sh.has_chart)
+    chart.replace_data_safe(["A", "B"], [("S1", (1.0, 2.0))])
+    reopened = Presentation(io.BytesIO(_bytes_of(prs)))
+    reopened_chart = next(sh.chart for sh in reopened.slides[0].shapes if sh.has_chart)
+    assert [(s.name, tuple(s.values)) for s in reopened_chart.series] == [("S1", (1.0, 2.0))]
+
+
+def _bytes_of(prs):
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
 
 
 @pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.5: real slide-number fields")

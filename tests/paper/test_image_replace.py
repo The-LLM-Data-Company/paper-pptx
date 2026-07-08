@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from lxml import etree
 from PIL import Image as PILImage
 
 from pptx import Presentation
@@ -176,6 +177,55 @@ def test_unrecognizable_image_bytes_raise_valueerror_atomically():
     with pytest.raises(ValueError, match="not a recognizable image"):
         _cropped_picture(prs).replace_image(io.BytesIO(b"this is not an image at all"))
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
+
+
+def test_cross_format_swap_with_allow_format_change(tmp_path):
+    """v0.1 2.3: PNG -> JPEG swap; geometry and crop byte-untouched; content types follow."""
+    prs = _open(GAUNTLET)
+    picture = _cropped_picture(prs)
+    spPr_before = etree.tostring(picture._pic.spPr)
+    crop_before = (picture.crop_left, picture.crop_top)
+
+    from PIL import Image as PILImage
+
+    jpeg = io.BytesIO()
+    PILImage.new("RGB", (32, 32), (200, 100, 50)).save(jpeg, format="JPEG")
+    picture.replace_image(io.BytesIO(jpeg.getvalue()), allow_format_change=True)
+
+    saved = save_to_bytes(prs)
+    zip_map = zip_member_map(saved)
+    assert any(n.startswith("ppt/media/") and n.endswith(".jpg") for n in zip_map)
+    assert b"jpeg" in zip_map["[Content_Types].xml"] or b"jpg" in (
+        zip_map["[Content_Types].xml"]
+    )
+    assert dangling_relationship_targets(zip_map) == []
+    assert missing_relationship_references(zip_map) == []
+
+    reopened = Presentation(io.BytesIO(saved))
+    reopened_pic = _cropped_picture(reopened)
+    assert etree.tostring(reopened_pic._pic.spPr) == spPr_before
+    assert (reopened_pic.crop_left, reopened_pic.crop_top) == crop_before
+    assert reopened_pic.image.ext in ("jpg", "jpeg")
+
+
+def test_cross_format_swap_still_refuses_by_default():
+    prs = _open(GAUNTLET)
+    from PIL import Image as PILImage
+
+    jpeg = io.BytesIO()
+    PILImage.new("RGB", (16, 16), (1, 2, 3)).save(jpeg, format="JPEG")
+
+    def operation(p):
+        _cropped_picture(p).replace_image(io.BytesIO(jpeg.getvalue()))
+
+    raised = assert_refusal_atomic(prs, operation, UnsupportedStructureError)
+    assert "allow_format_change" in str(raised)
+
+
+def test_allow_format_change_rejects_non_bool():
+    prs = _open(GAUNTLET)
+    with pytest.raises(ValueError):
+        _cropped_picture(prs).replace_image(io.BytesIO(_png_bytes()), allow_format_change=1)
 
 
 def test_replace_keeps_relationship_alive_for_sibling_picture_sharing_it():

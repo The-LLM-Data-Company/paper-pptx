@@ -23,7 +23,12 @@ from pptx.errors import (
 from pptx.util import Inches
 
 from . import corpus
-from .contract import assert_changed_parts, assert_refusal_atomic, save_to_bytes
+from .contract import (
+    assert_changed_parts,
+    assert_refusal_atomic,
+    save_to_bytes,
+    zip_member_map,
+)
 from .lo import lo_load_smoke
 
 CHART_NOTES = "self_generated/chart_notes.pptx"
@@ -121,18 +126,29 @@ def test_data_shape_problems_are_valueerrors_and_leave_the_chart_untouched(bad_c
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
 
 
-def test_refuses_chart_without_embedded_workbook():
-    """LibreOffice charts have no c:externalData; replacing would desync XML and workbook."""
+def test_updates_workbookless_libreoffice_chart_xml_only():
+    """v0.1 2.4 (previously a refusal): LibreOffice charts carry no c:externalData; the
+    series rewriter runs against chart XML alone and no workbook is invented."""
     prs = _open(LO_CHART_NOTES)
     chart_shape_name = next(s for s in prs.slides[0].shapes if s.has_chart).name
+    before = save_to_bytes(prs)
 
-    def operation(p):
-        chart = p.slides[0].shapes.chart_by_name(chart_shape_name)
-        chart.replace_data_safe(["x"], [("a", (1,))])
+    chart = prs.slides[0].shapes.chart_by_name(chart_shape_name)
+    chart.replace_data_safe(["North", "South"], [("FY25", (3.25, 4.5))])
+    after = save_to_bytes(prs)
+    assert_changed_parts(before, after, expect_changed=["ppt/charts/chart1.xml"])
+    assert not any(
+        n.startswith("ppt/embeddings/") for n in zip_member_map(after)
+    )  # -- still workbook-less: nothing invented
 
-    raised = assert_refusal_atomic(prs, operation, UnsupportedStructureError)
-    assert "no embedded workbook" in str(raised)
-    assert isinstance(raised, PaperRefusal)
+    reopened_chart = (
+        Presentation(io.BytesIO(after)).slides[0].shapes.chart_by_name(chart_shape_name)
+    )
+    assert [(s.name, tuple(s.values)) for s in reopened_chart.series] == [
+        ("FY25", (3.25, 4.5))
+    ]
+    plot = reopened_chart.plots[0]
+    assert list(plot.categories) == ["North", "South"]
 
 
 def test_refuses_unsupported_chart_types_atomically():
