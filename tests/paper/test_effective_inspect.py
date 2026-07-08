@@ -363,6 +363,93 @@ def test_out_of_schema_indent_level_refuses_instead_of_crashing():
         run.effective_font()
 
 
+# --------------------------------------------------------- v0.1 Phase 2.2 walk extensions
+
+
+def test_bold_italic_underline_resolve_with_schema_defaults():
+    prs = _open(BRANDED)
+    run = prs.slides[0].placeholders[1].text_frame.paragraphs[0].runs[0]
+    font = run.effective_font()
+    assert font.bold.value is False and font.bold.resolved is True
+    assert font.bold.provenance[-1].level == "schema default"
+    assert font.italic.value is False and font.italic.resolved is True
+    assert font.underline.value == "none" and font.underline.resolved is True
+
+    run.font.bold = True
+    run.font.underline = True  # -- upstream writes u="sng"
+    font = run.effective_font()
+    assert font.bold.value is True
+    assert font.bold.provenance[-1].level == "run rPr"
+    assert font.underline.value == "sng"
+
+
+def test_effective_paragraph_format_resolves_alignment_and_spacing():
+    from pptx.enum.text import PP_ALIGN
+    from pptx.inspect import effective_paragraph_format
+
+    prs = _open(BRANDED)
+    paragraph = prs.slides[0].placeholders[1].text_frame.paragraphs[0]
+    fmt = effective_paragraph_format(paragraph)
+    assert fmt.alignment.value == "l"  # -- master bodyStyle supplies algn="l"
+    assert any(s.supplied and "bodyStyle" in s.level for s in fmt.alignment.provenance)
+    assert fmt.line_spacing.value == 1.0  # -- rendering default, explicitly provenanced
+    assert fmt.line_spacing.provenance[-1].level == "rendering default"
+
+    paragraph.alignment = PP_ALIGN.CENTER
+    paragraph.line_spacing = 1.5
+    fmt = effective_paragraph_format(paragraph)
+    assert fmt.alignment.value == "ctr"
+    assert fmt.alignment.provenance[0].supplied is True  # -- paragraph pPr wins
+    assert fmt.line_spacing.value == 1.5
+
+    payload = fmt.to_dict()
+    assert payload["schema"] == "paper-effective-paragraph-format"
+    assert payload["version"] == 1
+
+
+def test_effective_shape_format_resolves_explicit_fill_through_clrmap():
+    """The gap-review probe case: the rectangle behind the text, resolved like the text."""
+    from pptx.inspect import effective_shape_format
+
+    prs = _open(CLRMAP)
+    rect = prs.slides[0].shapes.shape_by_name("accent1_box")
+    fmt = effective_shape_format(rect)
+    assert fmt.fill_rgb.value == "C0504D"  # -- accent1 -> clrMap -> theme accent2
+    assert fmt.fill_rgb.resolved is True
+    assert any("clrMap" in s.detail or "clrMap" in s.level for s in fmt.fill_rgb.provenance)
+
+    # -- line color comes only from the style lnRef: honestly unresolved, reference
+    # -- color carried in provenance
+    assert fmt.line_rgb.resolved is False
+    assert any("C0504D" in s.detail for s in fmt.line_rgb.provenance)
+
+    payload = fmt.to_dict()
+    assert payload["schema"] == "paper-effective-shape-format"
+    assert payload["version"] == 1
+
+
+def test_effective_shape_format_reports_nofill_and_absent_fill_honestly():
+    from pptx.inspect import effective_shape_format
+
+    prs = _open(CLRMAP)
+    rect = prs.slides[0].shapes.shape_by_name("accent1_box")
+    rect.fill.background()  # -- a:noFill
+    fmt = effective_shape_format(rect)
+    assert fmt.fill_rgb.value == "none"
+    assert fmt.fill_rgb.resolved is True
+
+    # -- upstream textboxes carry an explicit a:noFill too
+    box = prs.slides[0].shapes.shape_by_name("tx1_text")
+    assert effective_shape_format(box).fill_rgb.value == "none"
+
+    # -- a placeholder with an empty spPr and no p:style is honestly unresolved
+    branded = _open(BRANDED)
+    title = branded.slides[0].shapes.title
+    fmt = effective_shape_format(title)
+    assert fmt.fill_rgb.resolved is False
+    assert fmt.fill_rgb.value is None
+
+
 def test_effective_font_payload_carries_pinned_schema_keys():
     payload = (
         _open(BRANDED).slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
@@ -370,7 +457,7 @@ def test_effective_font_payload_carries_pinned_schema_keys():
         .to_dict()
     )
     assert payload["schema"] == "paper-effective-font"
-    assert payload["version"] == 1
+    assert payload["version"] == 2  # -- v2 since Phase 2.2: bold/italic/underline added
 
 
 def test_content_hash_treats_whitespace_as_content():

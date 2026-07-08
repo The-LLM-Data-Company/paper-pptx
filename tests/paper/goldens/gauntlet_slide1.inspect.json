@@ -24,7 +24,7 @@
           "text": "Gauntlet: branded",
           "font": {
             "schema": "paper-effective-font",
-            "version": 1,
+            "version": 2,
             "size": {
               "value": 457200,
               "value_pt": 36.0,
@@ -159,6 +159,153 @@
                   "supplied": true
                 }
               ]
+            },
+            "bold": {
+              "value": 0,
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "no bold here",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles titleStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no bold here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "bold defaults to false",
+                  "supplied": true
+                }
+              ]
+            },
+            "italic": {
+              "value": 0,
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "no italic here",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles titleStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no italic here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "italic defaults to false",
+                  "supplied": true
+                }
+              ]
+            },
+            "underline": {
+              "value": "none",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "no underline here",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles titleStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no underline here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "underline defaults to \"none\"",
+                  "supplied": true
+                }
+              ]
             }
           }
         }
@@ -184,7 +331,7 @@
           "text": "Inherited body level one",
           "font": {
             "schema": "paper-effective-font",
-            "version": 1,
+            "version": 2,
             "size": {
               "value": 330200,
               "value_pt": 26.0,
@@ -325,6 +472,153 @@
                   "supplied": true
                 }
               ]
+            },
+            "bold": {
+              "value": 0,
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no bold here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "bold defaults to false",
+                  "supplied": true
+                }
+              ]
+            },
+            "italic": {
+              "value": 0,
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no italic here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "italic defaults to false",
+                  "supplied": true
+                }
+              ]
+            },
+            "underline": {
+              "value": "none",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no underline here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "underline defaults to \"none\"",
+                  "supplied": true
+                }
+              ]
             }
           }
         }
@@ -350,7 +644,7 @@
           "text": "Inherited body level two",
           "font": {
             "schema": "paper-effective-font",
-            "version": 1,
+            "version": 2,
             "size": {
               "value": 279400,
               "value_pt": 22.0,
@@ -494,6 +788,153 @@
                   "level": "theme clrScheme lt1",
                   "part": "/ppt/theme/theme1.xml",
                   "detail": "sysClr val=\"window\" lastClr=\"FFFFFF\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "bold": {
+              "value": 0,
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl2",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl2",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no bold here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "bold defaults to false",
+                  "supplied": true
+                }
+              ]
+            },
+            "italic": {
+              "value": 0,
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl2",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl2",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no italic here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "italic defaults to false",
+                  "supplied": true
+                }
+              ]
+            },
+            "underline": {
+              "value": "none",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl2",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl2",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "no underline here",
+                  "supplied": false
+                },
+                {
+                  "level": "schema default",
+                  "part": null,
+                  "detail": "underline defaults to \"none\"",
                   "supplied": true
                 }
               ]

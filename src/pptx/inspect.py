@@ -113,19 +113,25 @@ class EffectiveValue:
 
 @dataclass(frozen=True)
 class EffectiveFont:
-    """Effective size, name, and color of one run."""
+    """Effective size, name, color, and emphasis of one run."""
 
     size: EffectiveValue
     name: EffectiveValue
     color_rgb: EffectiveValue
+    bold: EffectiveValue = None  # pyright: ignore[reportAssignmentType]
+    italic: EffectiveValue = None  # pyright: ignore[reportAssignmentType]
+    underline: EffectiveValue = None  # pyright: ignore[reportAssignmentType]
 
     def to_dict(self) -> dict:
         return {
             "schema": "paper-effective-font",
-            "version": 1,
+            "version": 2,  # -- v2 (v0.1): bold/italic/underline added
             "size": self.size.to_dict(),
             "name": self.name.to_dict(),
             "color_rgb": self.color_rgb.to_dict(),
+            "bold": self.bold.to_dict() if self.bold is not None else None,
+            "italic": self.italic.to_dict() if self.italic is not None else None,
+            "underline": self.underline.to_dict() if self.underline is not None else None,
         }
 
 
@@ -241,6 +247,119 @@ def effective_font(run: "_Run") -> EffectiveFont:
 #: Group nesting beyond this depth refuses: no real deck nests remotely this deep, and an
 #: unbounded recursion on hostile/malformed XML would be a fail-silent hazard.
 MAX_GROUP_DEPTH = 16
+
+
+@dataclass(frozen=True)
+class EffectiveParagraphFormat:
+    """Effective alignment and line spacing of one paragraph (paper-pptx v0.1)."""
+
+    alignment: EffectiveValue  #: ECMA algn token, e.g. "l", "ctr", "r", "just"
+    line_spacing: EffectiveValue  #: float lines (1.0 = single) or EMU |Length| for points
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper-effective-paragraph-format",
+            "version": 1,
+            "alignment": self.alignment.to_dict(),
+            "line_spacing": self.line_spacing.to_dict(),
+        }
+
+
+def effective_paragraph_format(paragraph) -> EffectiveParagraphFormat:
+    """Return effective alignment/line-spacing for `paragraph`, with provenance.
+
+    Same inheritance walk as `effective_font`, over paragraph-level properties: the
+    paragraph's own `a:pPr`, the shape's `lstStyle` level entry, the placeholder chain (or
+    the presentation's `defaultTextStyle`), ending at the schema defaults (left-aligned,
+    single spacing) — which are explicit in ECMA-376, so exhaustion resolves rather than
+    reporting unresolved.
+    """
+    p = paragraph._p
+    txBody = p.getparent()
+    sp = txBody.getparent() if txBody is not None else None
+    if sp is None or sp.tag != qn("p:sp"):
+        raise UnsupportedStructureError(
+            "effective_paragraph_format resolves paragraphs inside p:sp shapes only in v0.1"
+        )
+    part = paragraph.part
+    from pptx.parts.slide import SlidePart
+
+    if not isinstance(part, SlidePart):
+        raise UnsupportedStructureError(
+            "effective_paragraph_format resolves paragraphs on slide parts only in v0.1,"
+            " got %r" % type(part).__name__
+        )
+    resolver = _FontResolver(part)
+    pPr = p.find(qn("a:pPr"))
+    level = int(pPr.get("lvl", "0")) if pPr is not None else 0
+    if not 0 <= level <= 8:
+        raise UnsupportedStructureError(
+            "paragraph carries out-of-schema indent level lvl=%d (valid range 0..8)" % level
+        )
+    chain = list(resolver.paragraph_chain(p, sp, level))
+    return EffectiveParagraphFormat(
+        alignment=resolver.resolve_alignment(chain),
+        line_spacing=resolver.resolve_line_spacing(chain),
+    )
+
+
+@dataclass(frozen=True)
+class EffectiveShapeFormat:
+    """Effective solid fill and line color of one shape (paper-pptx v0.1).
+
+    v0.1 resolves EXPLICIT `p:spPr` fills fully (solid colors through the scheme/clrMap/
+    theme walk; "none" for noFill). A shape whose fill comes only from its `p:style`
+    fill/line reference reports unresolved — the provenance carries the reference index and
+    its resolved phClr color, but theme format-scheme modulation is not applied (guessing it
+    would violate fail-loudly).
+    """
+
+    fill_rgb: EffectiveValue
+    line_rgb: EffectiveValue
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper-effective-shape-format",
+            "version": 1,
+            "fill_rgb": self.fill_rgb.to_dict(),
+            "line_rgb": self.line_rgb.to_dict(),
+        }
+
+
+def effective_shape_format(shape) -> EffectiveShapeFormat:
+    """Return the effective solid fill and line color of `shape`, with provenance."""
+    from pptx.parts.slide import SlidePart
+
+    part = shape.part
+    if not isinstance(part, SlidePart):
+        raise UnsupportedStructureError(
+            "effective_shape_format resolves shapes on slide parts only in v0.1, got %r"
+            % type(part).__name__
+        )
+    resolver = _FontResolver(part)
+    sp = shape._element
+    partname = str(part.partname)
+    spPr = sp.find(qn("p:spPr"))
+    if spPr is None:
+        spPr = sp.find(qn("p:grpSpPr"))
+    style = sp.find(qn("p:style"))
+
+    fill_rgb = resolver.resolve_container_fill(
+        spPr,
+        "shape spPr",
+        partname,
+        style.find(qn("a:fillRef")) if style is not None else None,
+        "shape style fillRef",
+    )
+    ln = spPr.find(qn("a:ln")) if spPr is not None else None
+    line_rgb = resolver.resolve_container_fill(
+        ln,
+        "shape spPr a:ln",
+        partname,
+        style.find(qn("a:lnRef")) if style is not None else None,
+        "shape style lnRef",
+    )
+    return EffectiveShapeFormat(fill_rgb=fill_rgb, line_rgb=line_rgb)
 
 
 def inspect_text(slide: "Slide") -> TextInspection:
@@ -379,7 +498,14 @@ def _blind_font(region_kind: str) -> EffectiveFont:
         supplied=False,
     )
     unresolved = EffectiveValue(value=None, value_pt=None, resolved=False, provenance=(step,))
-    return EffectiveFont(size=unresolved, name=unresolved, color_rgb=unresolved)
+    return EffectiveFont(
+        size=unresolved,
+        name=unresolved,
+        color_rgb=unresolved,
+        bold=unresolved,
+        italic=unresolved,
+        underline=unresolved,
+    )
 
 
 def _ancestor_sp(element):
@@ -416,6 +542,9 @@ class _FontResolver(object):
             size=self._resolve_size(chain),
             name=self._resolve_name(chain),
             color_rgb=self._resolve_color(chain, sp),
+            bold=self._resolve_flag(chain, "b", "bold"),
+            italic=self._resolve_flag(chain, "i", "italic"),
+            underline=self._resolve_underline(chain),
         )
 
     # ------------------------------------------------------------------- chain assembly
@@ -483,6 +612,241 @@ class _FontResolver(object):
             self._defRPr_from_lstStyle(style, level),
         )
 
+    def paragraph_chain(self, p, sp, level):
+        """Generate (label, partname, pPr-like element) for paragraph-level properties."""
+        slide_partname = str(self._slide_part.partname)
+        yield "paragraph pPr", slide_partname, p.find(qn("a:pPr"))
+        txBody = p.getparent()
+        yield (
+            "shape lstStyle lvl%d" % (level + 1),
+            slide_partname,
+            self._pPr_from_lstStyle(txBody.find(qn("a:lstStyle")), level),
+        )
+        ph = sp.find(qn("p:nvSpPr") + "/" + qn("p:nvPr") + "/" + qn("p:ph"))
+        if ph is not None:
+            idx, ph_type = sp.ph_idx, sp.ph_type
+            layout_ph = self._layout.placeholders.get(idx=idx)
+            if layout_ph is None:
+                layout_ph = next(
+                    (
+                        candidate
+                        for candidate in self._layout.placeholders
+                        if candidate.element.ph_type == ph_type
+                    ),
+                    None,
+                )
+            yield (
+                "layout placeholder lstStyle lvl%d" % (level + 1),
+                str(self._layout.part.partname),
+                self._ph_lstStyle_pPr(layout_ph, level),
+            )
+            master_ph_type = (
+                PP_PLACEHOLDER.TITLE if ph_type in _TITLE_FAMILY else PP_PLACEHOLDER.BODY
+            )
+            master_ph = self._master.placeholders.get(master_ph_type)
+            yield (
+                "master placeholder lstStyle lvl%d" % (level + 1),
+                str(self._master.part.partname),
+                self._ph_lstStyle_pPr(master_ph, level),
+            )
+            family, style = self._master_family_style(ph_type)
+            yield (
+                "master txStyles %s lvl%d" % (family, level + 1),
+                str(self._master.part.partname),
+                style.pPr_for_lvl(level) if style is not None else None,
+            )
+        else:
+            defaultTextStyle = self._presentation_part._element.find(
+                qn("p:defaultTextStyle")
+            )
+            yield (
+                "presentation defaultTextStyle lvl%d" % (level + 1),
+                str(self._presentation_part.partname),
+                self._pPr_from_lstStyle(defaultTextStyle, level),
+            )
+
+    def resolve_alignment(self, chain) -> EffectiveValue:
+        """Resolve `algn` over a paragraph chain; ECMA default is "l" (left)."""
+        steps = []
+        for label, partname, pPr in chain:
+            algn = pPr.get("algn") if pPr is not None else None
+            if algn is not None:
+                steps.append(ProvenanceStep(label, partname, 'algn="%s"' % algn, True))
+                return EffectiveValue(algn, None, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, self._absence(pPr, "no alignment"), False)
+            )
+        steps.append(
+            ProvenanceStep("schema default", None, 'alignment defaults to "l"', True)
+        )
+        return EffectiveValue("l", None, True, tuple(steps))
+
+    def resolve_line_spacing(self, chain) -> EffectiveValue:
+        """Resolve `a:lnSpc` over a paragraph chain: float lines, or |Length| for points.
+
+        The rendering default is single spacing (100%), so exhaustion resolves to 1.0.
+        """
+        steps = []
+        for label, partname, pPr in chain:
+            lnSpc = pPr.find(qn("a:lnSpc")) if pPr is not None else None
+            if lnSpc is None:
+                steps.append(
+                    ProvenanceStep(label, partname, self._absence(pPr, "no lnSpc"), False)
+                )
+                continue
+            spcPct = lnSpc.find(qn("a:spcPct"))
+            if spcPct is not None:
+                raw = spcPct.get("val")
+                lines = (
+                    float(raw[:-1]) / 100.0 if raw.endswith("%") else int(raw) / 100000.0
+                )
+                steps.append(
+                    ProvenanceStep(label, partname, 'lnSpc spcPct val="%s"' % raw, True)
+                )
+                return EffectiveValue(lines, None, True, tuple(steps))
+            spcPts = lnSpc.find(qn("a:spcPts"))
+            if spcPts is not None:
+                length = Length(Centipoints(int(spcPts.get("val"))))
+                steps.append(
+                    ProvenanceStep(
+                        label, partname, 'lnSpc spcPts val="%s"' % spcPts.get("val"), True
+                    )
+                )
+                return EffectiveValue(length, length.pt, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, "lnSpc with no spcPct/spcPts", False)
+            )
+            return EffectiveValue(None, None, False, tuple(steps))
+        steps.append(
+            ProvenanceStep("rendering default", None, "line spacing defaults to 100%", True)
+        )
+        return EffectiveValue(1.0, None, True, tuple(steps))
+
+    def resolve_container_fill(
+        self, container, label, partname, style_ref, ref_label
+    ) -> EffectiveValue:
+        """Resolve the solid fill of `container` (spPr or a:ln), else report the style ref.
+
+        Explicit solid colors resolve fully (srgb direct, scheme through clrMap/theme);
+        `a:noFill` resolves to "none". A style fill/line reference reports unresolved with
+        the reference index and its resolved phClr color in provenance — theme format-scheme
+        modulation is not applied in v0.1.
+        """
+        steps = []
+        if container is not None:
+            solidFill = container.find(qn("a:solidFill"))
+            if solidFill is not None:
+                return self._resolve_solid_fill(solidFill, label, partname, steps)
+            if container.find(qn("a:noFill")) is not None:
+                steps.append(ProvenanceStep(label, partname, "a:noFill", True))
+                return EffectiveValue("none", None, True, tuple(steps))
+            other = [
+                el.tag.rsplit("}", 1)[-1]
+                for el in container
+                if el.tag.rsplit("}", 1)[-1].endswith("Fill")
+                or el.tag.rsplit("}", 1)[-1] in ("gradFill", "blipFill", "pattFill", "grpFill")
+            ]
+            if other:
+                steps.append(
+                    ProvenanceStep(
+                        label, partname, "%s (not a single solid color)" % other[0], False
+                    )
+                )
+                return EffectiveValue(None, None, False, tuple(steps))
+            steps.append(ProvenanceStep(label, partname, "no explicit fill", False))
+        else:
+            steps.append(ProvenanceStep(label, partname, "element not present", False))
+
+        if style_ref is None:
+            steps.append(ProvenanceStep(ref_label, partname, "no style reference", False))
+            return EffectiveValue(None, None, False, tuple(steps))
+        idx = style_ref.get("idx")
+        ph_color = self._style_ref_color(style_ref, ref_label, partname)
+        steps.extend(ph_color[1])
+        steps.append(
+            ProvenanceStep(
+                ref_label,
+                partname,
+                'idx="%s": theme format-scheme modulation of the reference color%s is not'
+                " resolved in v0.1"
+                % (idx, " (%s)" % ph_color[0] if ph_color[0] else ""),
+                False,
+            )
+        )
+        return EffectiveValue(None, None, False, tuple(steps))
+
+    def _style_ref_color(self, style_ref, ref_label, partname):
+        """Return (rgb-or-None, steps) for the phClr color child of a style reference."""
+        srgbClr = style_ref.find(qn("a:srgbClr"))
+        if srgbClr is not None:
+            return srgbClr.get("val").upper(), [
+                ProvenanceStep(
+                    ref_label, partname, 'reference color srgbClr val="%s"' % srgbClr.get("val"),
+                    False,
+                )
+            ]
+        schemeClr = style_ref.find(qn("a:schemeClr"))
+        if schemeClr is not None:
+            resolved = self._resolve_scheme_color(schemeClr.get("val"), [])
+            rgb = resolved.value if resolved.resolved else None
+            return rgb, [
+                ProvenanceStep(
+                    ref_label,
+                    partname,
+                    'reference color schemeClr val="%s" -> %s'
+                    % (schemeClr.get("val"), rgb if rgb else "unresolved"),
+                    False,
+                )
+            ]
+        return None, []
+
+    def _resolve_solid_fill(self, solidFill, label, partname, steps) -> EffectiveValue:
+        srgbClr = solidFill.find(qn("a:srgbClr"))
+        if srgbClr is not None:
+            detail = 'srgbClr val="%s"%s' % (
+                srgbClr.get("val"),
+                self._transforms_note(srgbClr),
+            )
+            steps.append(ProvenanceStep(label, partname, detail, True))
+            return EffectiveValue(srgbClr.get("val").upper(), None, True, tuple(steps))
+        schemeClr = solidFill.find(qn("a:schemeClr"))
+        if schemeClr is not None:
+            steps.append(
+                ProvenanceStep(
+                    label,
+                    partname,
+                    'schemeClr val="%s"%s'
+                    % (schemeClr.get("val"), self._transforms_note(schemeClr)),
+                    False,
+                )
+            )
+            return self._resolve_scheme_color(schemeClr.get("val"), steps)
+        steps.append(
+            ProvenanceStep(
+                label,
+                partname,
+                "solidFill with unsupported color element (%s)"
+                % ", ".join(el.tag.rsplit("}", 1)[-1] for el in solidFill),
+                False,
+            )
+        )
+        return EffectiveValue(None, None, False, tuple(steps))
+
+    @staticmethod
+    def _pPr_from_lstStyle(lstStyle, level):
+        if lstStyle is None:
+            return None
+        return lstStyle.pPr_for_lvl(level)
+
+    @staticmethod
+    def _ph_lstStyle_pPr(placeholder_proxy, level):
+        if placeholder_proxy is None:
+            return None
+        txBody = placeholder_proxy._element.find(qn("p:txBody"))
+        if txBody is None:
+            return None
+        return _FontResolver._pPr_from_lstStyle(txBody.find(qn("a:lstStyle")), level)
+
     def _master_family_style(self, ph_type):
         txStyles = self._master.element.txStyles
         if ph_type in _TITLE_FAMILY:
@@ -521,6 +885,40 @@ class _FontResolver(object):
                 return EffectiveValue(size, size.pt, True, tuple(steps))
             steps.append(ProvenanceStep(label, partname, self._absence(rPr, "no size"), False))
         return EffectiveValue(None, None, False, tuple(steps))
+
+    def _resolve_flag(self, chain, attr: str, what: str) -> EffectiveValue:
+        """Resolve boolean rPr attribute `attr` (b/i); its schema default (false) is explicit,
+        so exhaustion resolves to False rather than reporting unresolved."""
+        steps = []
+        for label, partname, rPr in chain:
+            raw = rPr.get(attr) if rPr is not None else None
+            if raw is not None:
+                value = raw in ("1", "true")
+                steps.append(ProvenanceStep(label, partname, '%s="%s"' % (attr, raw), True))
+                return EffectiveValue(value, None, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, self._absence(rPr, "no %s" % what), False)
+            )
+        steps.append(
+            ProvenanceStep("schema default", None, "%s defaults to false" % what, True)
+        )
+        return EffectiveValue(False, None, True, tuple(steps))
+
+    def _resolve_underline(self, chain) -> EffectiveValue:
+        """Resolve the `u` token ("sng", "dbl", ...); schema default is "none"."""
+        steps = []
+        for label, partname, rPr in chain:
+            raw = rPr.get("u") if rPr is not None else None
+            if raw is not None:
+                steps.append(ProvenanceStep(label, partname, 'u="%s"' % raw, True))
+                return EffectiveValue(raw, None, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, self._absence(rPr, "no underline"), False)
+            )
+        steps.append(
+            ProvenanceStep("schema default", None, 'underline defaults to "none"', True)
+        )
+        return EffectiveValue("none", None, True, tuple(steps))
 
     def _resolve_name(self, chain) -> EffectiveValue:
         steps = []

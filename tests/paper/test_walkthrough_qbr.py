@@ -156,9 +156,15 @@ def test_step_survey_template_with_deck_manifest():
     from pptx.inspect import inspect_deck  # noqa: F401
 
 
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.2: effective shape fill/line")
 def test_step_check_brand_accent_via_effective_shape_format():
-    from pptx.inspect import effective_shape_format  # noqa: F401
+    """Phase 2.2 step (was xfail): 'is that box actually brand-colored?' is now answerable."""
+    from pptx.inspect import effective_shape_format
+
+    prs = Presentation(str(corpus.fixture_path("self_generated/clrmap_remap.pptx")))
+    rect = prs.slides[0].shapes.shape_by_name("accent1_box")
+    fmt = effective_shape_format(rect)
+    assert fmt.fill_rgb.value == "C0504D"  # -- accent1 through the remapped clrMap
+    assert fmt.fill_rgb.resolved is True
 
 
 def test_step_update_libreoffice_authored_chart():
