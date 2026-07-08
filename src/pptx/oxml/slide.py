@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from pptx.oxml import parse_from_template, parse_xml
 from pptx.oxml.dml.fill import CT_GradientFillProperties
-from pptx.oxml.ns import nsdecls
+from pptx.oxml.ns import nsdecls, qn
 from pptx.oxml.simpletypes import XsdString
 from pptx.oxml.xmlchemy import (
     BaseOxmlElement,
@@ -298,7 +298,33 @@ class CT_SlideMaster(_BaseSlideElement):
     sldLayoutIdLst: CT_SlideLayoutIdList = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
         "p:sldLayoutIdLst", successors=_tag_seq[3:]
     )
+    txStyles: CT_SlideMasterTextStyles | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+        "p:txStyles", successors=_tag_seq[7:]
+    )
     del _tag_seq
+
+
+class CT_SlideMasterTextStyles(BaseOxmlElement):
+    """`p:txStyles` element, holding the master's title/body/other text list-styles.
+
+    Read-only access for the effective-style inheritance walk; each child is a
+    `CT_TextListStyle`.
+    """
+
+    @property
+    def titleStyle(self):
+        """`p:titleStyle` child (a `CT_TextListStyle`), or |None| if not present."""
+        return self.find(qn("p:titleStyle"))
+
+    @property
+    def bodyStyle(self):
+        """`p:bodyStyle` child (a `CT_TextListStyle`), or |None| if not present."""
+        return self.find(qn("p:bodyStyle"))
+
+    @property
+    def otherStyle(self):
+        """`p:otherStyle` child (a `CT_TextListStyle`), or |None| if not present."""
+        return self.find(qn("p:otherStyle"))
 
 
 class CT_SlideTiming(BaseOxmlElement):

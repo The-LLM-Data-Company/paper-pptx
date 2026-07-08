@@ -1,0 +1,50 @@
+{
+  "fixture": "chart_notes.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "native_chart_with_embedded_workbook",
+    "speaker_notes",
+    "clone_fixture"
+  ],
+  "ground_truth": {
+    "chart_part": "ppt/charts/chart1.xml",
+    "embedded_workbook_part": "ppt/embeddings/Microsoft_Excel_Sheet1.xlsx",
+    "notes_slide_part": "ppt/notesSlides/notesSlide1.xml",
+    "notes_master_part": "ppt/notesMasters/notesMaster1.xml",
+    "chart_plot_element": "c:barChart",
+    "chart_shape_name": "clone_fixture_chart",
+    "series_names": [
+      "Q1",
+      "Q2"
+    ],
+    "categories": [
+      "East",
+      "West",
+      "Midwest"
+    ],
+    "series_values": {
+      "Q1": [
+        19.2,
+        21.4,
+        16.7
+      ],
+      "Q2": [
+        22.3,
+        28.6,
+        15.2
+      ]
+    },
+    "notes_text": "Speaker notes for the clone fixture.",
+    "slide1_relationship_types": [
+      "chart",
+      "notesSlide",
+      "slideLayout"
+    ]
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

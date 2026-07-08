@@ -1,0 +1,52 @@
+{
+  "fixture": "clrmap_remap.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "clrmap_remap",
+    "theme_color_resolution"
+  ],
+  "ground_truth": {
+    "clrmap": {
+      "bg1": "dk1",
+      "tx1": "lt1",
+      "bg2": "lt2",
+      "tx2": "dk2",
+      "accent1": "accent2",
+      "accent2": "accent1",
+      "accent3": "accent3",
+      "accent4": "accent4",
+      "accent5": "accent5",
+      "accent6": "accent6",
+      "hlink": "hlink",
+      "folHlink": "folHlink"
+    },
+    "theme_accent1_srgb": "4F81BD",
+    "theme_accent2_srgb": "C0504D",
+    "theme_dk1_sysclr_lastclr": "000000",
+    "theme_lt1_sysclr_lastclr": "FFFFFF",
+    "rectangle_shape_name": "accent1_box",
+    "rectangle_fill_schemeclr_val": "accent1",
+    "textbox_shape_name": "tx1_text",
+    "text_run_schemeclr_val": "tx1",
+    "expected_resolution": {
+      "rectangle_fill_rgb": "C0504D",
+      "rectangle_fill_provenance": [
+        "schemeClr val=accent1",
+        "master clrMap accent1=accent2",
+        "theme clrScheme accent2 srgbClr C0504D"
+      ],
+      "text_run_rgb": "FFFFFF",
+      "text_run_provenance": [
+        "schemeClr val=tx1",
+        "master clrMap tx1=lt1",
+        "theme clrScheme lt1 sysClr window lastClr FFFFFF"
+      ]
+    }
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

@@ -1,0 +1,25 @@
+{
+  "fixture": "shared_media.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "shared_media_part"
+  ],
+  "ground_truth": {
+    "slide_count": 2,
+    "media_parts": [
+      "ppt/media/image1.png"
+    ],
+    "slide1_image_target": "../media/image1.png",
+    "slide2_image_target": "../media/image1.png",
+    "image_pixel_size": [
+      64,
+      64
+    ]
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

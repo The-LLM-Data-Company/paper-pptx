@@ -1,0 +1,66 @@
+{
+  "fixture": "branded_template.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "inherited_placeholder_font_size",
+    "inherited_placeholder_font_name",
+    "master_txstyles",
+    "layout_lststyle_override",
+    "theme_font_reference"
+  ],
+  "ground_truth": {
+    "master_title_lvl1_sz_centipoints": 4000,
+    "master_title_lvl1_latin": "+mj-lt",
+    "master_body_lvl1_sz_centipoints": 2600,
+    "master_body_lvl1_latin": "Trebuchet MS",
+    "master_body_lvl2_sz_centipoints": 2200,
+    "master_body_lvl2_latin": "+mn-lt",
+    "layout_part_with_title_override": "ppt/slideLayouts/slideLayout2.xml",
+    "layout_title_lvl1_sz_centipoints": 3600,
+    "theme_major_latin": "Calibri",
+    "theme_minor_latin": "Calibri",
+    "slide_runs_carry_local_size_or_font": false,
+    "expected_effective": {
+      "title_run": {
+        "size_centipoints": 3600,
+        "size_provenance": [
+          "slide run: none",
+          "layout title lstStyle lvl1pPr defRPr sz=3600"
+        ],
+        "font_name": "Calibri",
+        "font_provenance": [
+          "master titleStyle lvl1 latin=+mj-lt",
+          "theme majorFont latin=Calibri"
+        ]
+      },
+      "body_paragraph_0_run": {
+        "size_centipoints": 2600,
+        "size_provenance": [
+          "master bodyStyle lvl1pPr defRPr sz=2600"
+        ],
+        "font_name": "Trebuchet MS",
+        "font_provenance": [
+          "master bodyStyle lvl1 latin=Trebuchet MS"
+        ]
+      },
+      "body_paragraph_1_run": {
+        "size_centipoints": 2200,
+        "size_provenance": [
+          "master bodyStyle lvl2pPr defRPr sz=2200"
+        ],
+        "font_name": "Calibri",
+        "font_provenance": [
+          "master bodyStyle lvl2 latin=+mn-lt",
+          "theme minorFont latin=Calibri"
+        ]
+      }
+    },
+    "independent_cross_check": "LibreOffice re-export of this file bakes run sizes 3600/2600/2200 (see libreoffice_export/lo_branded_template.pptx)"
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

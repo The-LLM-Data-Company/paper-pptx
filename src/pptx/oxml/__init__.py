@@ -404,6 +404,7 @@ from pptx.oxml.slide import (  # noqa: E402
     CT_SlideLayoutIdList,
     CT_SlideLayoutIdListEntry,
     CT_SlideMaster,
+    CT_SlideMasterTextStyles,
     CT_SlideTiming,
     CT_TimeNodeList,
     CT_TLMediaNodeVideo,
@@ -420,6 +421,7 @@ register_element_cls("p:sldLayout", CT_SlideLayout)
 register_element_cls("p:sldLayoutId", CT_SlideLayoutIdListEntry)
 register_element_cls("p:sldLayoutIdLst", CT_SlideLayoutIdList)
 register_element_cls("p:sldMaster", CT_SlideMaster)
+register_element_cls("p:txStyles", CT_SlideMasterTextStyles)
 register_element_cls("p:timing", CT_SlideTiming)
 register_element_cls("p:video", CT_TLMediaNodeVideo)
 
@@ -445,12 +447,16 @@ register_element_cls("a:tr", CT_TableRow)
 
 from pptx.oxml.text import (  # noqa: E402
     CT_RegularTextRun,
+    CT_TextAutonumberBullet,
     CT_TextBody,
     CT_TextBodyProperties,
+    CT_TextBulletSizePercent,
     CT_TextCharacterProperties,
+    CT_TextCharBullet,
     CT_TextField,
     CT_TextFont,
     CT_TextLineBreak,
+    CT_TextListStyle,
     CT_TextNormalAutofit,
     CT_TextParagraph,
     CT_TextParagraphProperties,
@@ -461,11 +467,30 @@ from pptx.oxml.text import (  # noqa: E402
 
 register_element_cls("a:bodyPr", CT_TextBodyProperties)
 register_element_cls("a:br", CT_TextLineBreak)
+register_element_cls("a:buAutoNum", CT_TextAutonumberBullet)
+register_element_cls("a:buChar", CT_TextCharBullet)
+register_element_cls("a:buFont", CT_TextFont)
+register_element_cls("a:buSzPct", CT_TextBulletSizePercent)
+register_element_cls("a:defPPr", CT_TextParagraphProperties)
 register_element_cls("a:defRPr", CT_TextCharacterProperties)
 register_element_cls("a:endParaRPr", CT_TextCharacterProperties)
 register_element_cls("a:fld", CT_TextField)
 register_element_cls("a:latin", CT_TextFont)
 register_element_cls("a:lnSpc", CT_TextSpacing)
+register_element_cls("a:lvl1pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl2pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl3pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl4pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl5pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl6pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl7pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl8pPr", CT_TextParagraphProperties)
+register_element_cls("a:lvl9pPr", CT_TextParagraphProperties)
+register_element_cls("a:lstStyle", CT_TextListStyle)
+register_element_cls("p:bodyStyle", CT_TextListStyle)
+register_element_cls("p:defaultTextStyle", CT_TextListStyle)
+register_element_cls("p:otherStyle", CT_TextListStyle)
+register_element_cls("p:titleStyle", CT_TextListStyle)
 register_element_cls("a:normAutofit", CT_TextNormalAutofit)
 register_element_cls("a:r", CT_RegularTextRun)
 register_element_cls("a:p", CT_TextParagraph)
