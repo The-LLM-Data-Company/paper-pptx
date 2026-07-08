@@ -16,7 +16,6 @@ from pptx.chart.data import CategoryChartData, XyChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.errors import (
     AmbiguousTargetError,
-    PaperRefusal,
     TargetNotFoundError,
     UnsupportedStructureError,
 )

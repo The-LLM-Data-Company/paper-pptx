@@ -27,8 +27,8 @@ from .contract import (
     save_to_bytes,
     zip_member_map,
 )
-from .lo import lo_load_smoke
 from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
+from .lo import lo_load_smoke
 from .relint import dangling_relationship_targets, missing_relationship_references
 
 CHART_NOTES = "self_generated/chart_notes.pptx"

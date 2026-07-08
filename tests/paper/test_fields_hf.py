@@ -114,7 +114,6 @@ def test_inspect_reports_fields_without_hashing_their_volatile_text():
 def test_normalize_autofit_still_covers_created_fields():
     """The Phase 0.4/organ interplay: a created field participates in autofit freezing."""
     from pptx.enum.text import MSO_AUTO_SIZE
-
     from pptx.util import Pt
 
     prs = _open(MINIMAL)
