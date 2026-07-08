@@ -45,6 +45,16 @@ class CT_Table(BaseOxmlElement):
         """Return a newly created `a:tr` child element having its `h` attribute set to `height`."""
         return self._add_tr(h=height)
 
+    def insert_tr_at(self, idx: int, height: Length) -> CT_TableRow:
+        """Return a new `a:tr` inserted so it becomes the row at `idx` (paper-pptx addition)."""
+        tr = self.add_tr(height)
+        siblings = [existing for existing in self.tr_lst if existing is not tr]
+        if idx < len(siblings):
+            siblings[idx].addprevious(tr)
+        elif siblings:
+            siblings[-1].addnext(tr)
+        return tr
+
     @property
     def bandCol(self) -> bool:
         return self._get_boolean_property("bandCol")
@@ -412,6 +422,20 @@ class CT_TableGrid(BaseOxmlElement):
         """A newly appended `a:gridCol` child element having its `w` attribute set to `width`."""
         return self._add_gridCol(w=width)
 
+    def insert_gridCol_at(self, idx: int, width: Length) -> CT_TableCol:
+        """Return a new `a:gridCol` inserted so it becomes the column at `idx`.
+
+        paper-pptx addition. Insertion is relative to the existing `a:gridCol` siblings, so
+        a trailing `a:extLst` (if any) stays last per the schema's child sequence.
+        """
+        gridCol = self.add_gridCol(width)
+        siblings = [existing for existing in self.gridCol_lst if existing is not gridCol]
+        if idx < len(siblings):
+            siblings[idx].addprevious(gridCol)
+        elif siblings:
+            siblings[-1].addnext(gridCol)
+        return gridCol
+
 
 class CT_TableProperties(BaseOxmlElement):
     """`a:tblPr` custom element class."""
@@ -436,6 +460,20 @@ class CT_TableRow(BaseOxmlElement):
     def add_tc(self) -> CT_TableCell:
         """A newly added minimal valid `a:tc` child element."""
         return self._add_tc()
+
+    def insert_tc_at(self, idx: int) -> CT_TableCell:
+        """Return a new minimal `a:tc` inserted so it becomes the cell at `idx`.
+
+        paper-pptx addition. Insertion is relative to the existing `a:tc` siblings, so a
+        trailing `a:extLst` (if any) stays last per the schema's child sequence.
+        """
+        tc = self.add_tc()
+        siblings = [existing for existing in self.tc_lst if existing is not tc]
+        if idx < len(siblings):
+            siblings[idx].addprevious(tc)
+        elif siblings:
+            siblings[-1].addnext(tc)
+        return tc
 
     @property
     def row_idx(self) -> int:

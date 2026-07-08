@@ -533,6 +533,29 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     C0 control characters are rejected in find/replace; `SlideShapes.add_copy` validates
     chart child relationships exactly like `Slides.clone`.
 
+## v0.11 amendments (per `agent_docs/PLAN-v0.11-paper-pptx.md`)
+
+- **Phase 1 — table structure operations** (methods on the existing `Table` proxy):
+  - `Table.insert_row(after: int, *, copy_format_from: int | None = None) -> _Row` — new
+    empty row immediately after 0-based row `after` (`-1` = before the first row). Height
+    and per-cell `a:tcPr` formatting copy from `copy_format_from` when given (merge
+    attributes and text never copy); otherwise height copies from the neighboring row.
+  - `Table.delete_row(row_idx: int) -> None`
+  - `Table.insert_column(after: int, *, width: Length | None = None) -> _Column` — width
+    defaults to the neighboring column's.
+  - `Table.delete_column(col_idx: int) -> None`
+  - Grid bookkeeping: every row always holds exactly one `a:tc` per `a:gridCol`
+    (continuation cells included), and the graphic frame's extents are recalculated from
+    the row/column sums after every operation.
+  - Merged-cell guards are **cell-wise** (`UnsupportedStructureError`, atomic, message
+    names each conflicting region): an operation refuses only when its path would cut
+    through a merged region — inserting through a `rowSpan` (rows) or `gridSpan`
+    (columns), deleting a row/column a merge extends beyond. A merge wholly contained in
+    the deleted row/column is removed with it; a merged header never poisons body-row
+    operations.
+  - Programmer errors are `ValueError`: non-int/bool/out-of-range indices, non-positive
+    `width`, deleting the last remaining row or column.
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,

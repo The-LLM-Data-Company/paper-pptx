@@ -406,6 +406,24 @@ upstream test decks, the default template, LibreOffice round-trips) — not from
   the sidecar), plus `lo_merged_tables`/`lo_footers_applied`/`lo_template_alpha` producer
   variants. Real-PowerPoint counterparts filed day-one as FIXTURE-REQUESTS.md **R9–R14**.
 
+## v0.11 Phase 1: table structure operations
+
+`Table.insert_row/delete_row/insert_column/delete_column` (v0.11 plan Phase 1) — the last
+nearly-API-dark core object gains structure surgery. oxml: `insert_tr_at`/`insert_tc_at`/
+`insert_gridCol_at` position new elements relative to their own siblings so a trailing
+`extLst` stays last. Grid bookkeeping proven directly: after every operation each `a:tr`
+holds exactly one `a:tc` per `a:gridCol` and the graphic frame extents equal the row/column
+sums; whole emitted `a:tbl` elements are schema-validated (fragval oracle, global element —
+no wrapper schema). Merged-cell guards are cell-wise per the plan: refuse only operations
+whose path intersects a merged region (typed, atomic, message names every conflicting
+region); a merged header row is deliberately deletable and never poisons body-row
+operations. `copy_format_from` copies row height and per-cell `a:tcPr` only — merge
+attributes and text never copy. Insert-then-delete round-trips to an empty changed-part
+budget. Cell text edits stay routed through the v0.1 anchored-write path — an integration
+test proves `replace_text`/`replace_text_at` reach table cells including merge origins.
+Producer diversity: the same guards and surgery run against LibreOffice-authored merged
+tables (`lo_merged_tables`).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
