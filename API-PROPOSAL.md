@@ -588,6 +588,22 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     created/modified/revision core properties retained; modern (2018/10) comment
     reltypes matched (fixture pending, R12).
 
+- **Phase 4 — layout rebind** (machinery in new `pptx.rebind`):
+  - `Slide.rebind_layout(target_layout, *, placeholder_map="auto",
+    orphan_policy="refuse") -> RebindReport` — same-package only. Auto-match: exact
+    type+idx → same type → type family ({title, ctrTitle}, {body, object, subTitle});
+    slide `p:ph` type/idx rewritten to the bound target slot. `placeholder_map` is
+    `{source_idx: target_idx | None}` overriding auto per entry (None force-orphans).
+  - `orphan_policy`: `"refuse"` (typed, atomic, names the unmatched placeholders) or
+    `"bake"` (free shape with inherited geometry materialized and resolved effective
+    run formatting written locally; field-bearing or geometry-less placeholders refuse).
+  - `RebindReport` (typed, `.to_dict()`, `"paper-rebind-report"` v1): layouts, the
+    mapping used, baked orphans, and `run_shifts` — every run whose *resolved* effective
+    values changed, with full before/after payloads. Required output, never optional.
+  - Refusals: `UnsupportedStructureError` for orphans-under-refuse, `mc:AlternateContent`
+    slides, un-bakeable orphans; `ValueError` for cross-package targets, the current
+    layout, bad maps/policies.
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,

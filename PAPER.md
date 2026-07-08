@@ -463,6 +463,27 @@ full-scrub report is goldened. Acceptance proven job-shaped: scrub_gauntlet →
 scrub(everything) → reopens clean (relint + section scan + LO smoke), 3 visibly-identical
 slides, zero notes/comments/metadata/fonts, file half the size.
 
+## v0.11 Phase 4: layout rebind
+
+`Slide.rebind_layout(target_layout, *, placeholder_map="auto", orphan_policy="refuse")`
+→ `RebindReport` (new `pptx.rebind`) — the template-migration *primitive*; the migration
+workflow stays in the harness per the plan's prohibition. Auto-matching binds slide
+placeholders by exact type+idx, then same type, then interchangeable family
+(title/ctrTitle; body/object/subTitle — what PowerPoint does when switching layouts),
+rewriting slide `p:ph` type/idx so inheritance binds; an explicit map overrides any of it
+(None force-orphans). Orphans refuse atomically by default or `"bake"`: geometry
+materialized from the resolved inheritance chain (all four values read before any write —
+writing `left` creates an `a:off y="0"` that would poison a later `top` read; found by the
+contract tests), each run's *resolved* effective size/name/color/emphasis written locally
+(underline bakes the exact `u` token — collapsing "none"/"sng" to a bool was a bug this
+phase's own report caught), fields refuse (a baked field freezes volatile content).
+**The report is required, not optional**: the resolver runs before and after and every run
+whose resolved values changed is reported with full before/after payloads — including
+layout-level lstStyle overrides gained/lost (Two Content's 28pt/24pt body overrides show
+up exactly). Baked orphans re-resolve identically (zero shift entries — the bake-fidelity
+proof). Same-package only; `mc:AlternateContent` slides refuse. Cross-template rebind is
+exercised through Phase 5's adopt_theme mode, which consumes this machinery.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

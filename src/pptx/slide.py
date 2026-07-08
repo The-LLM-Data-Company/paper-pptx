@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from pptx.parts.presentation import PresentationPart
     from pptx.parts.slide import SlideLayoutPart, SlideMasterPart, SlidePart
     from pptx.presentation import Presentation
+    from pptx.rebind import RebindReport
     from pptx.shapes.placeholder import LayoutPlaceholder, MasterPlaceholder
     from pptx.shapes.shapetree import NotesSlidePlaceholder
     from pptx.text.text import TextFrame
@@ -210,6 +211,40 @@ class Slide(_BaseSlide):
             date_format=date_format,
             fixed_date=fixed_date,
             now=now,
+        )
+
+    def rebind_layout(
+        self,
+        target_layout: "SlideLayout",
+        *,
+        placeholder_map="auto",
+        orphan_policy: str = "refuse",
+    ) -> "RebindReport":
+        """Move this slide to `target_layout`; return the required |RebindReport|.
+
+        paper-pptx addition (v0.11 Phase 4) — the template-migration *primitive*
+        (bulk-migration workflows stay in the harness). Placeholders reconcile against the
+        target layout: auto-matching binds by exact type+idx, then same type, then
+        interchangeable type family (title/ctrTitle; body/object/subTitle); pass
+        `placeholder_map={source_idx: target_idx | None}` to override any of it (None
+        force-orphans a source). Source placeholders with no destination follow
+        `orphan_policy`: "refuse" (default; typed, atomic) or "bake" — convert to a free
+        shape with inherited geometry materialized and each run's *resolved* effective
+        formatting written locally, so the text keeps its look.
+
+        The report is not optional: the effective-value resolver runs before and after,
+        and every run whose resolved values changed appears with its before/after payloads
+        — a rebind never shifts appearance silently. Same-package only (cross-package
+        composition is `import_slide`'s job); slides carrying `mc:AlternateContent`
+        refuse (shapes inside are invisible to reconciliation).
+        """
+        from pptx.rebind import rebind_layout
+
+        return rebind_layout(
+            self,
+            target_layout,
+            placeholder_map=placeholder_map,
+            orphan_policy=orphan_policy,
         )
 
     @property
