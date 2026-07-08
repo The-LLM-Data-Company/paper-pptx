@@ -107,24 +107,28 @@ def _build_qbr_deck(tmp_path):
     tf.normalize_autofit(resolve=True, min_font_size=Pt(11))
     assert tf.auto_size == MSO_AUTO_SIZE.NONE
 
-    # -- footer pass (Phase 2.5): real slide-number fields, right across reordering;
-    # -- the title slide also carries a datetime field
+    # -- footer pass, v0.11 Phase 2: the deck-level dialog-equivalent replaces the
+    # -- v0.1 hand-rolled per-slide page-number rail (the deck_furniture anti-pattern,
+    # -- now retired); numbers are real slidenum fields, live across any later reorder
     from pptx.inspect import effective_paragraph_format
 
-    for index, slide in enumerate(prs.slides):
-        footer = slide.shapes.add_textbox(Pt(20), Pt(520), Pt(200), Pt(20))
-        footer.name = "meta_footer_%d" % (index + 1)
-        paragraph = footer.text_frame.paragraphs[0]
-        paragraph.add_run().text = "Q4 QBR - page "
-        paragraph.add_slide_number_field()
-        if index == 0:
-            paragraph.add_datetime_field("datetime1")
     prs.slide_masters[0].header_footers.slide_number_visible = True
-    # -- Phase 2.2: verify the footer rail's effective alignment (default left)
-    footer_format = effective_paragraph_format(
-        prs.slides[0].shapes.shape_by_name("meta_footer_1").text_frame.paragraphs[0]
+    prs.apply_footers(footer="Q4 QBR", slide_number=True)
+    # -- the title slide keeps one caption with a real datetime field (Phase 2.5
+    # -- primitive: fields compose into arbitrary text, not just furniture)
+    caption = prs.slides[0].shapes.add_textbox(Pt(20), Pt(500), Pt(200), Pt(20))
+    caption.name = "prepared_on_caption"
+    caption_paragraph = caption.text_frame.paragraphs[0]
+    caption_paragraph.add_run().text = "Prepared "
+    caption_paragraph.add_datetime_field("datetime1")
+    # -- Phase 2.2: the applied footer's effective alignment resolves through the layout
+    footer_ph = next(
+        s
+        for s in prs.slides[0].shapes
+        if s.is_placeholder and s.element.ph.get("type") == "ftr"
     )
-    assert footer_format.alignment.value == "l"
+    footer_format = effective_paragraph_format(footer_ph.text_frame.paragraphs[0])
+    assert footer_format.alignment.resolved is True
 
     # -- the early anchor is now stale (z-order + footer passes shifted indices or will);
     # -- the pinned recovery path: refuse -> refind -> retry (Phase 1.1)
@@ -136,6 +140,16 @@ def _build_qbr_deck(tmp_path):
     except (StaleAnchorError, TargetNotFoundError):
         fresh = refind(prs, closing_title_anchor)
         replace_text_at(prs, fresh, "Next steps", "Next steps & owners")
+
+    # -- exit gate (v0.11 Phase 3): the deck is about to leave the pipeline. Speaker
+    # -- notes are the talk track and stay; metadata, unused layouts, and any
+    # -- unreferenced media go. The report's budget is the scrub's own evidence.
+    scrub_report = prs.scrub(
+        comments=True, metadata=True, unused_layouts=True, unreachable_media=True
+    )
+    assert scrub_report.notes_slides_removed == ()
+    assert len(scrub_report.unused_layouts_removed) == 9
+    assert scrub_report.metadata_fields_cleared != ()
 
     # -- narrow save: only genuinely-changed parts differ from the template
     out_path = tmp_path / "qbr.pptx"
@@ -173,16 +187,20 @@ def test_walkthrough_end_to_end(tmp_path):
         "Walk through Q4 revenue; flag the Alpha renewal."
     )
 
-    # -- footer fields landed on every slide (slide 1 also carries the datetime field)
+    # -- the applied footer trio landed on every slide as REAL fields (v0.11 Phase 2),
+    # -- and the title slide's caption carries its datetime field (Phase 2.5 primitive)
     from pptx.inspect import inspect_text as _inspect_text
 
-    for index, slide in enumerate(reopened.slides):
-        footer_block = next(
-            b for b in _inspect_text(slide).blocks
-            if b.shape_name == "meta_footer_%d" % (index + 1)
-        )
-        expected_fields = ("slidenum", "datetime1") if index == 0 else ("slidenum",)
-        assert footer_block.fields == expected_fields, footer_block.shape_name
+    for ordinal, slide in enumerate(reopened.slides, start=1):
+        blocks = _inspect_text(slide).blocks
+        field_tokens = sorted(token for b in blocks for token in b.fields)
+        expected = ["datetime1", "slidenum"] if ordinal == 1 else ["slidenum"]
+        assert field_tokens == expected, "slide %d fields: %r" % (ordinal, field_tokens)
+        assert any(b.text == "Q4 QBR" for b in blocks)
+
+    # -- the scrub held: notes survive, personal metadata does not
+    assert reopened.core_properties.author == ""
+    assert reopened.core_properties.last_modified_by == ""
 
     # -- the brand asset swapped formats and was copied to the title slide (shared part)
     closing_pic = reopened.slides[-1].shapes.picture_by_name("gauntlet_img_2")
@@ -201,6 +219,43 @@ def test_walkthrough_end_to_end(tmp_path):
     )
     assert normalized.text_frame.auto_size == MSO_AUTO_SIZE.NONE
     assert reopened.slide_masters[0].header_footers.slide_number_visible is True
+
+
+def test_walkthrough_self_consistency_against_deck_diff(tmp_path):
+    """The v0.11 keystone: the job's own operation reports and diff_decks(input, output)
+    are two independent evidence systems - they must tell the same story."""
+    from pptx.diff import diff_decks
+
+    out_path, _ = _build_qbr_deck(tmp_path)
+    template_path = tmp_path / "template.pptx"
+    report = diff_decks(str(template_path), str(out_path), detail="text")
+
+    # -- structural story: two clones added, the autofit playground removed
+    assert len(report.slides_added) == 2
+    assert [r.title for r in report.slides_removed] == [None]  # -- the autofit slide
+    changes = {change.slide_id: change for change in report.slide_changes}
+
+    # -- the retitle the anchored replace performed
+    retitled = changes[256]
+    assert any(
+        c["before"] == "Gauntlet: branded" and c["after"] == "Q4 Business Review"
+        for c in retitled.text_changes
+    )
+    # -- the chart update replace_data_safe performed, per series/category
+    chart_slide_id = 257  # -- gauntlet slide 2
+    chart_deltas = changes[chart_slide_id].chart_data_changes
+    assert any("categories_after" in d and d["categories_after"] == ["Q3", "Q4"]
+               for d in chart_deltas)
+    # -- the notes replacement
+    assert changes[chart_slide_id].notes_change == {
+        "before": "Gauntlet speaker notes.",
+        "after": "Walk through Q4 revenue; flag the Alpha renewal.",
+    }
+    # -- the decorative picture delete on the chart slide
+    assert "gauntlet_img_1" in changes[chart_slide_id].shapes_removed
+    # -- the closing slide's image swap reads as replacement, not move/resize
+    closing_id = 259  # -- gauntlet slide 4
+    assert "gauntlet_img_2" in changes[closing_id].images_replaced
 
 
 @pytest.mark.lo_smoke

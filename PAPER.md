@@ -529,6 +529,29 @@ a future flag; the id-recycling hazard (delete max id then add) is documented wh
 belongs. Report-only per the plan's prohibition — rendering and scoring are harness
 products built on the report.
 
+## v0.11 release evals: the jobs, frozen, ending in the keystone
+
+Per the plan's definition of done, three job-shaped evals run as standing tests and each
+ends with the Phase 6 self-consistency check — the operation's own report and
+`diff_decks(input, output)` are two independent evidence systems that must agree:
+
+- **QBR refresh** (`test_walkthrough_qbr.py`, extended): the v0.1 hand-rolled per-slide
+  page-number rail is retired for `apply_footers` (real fields; one caption keeps the
+  Phase 2.5 field primitive in play), and the job now ends at the scrub exit gate (talk-
+  track notes kept, metadata/unused layouts/unreachable media gone). The new
+  self-consistency test holds the diff to the job's every action: clones as adds, the
+  autofit slide as the removal, the anchored retitle, the per-category chart delta, the
+  notes replacement, the picture delete, and image-swap-as-replacement.
+- **Pitch-book assembly** (`test_walkthrough_pitchbook.py`, new): library deck + second
+  source, one slide per import mode (adopt takes Georgia, keep travels Courier New with
+  zero shifts, bake freezes locally), the rebind job on a library page, renumbering, and
+  scrub. Self-consistency: import reports and diff agree on exactly the added slide ids;
+  footer application shows as pure additions (before=None) — any edit to library content
+  would fail the eval.
+- **Rebind job** (`test_pitchbook_rebind_report_agrees_with_full_diff` + the Phase 6
+  equivalent): the rebind report's run shifts equal the full-detail diff's effective
+  shifts, run for run.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
