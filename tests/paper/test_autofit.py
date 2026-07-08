@@ -174,6 +174,76 @@ def test_normalize_with_bare_normautofit_drops_element_without_touching_text():
     assert [run.font.size for run in reopened_tf.paragraphs[0].runs] == sizes_before
 
 
+def test_normalize_autofit_resolve_freezes_inherited_placeholder_sizes():
+    """PLAN-v0.1 0.4: the template-placeholder case. Without resolution the refusal stands;
+    with resolve=True the sizes come from the master through the effective walk and are
+    frozen at size x fontScale (2600->1625, 2200->1375 per the fixture sidecar)."""
+    INHERITED = "self_generated/autofit_inherited.pptx"
+
+    def body_tf(prs):
+        return prs.slides[0].placeholders[1].text_frame
+
+    # -- default behavior unchanged: refuses, atomically
+    prs = _open(INHERITED)
+    raised = assert_refusal_atomic(
+        prs, lambda p: body_tf(p).normalize_autofit(), UnsupportedStructureError
+    )
+    assert "resolve" in str(raised)
+
+    # -- resolve=True freezes what the reader sees
+    prs = _open(INHERITED)
+    before = save_to_bytes(prs)
+    body_tf(prs).normalize_autofit(resolve=True)
+    after = save_to_bytes(prs)
+    assert_changed_parts(before, after, expect_changed=["ppt/slides/slide1.xml"])
+
+    import io
+
+    reopened_tf = body_tf(Presentation(io.BytesIO(after)))
+    assert reopened_tf.auto_size == MSO_AUTO_SIZE.NONE
+    assert reopened_tf.font_scale is None
+    sizes = [p.runs[0].font.size.centipoints for p in reopened_tf.paragraphs]
+    assert sizes == [1625, 1375]
+
+
+def test_normalize_autofit_resolve_still_refuses_unresolvable_spacing():
+    """resolve covers sizes only: line-spacing reduction with no explicit spacing refuses."""
+    prs = _open(NORMAL)  # -- fixture carries lnSpcReduction=20000
+    raised = assert_refusal_atomic(
+        prs, lambda p: _autofit_frame(p).normalize_autofit(resolve=True),
+        UnsupportedStructureError,
+    )
+    assert "line spacing" in str(raised) or "line-spacing" in str(raised)
+
+
+def test_normalize_autofit_resolve_on_master_frame_refuses_typed():
+    """Regression (review): a layout/master frame used to crash with a raw AttributeError
+    from the resolver instead of the documented typed refusal."""
+    from lxml import etree
+
+    _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    prs = _open(NORMAL)
+    master_ph = prs.slide_masters[0].placeholders[0]
+    tf = master_ph.text_frame
+    if not tf.paragraphs[0].runs:
+        tf.paragraphs[0].add_run().text = "master text"
+    bodyPr = tf._txBody.find("{%s}bodyPr" % _A)
+    normAutofit = bodyPr.find("{%s}normAutofit" % _A)
+    if normAutofit is None:
+        normAutofit = etree.SubElement(bodyPr, "{%s}normAutofit" % _A)
+    normAutofit.set("fontScale", "50000")
+    assert tf.font_scale == 50.0  # -- the frame the resolver will be asked about
+
+    with pytest.raises(UnsupportedStructureError):
+        tf.normalize_autofit(resolve=True)
+
+
+def test_normalize_autofit_resolve_rejects_non_bool():
+    prs = _open(NORMAL)
+    with pytest.raises(ValueError):
+        _autofit_frame(prs).normalize_autofit(resolve="yes")
+
+
 def test_fields_are_scaled_and_validated_like_runs():
     """Regression: a:fld (slide number/date fields) render text exactly like runs; their
     explicit sizes must be frozen too, and an unsized field must refuse, not silently render

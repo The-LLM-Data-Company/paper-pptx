@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 from pptx.chart.axis import CategoryAxis, DateAxis, ValueAxis
@@ -217,9 +218,9 @@ class Chart(PartElementProxy):
         Data-shape problems raise |ValueError| (programmer error). Structural refusals
         (|UnsupportedStructureError|, document untouched): a chart type outside the
         supported category-chart families (XY/bubble/stock/surface/radar and 3-D variants
-        are out of v0 scope), a multi-plot (combo) chart, or a chart with no embedded
-        workbook (e.g. LibreOffice-written charts) — the replacement mechanism must update
-        the workbook and there is nothing to update.
+        are out of v0 scope) or a multi-plot (combo) chart. Charts without an embedded
+        workbook (e.g. LibreOffice/Google-authored) are supported since v0.1: their chart
+        XML is rewritten and the (absent) workbook update is skipped.
         """
         from pptx.chart.data import CategoryChartData
         from pptx.errors import UnsupportedStructureError
@@ -261,6 +262,22 @@ class Chart(PartElementProxy):
                     raise ValueError(
                         "series %r values must be numbers or None, got %r" % (name, value)
                     )
+                if value is not None:
+                    # -- finite-float representability, validated BEFORE any XML write:
+                    # -- a 10**400 int would otherwise raise OverflowError mid-mutation
+                    # -- (chart XML rewritten, workbook not), and inf/nan serialize as
+                    # -- schema-invalid lexical values
+                    try:
+                        as_float = float(value)
+                    except OverflowError:
+                        raise ValueError(
+                            "series %r value %r is too large to represent as a chart value"
+                            % (name, value)
+                        )
+                    if math.isnan(as_float) or math.isinf(as_float):
+                        raise ValueError(
+                            "series %r values must be finite numbers, got %r" % (name, value)
+                        )
             normalized_series.append((name, values))
         if number_format is not None and not isinstance(number_format, str):
             raise ValueError("number_format must be a str or None, got %r" % (number_format,))
@@ -278,13 +295,10 @@ class Chart(PartElementProxy):
             raise UnsupportedStructureError(
                 "multi-plot (combo) charts are not supported by replace_data_safe in v0"
             )
-        if self._workbook.xlsx_part is None:
-            raise UnsupportedStructureError(
-                "this chart has no embedded workbook (no c:externalData); replacing its"
-                " data would leave chart XML and workbook inconsistent"
-            )
 
-        # -- route to the existing public mechanism --
+        # -- route to the existing public mechanism. Charts without an embedded workbook
+        # -- (LibreOffice/Google-authored) update chart XML only (v0.1): the same series
+        # -- rewriter runs, and the workbook update is skipped because there is none.
         chart_data = (
             CategoryChartData(number_format=number_format)
             if number_format is not None
@@ -293,7 +307,11 @@ class Chart(PartElementProxy):
         chart_data.categories = categories
         for name, values in normalized_series:
             chart_data.add_series(name, values)
-        self.replace_data(chart_data)
+        if self._workbook.xlsx_part is None:
+            rewriter = SeriesXmlRewriterFactory(self.chart_type, chart_data)
+            rewriter.replace_series_data(self._chartSpace)
+        else:
+            self.replace_data(chart_data)
 
     @lazyproperty
     def series(self):

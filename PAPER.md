@@ -261,6 +261,111 @@ finding was fixed with a regression test:
   is byte-exact; API-PROPOSAL.md amendments ledgered (notes body-placeholder refusal, slide
   int-addressing IndexError semantics, Phase 8 example fixed).
 
+## v0.1 Phase 0: integrity wave
+
+Per `agent_docs/PLAN-v0.1.md`, all fixture-first, all additive:
+
+- **0.1 sections/custom shows** — `Slides.delete` purges `p14:sectionLst` (by slide id) and
+  `p:custShowLst` (by rId) entries; `clone` enrolls the copy in the source's section directly
+  after it (custom shows deliberately not extended). New `tests/paper/idlists.py` scan
+  (dangling/duplicate section ids) runs on every fixture and every slide-op output — the
+  failure class is covered structurally, not spot-patched. Empty sections/show lists are
+  schema-valid and preserved, matching PowerPoint.
+- **0.2/0.3 visibility-complete inspection** — `inspect_text` now sees grouped shapes
+  (recursive, depth-guarded) and table cells (row-major, as typed counted *blind regions*:
+  text reported, effective values honestly unresolved pending a table-style walk). Payload
+  schema v2; goldens regenerated via the documented command.
+- **0.4 autofit ↔ resolver wiring** — `normalize_autofit(resolve=True)` freezes inherited
+  sizes through the Phase 4 effective walk (the template-placeholder case its own v0 refusal
+  message pointed at). Spacing resolution remains a refusal. Default unchanged.
+- **Walkthrough eval** — `tests/paper/test_walkthrough_qbr.py` runs the canonical template
+  job end-to-end with shipped API on every suite run; unshipped v0.1 steps are strict xfails
+  that force integration as each organ lands. v0.1's definition of done includes zero
+  Phase 0–2 xfails in this file.
+- New frozen fixtures: `sections`, `tables_in_group`, `nested_groups`, `autofit_inherited`
+  (+ FIXTURE-REQUESTS.md R8 for the real-PowerPoint sectioned deck).
+
+## v0.1 Phase 1.1: anchored text replacement (`pptx.edit`)
+
+The write half of the anchor loop: `replace_text` (deck-wide, visibility-complete via the
+same traversal as `inspect_text` — groups, table cells, optionally notes),
+`replace_text_at` (single block, hash-checked; stale → `StaleAnchorError`, an additive
+`TargetNotFoundError` subclass), and `refind` (the explicit recovery path; ambiguous or gone
+→ typed refusals). Run-preservation semantics pinned in the API-PROPOSAL v0.1 amendment;
+untouched runs stay byte-identical; the §4 replace-inverse invariant is tested exact for
+identically-formatted spans, and its documented limit (a match spanning differently-formatted
+runs collapses to the start run's formatting; text always restores) was found in
+implementation and amended per §8, not silently. Walkthrough retitle step flipped from xfail
+to anchored replace.
+
+## v0.1 Phase 1.2/1.3: shape surgery + generic by-name addressing
+
+`SlideShapes.delete` (relationship hygiene: rels referenced by the removed subtree are
+dropped only when nothing else in the part references them — the shared-image case is
+tested), `SlideShapes.move` (z-order, mirroring `Slides.move`'s contract), and
+`SlideShapes.add_copy` (fresh shape ids; image/media shared, hyperlinks copied, charts
+deep-copied with workbooks via the Phase 7 machinery; anything else →
+`RelationshipPolicyError`). Grouped shapes are not directly deletable (typed refusal says
+so). By-name addressing generalizes `chart_by_name`'s contract: `shape_by_name`,
+`picture_by_name`, `table_by_name` — group-aware, `TargetNotFoundError`/
+`AmbiguousTargetError`, never first-match. **Sanctioned extension of a v0 paper API:**
+`chart_by_name` is now group-aware too (it finds charts inside groups it previously
+missed; same refusal contract). Two more walkthrough steps flipped from xfail.
+
+## v0.1 Phase 2: manifest and the evidenced extensions
+
+- **2.1 `pptx.inspect.inspect_deck`** — the structural survey (per-slide shape inventory
+  with kind/z-order/geometry/placeholder role, table/chart/image/autofit facts, nested group
+  children, layout/master inventory) as a deterministic, goldened, schema-versioned payload
+  (`paper-deck-manifest` v1). Placeholder geometry reports upstream's resolved inheritance.
+- **2.2 effective-walk extension** — `EffectiveFont` gains bold/italic/underline (schema
+  defaults resolve explicitly, payload v2, goldens regenerated); new
+  `effective_paragraph_format` (alignment, line spacing) and `effective_shape_format`
+  (explicit fills resolve fully through clrMap/theme; `a:noFill` → "none"; style
+  fill/line references report unresolved with the reference color in provenance — theme
+  format-scheme modulation is not guessed).
+- **2.3 cross-format image replace** — `replace_image(allow_format_change=True)`; the
+  default remains the v0 refusal.
+- **2.4 workbook-less chart update** — `replace_data_safe` now updates
+  LibreOffice/Google-authored charts (no `c:externalData`) through the same series rewriter
+  with the workbook step skipped; previously a documented refusal, lifted deliberately (the
+  gap review's standing red test on `lo_chart_notes` now passes green).
+- **2.5 fields + header/footer flags** — `add_slide_number_field`/`add_datetime_field`
+  (real `a:fld` elements), `HeaderFooters` on layouts/masters over a new `CT_HeaderFooter`;
+  `inspect_text` recognizes fields per block while keeping their volatile display text out
+  of anchors.
+- **Wave complete:** the QBR walkthrough eval runs with zero xfails, satisfying
+  PLAN-v0.1's definition of done.
+
+## v0.1 hardening: final adversarial review findings, all fixed
+
+A five-dimension review panel (additivity, organ bug-hunting, conventions, test quality,
+consumer experience) ran against the complete wave; every confirmed finding was fixed with a
+regression test:
+
+- **Critical** — `SlideShapes.add_copy` skipped the chart child-relationship validation
+  `Slides.clone` performs, silently producing dangling rIds; now refuses identically.
+- **Major** — `replace_text` mutated while traversing, so a traversal refusal (depth guard)
+  on a later slide left earlier edits behind; it now materializes the complete plan before
+  the first write. `mc:AlternateContent` was silently invisible; it is now a typed counted
+  blind region in `inspect_text`, a per-slide count in `inspect_deck`, a refusal in
+  `replace_text`, and an anchor-index-stable entry for `replace_text_at`/`refind`.
+  `replace_data_safe` could desync chart XML from the workbook on float-unrepresentable
+  ints (10**400); non-finite/non-representable values now refuse up front. The walkthrough's
+  normalize step was dead code (a None-guard silently skipped it); it now runs, asserted on
+  the reopened output. Occurrence semantics (non-overlapping, multi-match counts) were
+  untested — mutation-proven tests added. Phase 2 shipped without API-PROPOSAL amendments;
+  recorded now, with the stale Phase 9 sentence corrected in place.
+- **Minor** — cross-boundary anchored matches now refuse instead of returning a
+  success-shaped zero; C0 control characters are rejected before mutation; the master-frame
+  `resolve=True` crash is a typed refusal; field construction moved into the oxml layer
+  (§3); boolean effective values serialize as JSON booleans (goldens regenerated); the
+  spacing refusal names its recovery path; new `hf_flags` fixture covers authored-elsewhere
+  `p:hf`; sectioned slide-op outputs gained LibreOffice smoke coverage; inverse-invariant
+  and refusal tests routed through reopen/atomicity helpers; the walkthrough grew steps for
+  `add_copy`, `effective_paragraph_format`, `add_datetime_field`, `table_by_name`, and the
+  stale-anchor → `refind` recovery path.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

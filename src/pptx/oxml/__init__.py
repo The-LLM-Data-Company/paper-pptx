@@ -394,6 +394,7 @@ register_element_cls("p:xfrm", CT_Transform2D)
 
 
 from pptx.oxml.slide import (  # noqa: E402
+    CT_HeaderFooter,
     CT_Background,
     CT_BackgroundProperties,
     CT_CommonSlideData,
@@ -414,6 +415,7 @@ register_element_cls("p:bg", CT_Background)
 register_element_cls("p:bgPr", CT_BackgroundProperties)
 register_element_cls("p:childTnLst", CT_TimeNodeList)
 register_element_cls("p:cSld", CT_CommonSlideData)
+register_element_cls("p:hf", CT_HeaderFooter)
 register_element_cls("p:notes", CT_NotesSlide)
 register_element_cls("p:notesMaster", CT_NotesMaster)
 register_element_cls("p:sld", CT_Slide)

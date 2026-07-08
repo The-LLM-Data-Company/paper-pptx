@@ -412,10 +412,11 @@ def replace_data_safe(self, categories: Sequence[str],
 
 `replace_data_safe` validates fully, then routes to upstream `Chart.replace_data` with a
 `CategoryChartData`: chart type must be a category chart exercised by the reference
-(bar/column/line and their stacked variants, pie, doughnut, area) — XY/bubble/stock/surface,
-multi-plot charts, and charts without an embedded workbook → `UnsupportedStructureError`
-naming the chart type. Data-shape problems (empty categories, length mismatch, non-numeric
-values, duplicate series names) are `ValueError` (programmer error). Refusal atomicity: all
+(bar/column/line and their stacked variants, pie, doughnut, area) — XY/bubble/stock/surface
+and multi-plot charts → `UnsupportedStructureError` naming the chart type. *(Amended in
+v0.1 Phase 2.4: the original workbook-less refusal is lifted — see the v0.1 amendments.)*
+Data-shape problems (empty categories, length mismatch, non-numeric or non-finite values,
+duplicate series names) are `ValueError` (programmer error). Refusal atomicity: all
 validation precedes the first XML write.
 
 ```python
@@ -436,6 +437,101 @@ chart.replace_data_safe(["East", "West"], [("Q3", (12.5, 9.1)), ("Q4", (14.0, 11
 - **Injectable clock** — no v0 organ stamps dates (tracked edits are a docx concern; pptx v0
   has none), so no organ takes `tracked`/`author`/`date` kwargs yet. The clock utility and the
   §2 kwarg shapes stand ready for the first date-stamping organ; nothing to wire in v0. ✔
+
+## v0.1 amendments (PLAN-v0.1)
+
+Signatures added or changed by the v0.1 wave; each lands here before its implementation.
+
+- **Phase 0.2/0.3** — `inspect_text` is visibility-complete: depth-first document order over
+  top-level shapes, grouped shapes (recursive, `MAX_GROUP_DEPTH = 16`, deeper refuses), and
+  table cells (row-major). `TextBlock` gains `container: str` ("shape" | "group" |
+  "table-cell"), `container_detail: str | None` (group path / `"frame!r{r}c{c}"`), and
+  `blind: bool`; `TextInspection` gains `blind_region_count`. Payload schema version 1 → 2.
+  Table-cell runs report text with honestly-unresolved effective values (table-style
+  inheritance is not walked in v0.1).
+- **Phase 0.4** — `TextFrame.normalize_autofit(*, min_font_size=None, resolve: bool = False)`:
+  `resolve=True` resolves locally-unresolvable font sizes through the effective-style walk
+  before freezing; spacing resolution remains a refusal. Default behavior byte-identical to
+  v0.
+- **Phase 1 amendment — the anchor-consuming write pattern** (pinned before implementation;
+  all three Phase 1 organs follow it):
+  - **Where writes live:** new module `pptx.edit` at the import root. Anchors are cross-part
+    addresses that no single proxy owns; their producers live in `pptx.inspect`, their
+    consumers in `pptx.edit`.
+  - **Staleness = refuse.** New `pptx.errors.StaleAnchorError(TargetNotFoundError)`
+    (additive subclass — existing `except TargetNotFoundError` still catches it), raised when
+    the block at `anchor.block_index` no longer hashes to `anchor.content_hash`. Never
+    silently re-find. Explicit recovery: `pptx.edit.refind(prs, anchor) -> BlockAnchor` —
+    the unique block in the anchor's part with the same content hash (none →
+    `TargetNotFoundError`, several → `AmbiguousTargetError`).
+  - **Text replacement** (Phase 1.1), literal and case-sensitive, matches never crossing
+    paragraph / line-break / field boundaries:
+    - `pptx.edit.replace_text(prs, find, replace, *, include_notes=False) -> ReplaceResult`
+      — deck-wide, visibility-complete (same traversal as `inspect_text`: groups and table
+      cells included).
+    - `pptx.edit.replace_text_at(prs, anchor, find, replace) -> ReplaceResult` — one block,
+      hash-checked first.
+    - `ReplaceResult(replacements: int, blocks: tuple[BlockAnchor, ...])` — post-edit anchors
+      of every touched block; `.to_dict()` schema `"paper-replace-result"` version 1.
+    - Pinned run-preservation semantics: runs are split at match boundaries; boundary
+      fragments keep their source run's `rPr` verbatim; replacement text inherits the rPr of
+      the run where the match STARTS (a match beginning exactly at a run boundary belongs to
+      the later run); untouched runs stay byte-identical; runs consumed whole are removed.
+      Zero matches is a normal result (0), not a refusal.
+    - **Documented limit of the replace-inverse invariant** (found during implementation,
+      amended per §8): the §4 invariant — replace(x→y) then replace(y→x) restores text and
+      formatting — is exact when every match lies within identically-formatted runs. A match
+      spanning differently-formatted runs necessarily collapses the replaced span to the
+      start run's formatting: the consumed runs' formatting is unrecoverable by design, and
+      guessing it back would violate §1.5. Text always restores exactly.
+  - **Shape surgery** (Phase 1.2), on `SlideShapes`:
+    - `delete(shape) -> None` — removes the shape element; relationships referenced by the
+      removed subtree are dropped unless still referenced elsewhere in the part.
+      `TargetNotFoundError` for a shape not in this collection.
+    - `move(shape, to_index) -> None` — z-order reposition within this collection
+      (`ValueError` for an out-of-range index, mirroring `Slides.move`).
+    - `add_copy(shape) -> shape` — copy a shape from this or another slide of the same
+      presentation; fresh shape id; images shared, external hyperlinks copied, charts
+      deep-copied with their workbooks, any other relationship type →
+      `RelationshipPolicyError`.
+  - **By-name addressing** (Phase 1.3), on `SlideShapes`, all group-aware (recursive) and
+    all with `chart_by_name`'s contract: `shape_by_name(name)`, `picture_by_name(name)`,
+    `table_by_name(name)` — `TargetNotFoundError` (with found-kind detail on type mismatch)
+    / `AmbiguousTargetError`, never first-match.
+
+- **Phase 2 amendments** (recorded late — flagged by the v0.1 final review; nothing below
+  shipped differently than described here):
+  - **2.1** `pptx.inspect.inspect_deck(prs) -> DeckManifest` — typed structural survey
+    (`SlideManifest`/`ShapeManifest`, group children nested, layout/master inventory),
+    payload schema `"paper-deck-manifest"` v1, goldened. `SlideManifest` carries
+    `alternate_content_count`; placeholder geometry reports upstream's resolved inheritance.
+  - **2.2** `EffectiveFont` v2 adds `bold`/`italic`/`underline` (explicit schema defaults
+    resolve with a final provenance step; JSON booleans, not 0/1). New
+    `effective_paragraph_format(paragraph) -> EffectiveParagraphFormat` (alignment, line
+    spacing; payload v1) and `effective_shape_format(shape) -> EffectiveShapeFormat`
+    (fill/line color; explicit `spPr` fills resolve fully, `a:noFill` → `"none"`, style
+    fill/line references report unresolved with the reference color in provenance;
+    payload v1).
+  - **2.3** `Picture.replace_image(image_file, *, allow_format_change: bool = False)` — the
+    v0 extension-mismatch refusal remains the default; `True` performs the cross-format swap
+    (typed new part, content types follow at save, geometry/crop untouched).
+  - **2.4** `replace_data_safe` on a chart with no embedded workbook rewrites chart XML via
+    the same series rewriter and skips the (absent) workbook update — the v0 refusal is
+    lifted; series values must additionally be finite and float-representable
+    (`ValueError` otherwise, validated before any write).
+  - **2.5** `_Paragraph.add_slide_number_field() -> None`,
+    `_Paragraph.add_datetime_field(format_code: str = "datetime") -> None` ("datetime",
+    "datetime1"–"datetime13"); `SlideLayout.header_footers` / `SlideMaster.header_footers`
+    → `HeaderFooters` with tri-state `slide_number_visible`/`footer_visible`/`date_visible`
+    (None = inherit). `inspect_text` reports per-block `fields` (type tokens) while keeping
+    volatile field display text out of block text and anchors.
+  - **Hardening (post-review):** `replace_text` materializes its full traversal before the
+    first write (refusal atomicity under the depth guard); `mc:AlternateContent` is a typed,
+    counted blind region in `inspect_text` (`container="alternate-content"`), a per-slide
+    count in `inspect_deck`, a refusal in `replace_text`, and occupies one anchor index;
+    `replace_text_at` refuses when the only occurrence crosses a field/line-break boundary;
+    C0 control characters are rejected in find/replace; `SlideShapes.add_copy` validates
+    chart child relationships exactly like `Slides.clone`.
 
 ## Stub tests
 

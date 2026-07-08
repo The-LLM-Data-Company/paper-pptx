@@ -1,0 +1,41 @@
+{
+  "fixture": "nested_groups.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py for PLAN-v0.1 Phase 0. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "nested_group_shapes",
+    "group_shape"
+  ],
+  "ground_truth": {
+    "slide_count": 1,
+    "max_group_depth": 3,
+    "texts_by_level": {
+      "0": {
+        "shape": "level0_box",
+        "text": "Level zero"
+      },
+      "1": {
+        "shape": "level1_box",
+        "text": "Level one"
+      },
+      "2": {
+        "shape": "level2_box",
+        "text": "Level two"
+      },
+      "3": {
+        "shape": "level3_box",
+        "text": "Level three"
+      }
+    },
+    "group_names": [
+      "group_level1",
+      "group_level2",
+      "group_level3"
+    ]
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

@@ -165,24 +165,32 @@ class Picture(_BasePicture):
     Based on the `p:pic` element.
     """
 
-    def replace_image(self, image_file: str | IO[bytes]) -> None:
+    def replace_image(
+        self, image_file: str | IO[bytes], *, allow_format_change: bool = False
+    ) -> None:
         """Replace the image behind this picture, preserving its geometry exactly.
 
         paper-pptx addition. Position, size, rotation, masking geometry, and crop
-        (`a:srcRect`) are not touched — only the `a:blip/@r:embed` target changes. The new
-        image's canonical format must match the existing image part's extension
-        (jpg == jpeg); a mismatch refuses with |UnsupportedStructureError|, because
-        rewriting part content types is out of v0 scope. A picture with no embedded image
-        relationship (e.g. linked-only) also refuses.
+        (`a:srcRect`) are not touched — only the `a:blip/@r:embed` target changes. By
+        default the new image's canonical format must match the existing image part's
+        extension (jpg == jpeg); a mismatch refuses with |UnsupportedStructureError|.
+        Passing `allow_format_change=True` (v0.1) permits a cross-format swap: the new
+        image gets its own correctly-typed part and `[Content_Types].xml` follows
+        automatically at save (it is regenerated from live parts).
 
-        The new image part is deduplicated package-wide by content hash; the old image part
-        simply becomes unreferenced when this picture held its last reference (an
-        unreachable part is never serialized).
+        A picture with no embedded image relationship (e.g. linked-only) refuses. The new
+        image part is deduplicated package-wide by content hash; the old image part simply
+        becomes unreferenced when this picture held its last reference (an unreachable part
+        is never serialized).
         """
         from pptx.errors import UnsupportedStructureError
         from pptx.parts.image import Image
 
         # -- validation pass, complete before any mutation --
+        if not isinstance(allow_format_change, bool):
+            raise ValueError(
+                "allow_format_change must be a bool, got %r" % (allow_format_change,)
+            )
         old_rId = self._pic.blip_rId
         if old_rId is None:
             raise UnsupportedStructureError(
@@ -203,10 +211,10 @@ class Picture(_BasePicture):
         except OSError as e:
             raise ValueError("image_file is not a recognizable image: %s" % e)
         old_ext = _canonical_image_ext(old_part.partname.ext)
-        if old_ext != new_ext:
+        if old_ext != new_ext and not allow_format_change:
             raise UnsupportedStructureError(
                 "replacement image format %r does not match existing image part format %r;"
-                " content-type rewriting is out of scope for this API" % (new_ext, old_ext)
+                " pass allow_format_change=True to swap across formats" % (new_ext, old_ext)
             )
 
         # -- mutation --

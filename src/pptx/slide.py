@@ -395,7 +395,7 @@ class Slides(ParentedElementProxy):
         `source`/`after` accept a |Slide| or a 0-based index; a |Slide| from another
         presentation raises |TargetNotFoundError|.
         """
-        from pptx.slideops import clone_slide_part
+        from pptx.slideops import clone_slide_part, enroll_clone_in_section
 
         if policy is None:
             policy = SlideClonePolicy()
@@ -405,12 +405,16 @@ class Slides(ParentedElementProxy):
         anchor_slide = source_slide if after is None else self._resolve_slide(after)
         anchor_index = self.index(anchor_slide)
 
+        source_slide_id = source_slide.slide_id
         new_part = clone_slide_part(source_slide.part, policy)
         rId = self.part.relate_to(new_part, RT.SLIDE)
         self._sldIdLst.add_sldId(rId)
         sldId = self._sldIdLst[-1]
         self._sldIdLst.remove(sldId)
         self._sldIdLst.insert(anchor_index + 1, sldId)
+        # -- enroll the copy in the source's section, right after it (custom shows are
+        # -- deliberately not extended: a copy is not part of a curated show)
+        enroll_clone_in_section(self._sldIdLst.getparent(), source_slide_id, sldId.id)
         return new_part.slide
 
     def delete(self, slide: Slide | int) -> None:
@@ -421,12 +425,17 @@ class Slides(ParentedElementProxy):
         graph (the slide, and e.g. its charts and notes if unshared) are never serialized
         again — orphans structurally cannot reach disk. Deleting the last slide is allowed.
         """
+        from pptx.slideops import remove_slide_from_id_lists
+
         target = self._resolve_slide(slide)
         for sldId in self._sldIdLst.sldId_lst:
             if sldId.id == target.slide_id:
-                rId = sldId.rId
+                slide_id, rId = sldId.id, sldId.rId
                 self._sldIdLst.remove(sldId)
                 self.part.drop_rel(rId)
+                # -- sections (by slide id) and custom shows (by rId) reference slides
+                # -- outside the rels graph; purge those entries too (PLAN-v0.1 0.1)
+                remove_slide_from_id_lists(self._sldIdLst.getparent(), slide_id, rId)
                 return
 
     def move(self, slide: Slide | int, to_index: int) -> None:
@@ -500,6 +509,60 @@ class Slides(ParentedElementProxy):
         raise ValueError("%s is not in slide collection" % slide)
 
 
+
+class HeaderFooters(object):
+    """Header/footer placeholder visibility flags of a layout or master (paper-pptx v0.1).
+
+    Wraps the `p:hf` element. Each property is tri-state: |True|/|False| when the attribute
+    is explicit, |None| when it is absent — meaning "inherit" (a layout inherits from its
+    master; the schema default is visible). Assigning |None| removes the attribute.
+    """
+
+    def __init__(self, slide_elm):
+        super(HeaderFooters, self).__init__()
+        self._element = slide_elm
+
+    @property
+    def slide_number_visible(self) -> bool | None:
+        """Visibility of the slide-number placeholder (`p:hf/@sldNum`)."""
+        hf = self._element.hf
+        return hf.sldNum if hf is not None else None
+
+    @slide_number_visible.setter
+    def slide_number_visible(self, value: bool | None):
+        self._set_flag("sldNum", value)
+
+    @property
+    def footer_visible(self) -> bool | None:
+        """Visibility of the footer placeholder (`p:hf/@ftr`)."""
+        hf = self._element.hf
+        return hf.ftr if hf is not None else None
+
+    @footer_visible.setter
+    def footer_visible(self, value: bool | None):
+        self._set_flag("ftr", value)
+
+    @property
+    def date_visible(self) -> bool | None:
+        """Visibility of the date placeholder (`p:hf/@dt`)."""
+        hf = self._element.hf
+        return hf.dt if hf is not None else None
+
+    @date_visible.setter
+    def date_visible(self, value: bool | None):
+        self._set_flag("dt", value)
+
+    def _set_flag(self, attr_name: str, value: "bool | None") -> None:
+        if value is None:
+            hf = self._element.hf
+            if hf is not None:
+                setattr(hf, attr_name, None)
+            return
+        if not isinstance(value, bool):
+            raise ValueError("visibility must be True, False, or None, got %r" % (value,))
+        setattr(self._element.get_or_add_hf(), attr_name, value)
+
+
 class SlideLayout(_BaseSlide):
     """Slide layout object.
 
@@ -507,6 +570,11 @@ class SlideLayout(_BaseSlide):
     """
 
     part: SlideLayoutPart  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    @property
+    def header_footers(self) -> HeaderFooters:
+        """|HeaderFooters| flags for this layout (paper-pptx addition, v0.1)."""
+        return HeaderFooters(self._element)
 
     def iter_cloneable_placeholders(self) -> Iterator[LayoutPlaceholder]:
         """Generate layout-placeholders on this slide-layout that should be cloned to a new slide.
@@ -626,6 +694,11 @@ class SlideMaster(_BaseMaster):
     """
 
     _element: CT_SlideMaster  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def header_footers(self) -> HeaderFooters:
+        """|HeaderFooters| flags for this master (paper-pptx addition, v0.1)."""
+        return HeaderFooters(self._element)
 
     @lazyproperty
     def slide_layouts(self) -> SlideLayouts:

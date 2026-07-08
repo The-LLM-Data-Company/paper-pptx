@@ -444,6 +444,206 @@ def build_corrupt_dangling_sldid() -> Path:
     return path
 
 
+def build_sections() -> Path:
+    """Five-slide deck with a p14:sectionLst (3 sections) and a p:custShowLst (1 custom show).
+
+    Sections/custom shows cannot be authored via python-pptx, so presentation.xml is rewritten
+    by zip surgery after a normal build — same technique as the corrupt fixture, honestly
+    self-generated. Section GUIDs are fixed constants for determinism. A real-PowerPoint
+    version is requested as FIXTURE-REQUESTS.md R8 (LibreOffice does not faithfully author
+    the p14 extension list).
+    """
+    P14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    SECTION_EXT_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
+
+    buf = io.BytesIO()
+    prs = Presentation()
+    for index in range(5):
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Section deck slide %d" % (
+            index + 1
+        )
+    prs.save(buf)
+
+    source = zipfile.ZipFile(buf)
+    presentation_xml = etree.fromstring(source.read("ppt/presentation.xml"))
+    sldIdLst = presentation_xml.find(qn("p:sldIdLst"))
+    slide_entries = [(s.get("id"), s.get("{%s}id" % R)) for s in sldIdLst]
+    _expect(len(slide_entries) == 5, "expected five sldId entries")
+
+    # -- p:custShowLst goes after p:notesSz per the CT_Presentation child sequence
+    custShowLst = etree.SubElement(presentation_xml, qn("p:custShowLst"))
+    notesSz = presentation_xml.find(qn("p:notesSz"))
+    notesSz.addnext(custShowLst)
+    custShow = etree.SubElement(custShowLst, qn("p:custShow"))
+    custShow.set("name", "Focus")
+    custShow.set("id", "0")
+    sldLst = etree.SubElement(custShow, qn("p:sldLst"))
+    for slide_index in (1, 3):  # -- slides 2 and 4, by relationship id
+        sld = etree.SubElement(sldLst, qn("p:sld"))
+        sld.set("{%s}id" % R, slide_entries[slide_index][1])
+
+    # -- p:extLst last; p14:sectionLst inside the Microsoft section extension
+    extLst = etree.SubElement(presentation_xml, qn("p:extLst"))
+    ext = etree.SubElement(extLst, qn("p:ext"))
+    ext.set("uri", SECTION_EXT_URI)
+    sectionLst = etree.SubElement(ext, "{%s}sectionLst" % P14)
+    section_plan = [
+        ("Intro", "{11111111-1111-4111-8111-111111111111}", [0]),
+        ("Body", "{22222222-2222-4222-8222-222222222222}", [1, 2, 3]),
+        ("Close", "{33333333-3333-4333-8333-333333333333}", [4]),
+    ]
+    for name, guid, slide_indices in section_plan:
+        section = etree.SubElement(sectionLst, "{%s}section" % P14)
+        section.set("name", name)
+        section.set("id", guid)
+        p14_sldIdLst = etree.SubElement(section, "{%s}sldIdLst" % P14)
+        for slide_index in slide_indices:
+            p14_sldId = etree.SubElement(p14_sldIdLst, "{%s}sldId" % P14)
+            p14_sldId.set("id", slide_entries[slide_index][0])
+
+    path = OUT_DIR / "sections.pptx"
+    with zipfile.ZipFile(str(path), "w", zipfile.ZIP_DEFLATED) as out:
+        for info in source.infolist():
+            if info.filename == "ppt/presentation.xml":
+                out.writestr(
+                    info,
+                    etree.tostring(
+                        presentation_xml, xml_declaration=True, encoding="UTF-8", standalone=True
+                    ),
+                )
+            else:
+                out.writestr(info, source.read(info.filename))
+    return path
+
+
+def build_tables_in_group() -> Path:
+    """A table (a:graphicFrame) inside a p:grpSp, plus an in-group textbox and a top-level one.
+
+    PowerPoint's UI does not group tables but the schema allows it and third-party producers
+    emit it; the graphicFrame is moved into the group element directly (python-pptx has no
+    group-level add_table).
+    """
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_named_textbox(
+        slide, "top_level_box", Inches(0.5), Inches(0.5), Inches(3), Inches(0.8), "Top-level text"
+    )
+    group = slide.shapes.add_group_shape()
+    group.name = "outer_group"
+    in_group_box = group.shapes.add_textbox(Inches(1), Inches(2), Inches(3), Inches(0.8))
+    in_group_box.name = "in_group_box"
+    in_group_box.text_frame.paragraphs[0].add_run().text = "In-group text"
+
+    table_shape = slide.shapes.add_table(2, 2, Inches(1), Inches(3.5), Inches(4), Inches(1.5))
+    table_shape.name = "grouped_table"
+    for row in range(2):
+        for col in range(2):
+            cell_tf = table_shape.table.cell(row, col).text_frame
+            cell_tf.paragraphs[0].add_run().text = "cell r%dc%d" % (row, col)
+    # -- move the table's graphicFrame element into the group element
+    group._element.append(table_shape._element)
+    return _save(prs, "tables_in_group.pptx")
+
+
+def build_nested_groups() -> Path:
+    """Groups nested three deep, a named textbox at every level (recursion + depth fixture)."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    _add_named_textbox(
+        slide, "level0_box", Inches(0.5), Inches(0.5), Inches(3), Inches(0.8), "Level zero"
+    )
+    outer = slide.shapes.add_group_shape()
+    outer.name = "group_level1"
+    box1 = outer.shapes.add_textbox(Inches(1), Inches(1.5), Inches(3), Inches(0.6))
+    box1.name = "level1_box"
+    box1.text_frame.paragraphs[0].add_run().text = "Level one"
+    middle = outer.shapes.add_group_shape()
+    middle.name = "group_level2"
+    box2 = middle.shapes.add_textbox(Inches(1.2), Inches(2.5), Inches(3), Inches(0.6))
+    box2.name = "level2_box"
+    box2.text_frame.paragraphs[0].add_run().text = "Level two"
+    inner = middle.shapes.add_group_shape()
+    inner.name = "group_level3"
+    box3 = inner.shapes.add_textbox(Inches(1.4), Inches(3.5), Inches(3), Inches(0.6))
+    box3.name = "level3_box"
+    box3.text_frame.paragraphs[0].add_run().text = "Level three"
+    return _save(prs, "nested_groups.pptx")
+
+
+def build_autofit_inherited() -> Path:
+    """normAutofit placeholder whose font sizes resolve ONLY through the master's txStyles.
+
+    The PLAN-v0.1 Phase 0.4 fixture: normalize_autofit() must refuse without resolution and
+    succeed with `resolve=True` (sizes come from the branded master: lvl1 2600, lvl2 2200).
+    fontScale only — no lnSpcReduction — because spacing resolution stays a refusal in v0.1.
+    """
+    prs = Presentation()
+    _brand_master(prs)
+    slide = prs.slides.add_slide(prs.slide_layouts[1])
+    slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Inherited autofit"
+    body_tf = slide.placeholders[1].text_frame
+    body_tf.paragraphs[0].add_run().text = "Level one inherits 26pt"
+    level_two = body_tf.add_paragraph()
+    level_two.level = 1
+    level_two.add_run().text = "Level two inherits 22pt"
+    for paragraph in body_tf.paragraphs:
+        for run in paragraph.runs:
+            _expect(run.font.size is None, "runs must not carry local sizes")
+
+    body_tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    normAutofit = body_tf._txBody.find(qn("a:bodyPr")).find(qn("a:normAutofit"))
+    normAutofit.set("fontScale", "62500")
+    return _save(prs, "autofit_inherited.pptx")
+
+
+def build_hf_flags() -> Path:
+    """Master and first layout carrying explicit p:hf visibility flags.
+
+    Injected by zip surgery (v0 python-pptx could not author p:hf), so the corpus
+    round-trip and the HeaderFooters read path exercise authored-elsewhere flags — not just
+    flags this package wrote itself. Real-PowerPoint version tracked in FIXTURE-REQUESTS.md.
+    """
+    buf = io.BytesIO()
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Header/footer flags"
+    prs.save(buf)
+
+    source = zipfile.ZipFile(buf)
+
+    def with_hf(member_name, attrs, successors_first):
+        root = etree.fromstring(source.read(member_name))
+        hf = root.makeelement(qn("p:hf"), attrs)
+        anchor = None
+        for tag in successors_first:
+            anchor = root.find(qn(tag))
+            if anchor is not None:
+                break
+        if anchor is not None:
+            anchor.addprevious(hf)
+        else:
+            root.append(hf)
+        return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+    rewrites = {
+        "ppt/slideMasters/slideMaster1.xml": with_hf(
+            "ppt/slideMasters/slideMaster1.xml",
+            {"sldNum": "0", "ftr": "0", "dt": "1"},
+            ("p:txStyles", "p:extLst"),
+        ),
+        "ppt/slideLayouts/slideLayout1.xml": with_hf(
+            "ppt/slideLayouts/slideLayout1.xml", {"sldNum": "1"}, ("p:extLst",)
+        ),
+    }
+    path = OUT_DIR / "hf_flags.pptx"
+    with zipfile.ZipFile(str(path), "w", zipfile.ZIP_DEFLATED) as out:
+        for info in source.infolist():
+            out.writestr(info, rewrites.get(info.filename, source.read(info.filename)))
+    return path
+
+
 def build_large_smoke() -> Path:
     """Large deck for perf smoke: 120 text slides, a picture every 10th slide."""
     prs = Presentation()

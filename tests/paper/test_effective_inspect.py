@@ -252,6 +252,92 @@ def test_libreoffice_independently_confirms_branded_effective_sizes():
 # --------------------------------------------------------------------------------- anchors
 
 
+# -------------------------------------------------- visibility completeness (v0.1 Phase 0.2/0.3)
+
+
+def test_inspect_text_sees_table_cells_as_counted_blind_regions():
+    """v0.1 0.2: table-cell text appears (row-major) as typed blind regions, never silence."""
+    inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
+    by_container = {}
+    for block in inspection.blocks:
+        by_container.setdefault(block.container, []).append(block)
+
+    cell_blocks = by_container.get("table-cell", [])
+    assert [b.text for b in cell_blocks] == [
+        "cell r0c0", "cell r0c1", "cell r1c0", "cell r1c1"
+    ]
+    assert [b.container_detail for b in cell_blocks] == [
+        "grouped_table!r0c0", "grouped_table!r0c1",
+        "grouped_table!r1c0", "grouped_table!r1c1",
+    ]
+    assert all(b.blind for b in cell_blocks)
+    for block in cell_blocks:
+        for run in block.runs:
+            assert run.font.size.resolved is False  # -- honest unresolved, not a guess
+    assert inspection.blind_region_count == 4
+
+    payload = inspection.to_dict()
+    assert payload["version"] == 2
+    assert payload["blind_region_count"] == 4
+
+
+def test_inspect_text_sees_grouped_shape_text_with_group_paths():
+    """v0.1 0.3: text inside groups appears, recursively, with its group path."""
+    inspection = inspect_text(_open("self_generated/nested_groups.pptx").slides[0])
+    by_text = {b.text: b for b in inspection.blocks}
+    assert by_text["Level zero"].container == "shape"
+    assert by_text["Level zero"].container_detail is None
+    assert by_text["Level one"].container == "group"
+    assert by_text["Level one"].container_detail == "group_level1"
+    assert by_text["Level two"].container_detail == "group_level1/group_level2"
+    assert by_text["Level three"].container_detail == (
+        "group_level1/group_level2/group_level3"
+    )
+    assert not any(b.blind for b in inspection.blocks)
+    # -- grouped runs resolve through the normal (non-placeholder) chain
+    assert by_text["Level three"].runs[0].font.size.resolved is True
+
+
+def test_inspect_text_sees_in_group_textbox_beside_grouped_table():
+    inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
+    by_text = {b.text: b for b in inspection.blocks}
+    assert by_text["Top-level text"].container == "shape"
+    assert by_text["In-group text"].container == "group"
+    assert by_text["In-group text"].container_detail == "outer_group"
+
+
+def test_inspect_text_block_order_is_depth_first_document_order():
+    inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
+    texts = [b.text for b in inspection.blocks]
+    assert texts == [
+        "Top-level text", "In-group text",
+        "cell r0c0", "cell r0c1", "cell r1c0", "cell r1c1",
+    ]
+    assert [b.anchor.block_index for b in inspection.blocks] == list(range(len(texts)))
+
+
+def test_pathological_group_nesting_refuses_instead_of_recursing_forever():
+    prs = _open("self_generated/minimal_clean.pptx")
+    shapes = prs.slides[0].shapes
+    group = shapes.add_group_shape()
+    for _ in range(17):
+        group = group.shapes.add_group_shape()
+    box = group.shapes.add_textbox(0, 0, 914400, 914400)
+    box.text_frame.paragraphs[0].add_run().text = "too deep"
+    with pytest.raises(UnsupportedStructureError, match="nested"):
+        inspect_text(prs.slides[0])
+
+
+def test_effective_font_resolves_runs_inside_groups():
+    prs = _open("self_generated/nested_groups.pptx")
+    group = next(s for s in prs.slides[0].shapes if s.name == "group_level1")
+    for name in ("group_level2", "group_level3"):
+        group = next(s for s in group.shapes if s.name == name)
+    box = next(s for s in group.shapes if s.name == "level3_box")
+    info = box.text_frame.paragraphs[0].runs[0].effective_font()
+    assert info.size.resolved is True
+
+
 def test_content_hash_is_pinned_sha256_nfc_prefix():
     assert content_hash("Branded Title") == (
         hashlib.sha256("Branded Title".encode("utf-8")).hexdigest()[:8]
@@ -277,6 +363,128 @@ def test_out_of_schema_indent_level_refuses_instead_of_crashing():
         run.effective_font()
 
 
+def test_alternate_content_is_a_typed_counted_blind_region_not_silence():
+    """Regression (review): mc:AlternateContent used to be invisible to inspect_text and
+    inspect_deck — a fail-silent hole in the visibility-complete contract."""
+    from pptx.inspect import inspect_deck
+    from tests.paper.test_edit_text import _wrap_first_textbox_in_alternate_content
+
+    prs = _wrap_first_textbox_in_alternate_content(
+        _open("self_generated/minimal_clean.pptx")
+    )
+    inspection = inspect_text(prs.slides[0])
+    ac_blocks = [b for b in inspection.blocks if b.container == "alternate-content"]
+    assert len(ac_blocks) == 1
+    assert ac_blocks[0].blind is True
+    assert inspection.blind_region_count == 1
+    assert inspection.to_dict()["blind_region_count"] == 1
+
+    manifest = inspect_deck(prs)
+    assert manifest.slides[0].alternate_content_count == 1
+    assert manifest.to_dict()["slides"][0]["alternate_content_count"] == 1
+
+
+def test_boolean_effective_values_serialize_as_json_booleans():
+    """Regression (review): bool is an int subclass; the payload used to emit 0/1."""
+    payload = (
+        _open(BRANDED).slides[0].placeholders[1].text_frame.paragraphs[0].runs[0]
+        .effective_font()
+        .to_dict()
+    )
+    assert payload["bold"]["value"] is False
+    assert payload["italic"]["value"] is False
+
+
+# --------------------------------------------------------- v0.1 Phase 2.2 walk extensions
+
+
+def test_bold_italic_underline_resolve_with_schema_defaults():
+    prs = _open(BRANDED)
+    run = prs.slides[0].placeholders[1].text_frame.paragraphs[0].runs[0]
+    font = run.effective_font()
+    assert font.bold.value is False
+    assert font.bold.resolved is True
+    assert font.bold.provenance[-1].level == "schema default"
+    assert font.italic.value is False
+    assert font.italic.resolved is True
+    assert font.underline.value == "none"
+    assert font.underline.resolved is True
+
+    run.font.bold = True
+    run.font.underline = True  # -- upstream writes u="sng"
+    font = run.effective_font()
+    assert font.bold.value is True
+    assert font.bold.provenance[-1].level == "run rPr"
+    assert font.underline.value == "sng"
+
+
+def test_effective_paragraph_format_resolves_alignment_and_spacing():
+    from pptx.enum.text import PP_ALIGN
+    from pptx.inspect import effective_paragraph_format
+
+    prs = _open(BRANDED)
+    paragraph = prs.slides[0].placeholders[1].text_frame.paragraphs[0]
+    fmt = effective_paragraph_format(paragraph)
+    assert fmt.alignment.value == "l"  # -- master bodyStyle supplies algn="l"
+    assert any(s.supplied and "bodyStyle" in s.level for s in fmt.alignment.provenance)
+    assert fmt.line_spacing.value == 1.0  # -- rendering default, explicitly provenanced
+    assert fmt.line_spacing.provenance[-1].level == "rendering default"
+
+    paragraph.alignment = PP_ALIGN.CENTER
+    paragraph.line_spacing = 1.5
+    fmt = effective_paragraph_format(paragraph)
+    assert fmt.alignment.value == "ctr"
+    assert fmt.alignment.provenance[0].supplied is True  # -- paragraph pPr wins
+    assert fmt.line_spacing.value == 1.5
+
+    payload = fmt.to_dict()
+    assert payload["schema"] == "paper-effective-paragraph-format"
+    assert payload["version"] == 1
+
+
+def test_effective_shape_format_resolves_explicit_fill_through_clrmap():
+    """The gap-review probe case: the rectangle behind the text, resolved like the text."""
+    from pptx.inspect import effective_shape_format
+
+    prs = _open(CLRMAP)
+    rect = prs.slides[0].shapes.shape_by_name("accent1_box")
+    fmt = effective_shape_format(rect)
+    assert fmt.fill_rgb.value == "C0504D"  # -- accent1 -> clrMap -> theme accent2
+    assert fmt.fill_rgb.resolved is True
+    assert any("clrMap" in s.detail or "clrMap" in s.level for s in fmt.fill_rgb.provenance)
+
+    # -- line color comes only from the style lnRef: honestly unresolved, reference
+    # -- color carried in provenance
+    assert fmt.line_rgb.resolved is False
+    assert any("C0504D" in s.detail for s in fmt.line_rgb.provenance)
+
+    payload = fmt.to_dict()
+    assert payload["schema"] == "paper-effective-shape-format"
+    assert payload["version"] == 1
+
+
+def test_effective_shape_format_reports_nofill_and_absent_fill_honestly():
+    from pptx.inspect import effective_shape_format
+
+    prs = _open(CLRMAP)
+    rect = prs.slides[0].shapes.shape_by_name("accent1_box")
+    rect.fill.background()  # -- a:noFill
+    fmt = effective_shape_format(rect)
+    assert fmt.fill_rgb.value == "none"
+    assert fmt.fill_rgb.resolved is True
+
+    # -- upstream textboxes carry an explicit a:noFill too
+    box = prs.slides[0].shapes.shape_by_name("tx1_text")
+    assert effective_shape_format(box).fill_rgb.value == "none"
+
+    # -- a placeholder with an empty spPr and no p:style is honestly unresolved
+    branded = _open(BRANDED)
+    title = branded.slides[0].shapes.title
+    fmt = effective_shape_format(title)
+    assert fmt.fill_rgb.resolved is False
+    assert fmt.fill_rgb.value is None
+
+
 def test_effective_font_payload_carries_pinned_schema_keys():
     payload = (
         _open(BRANDED).slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
@@ -284,7 +492,7 @@ def test_effective_font_payload_carries_pinned_schema_keys():
         .to_dict()
     )
     assert payload["schema"] == "paper-effective-font"
-    assert payload["version"] == 1
+    assert payload["version"] == 2  # -- v2 since Phase 2.2: bold/italic/underline added
 
 
 def test_content_hash_treats_whitespace_as_content():

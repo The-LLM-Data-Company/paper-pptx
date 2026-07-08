@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from pptx.text.text import _Run
 
 SCHEMA_NAME = "paper-text-inspection"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # -- v2 (v0.1): visibility-complete traversal, container/blind fields
 
 _TITLE_FAMILY = frozenset([PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE])
 _BODY_FAMILY = frozenset(
@@ -104,7 +104,11 @@ class EffectiveValue:
 
     def to_dict(self) -> dict:
         return {
-            "value": int(self.value) if isinstance(self.value, int) else self.value,
+            "value": (
+                int(self.value)
+                if isinstance(self.value, int) and not isinstance(self.value, bool)
+                else self.value
+            ),
             "value_pt": self.value_pt,
             "resolved": self.resolved,
             "provenance": [step.to_dict() for step in self.provenance],
@@ -113,19 +117,25 @@ class EffectiveValue:
 
 @dataclass(frozen=True)
 class EffectiveFont:
-    """Effective size, name, and color of one run."""
+    """Effective size, name, color, and emphasis of one run."""
 
     size: EffectiveValue
     name: EffectiveValue
     color_rgb: EffectiveValue
+    bold: EffectiveValue = None  # pyright: ignore[reportAssignmentType]
+    italic: EffectiveValue = None  # pyright: ignore[reportAssignmentType]
+    underline: EffectiveValue = None  # pyright: ignore[reportAssignmentType]
 
     def to_dict(self) -> dict:
         return {
             "schema": "paper-effective-font",
-            "version": 1,
+            "version": 2,  # -- v2 (v0.1): bold/italic/underline added
             "size": self.size.to_dict(),
             "name": self.name.to_dict(),
             "color_rgb": self.color_rgb.to_dict(),
+            "bold": self.bold.to_dict() if self.bold is not None else None,
+            "italic": self.italic.to_dict() if self.italic is not None else None,
+            "underline": self.underline.to_dict() if self.underline is not None else None,
         }
 
 
@@ -156,7 +166,15 @@ class InspectedRun:
 
 @dataclass(frozen=True)
 class TextBlock:
-    """One paragraph of one shape, with anchor and per-run effective fonts."""
+    """One paragraph of one text body, with anchor and per-run effective fonts.
+
+    `container` says where the text lives: "shape" (a top-level `p:sp`), "group" (a `p:sp`
+    inside `p:grpSp` nesting; `container_detail` is the slash-joined group-name path), or
+    "table-cell" (`container_detail` is `"<frame-name>!r{row}c{col}"`). `blind` is True when
+    the block's *text* is visible but its effective values are unresolvable by design in
+    this version (table-cell runs inherit through table styles, a chain v0.1 does not walk);
+    a blind block's runs carry `resolved=False` values, never guesses.
+    """
 
     anchor: BlockAnchor
     shape_id: int
@@ -165,6 +183,10 @@ class TextBlock:
     level: int
     text: str
     runs: Tuple[InspectedRun, ...]
+    container: str = "shape"
+    container_detail: Optional[str] = None
+    blind: bool = False
+    fields: Tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -172,6 +194,10 @@ class TextBlock:
             "shape_id": self.shape_id,
             "shape_name": self.shape_name,
             "placeholder_type": self.placeholder_type,
+            "container": self.container,
+            "container_detail": self.container_detail,
+            "blind": self.blind,
+            "fields": list(self.fields),
             "level": self.level,
             "text": self.text,
             "runs": [run.to_dict() for run in self.runs],
@@ -185,11 +211,17 @@ class TextInspection:
     part: str
     blocks: Tuple[TextBlock, ...] = field(default_factory=tuple)
 
+    @property
+    def blind_region_count(self) -> int:
+        """Number of blocks whose effective values are unresolvable by design (see TextBlock)."""
+        return sum(1 for block in self.blocks if block.blind)
+
     def to_dict(self) -> dict:
         return {
             "schema": SCHEMA_NAME,
             "version": SCHEMA_VERSION,
             "part": self.part,
+            "blind_region_count": self.blind_region_count,
             "blocks": [block.to_dict() for block in self.blocks],
         }
 
@@ -216,47 +248,516 @@ def effective_font(run: "_Run") -> EffectiveFont:
     return _FontResolver(part).effective_font(r, sp)
 
 
-def inspect_text(slide: "Slide") -> TextInspection:
-    """Return a |TextInspection| of every text-bearing `p:sp` shape on `slide`.
+#: Group nesting beyond this depth refuses: no real deck nests remotely this deep, and an
+#: unbounded recursion on hostile/malformed XML would be a fail-silent hazard.
+MAX_GROUP_DEPTH = 16
 
-    Blocks appear in spTree (z-)order, paragraphs in document order; `block_index` numbers
-    them consecutively within the slide part. Table and chart text are out of v0 scope and do
-    not appear.
+
+@dataclass(frozen=True)
+class EffectiveParagraphFormat:
+    """Effective alignment and line spacing of one paragraph (paper-pptx v0.1)."""
+
+    alignment: EffectiveValue  #: ECMA algn token, e.g. "l", "ctr", "r", "just"
+    line_spacing: EffectiveValue  #: float lines (1.0 = single) or EMU |Length| for points
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper-effective-paragraph-format",
+            "version": 1,
+            "alignment": self.alignment.to_dict(),
+            "line_spacing": self.line_spacing.to_dict(),
+        }
+
+
+def effective_paragraph_format(paragraph) -> EffectiveParagraphFormat:
+    """Return effective alignment/line-spacing for `paragraph`, with provenance.
+
+    Same inheritance walk as `effective_font`, over paragraph-level properties: the
+    paragraph's own `a:pPr`, the shape's `lstStyle` level entry, the placeholder chain (or
+    the presentation's `defaultTextStyle`), ending at the schema defaults (left-aligned,
+    single spacing) — which are explicit in ECMA-376, so exhaustion resolves rather than
+    reporting unresolved.
+    """
+    p = paragraph._p
+    txBody = p.getparent()
+    sp = txBody.getparent() if txBody is not None else None
+    if sp is None or sp.tag != qn("p:sp"):
+        raise UnsupportedStructureError(
+            "effective_paragraph_format resolves paragraphs inside p:sp shapes only in v0.1"
+        )
+    part = paragraph.part
+    from pptx.parts.slide import SlidePart
+
+    if not isinstance(part, SlidePart):
+        raise UnsupportedStructureError(
+            "effective_paragraph_format resolves paragraphs on slide parts only in v0.1,"
+            " got %r" % type(part).__name__
+        )
+    resolver = _FontResolver(part)
+    pPr = p.find(qn("a:pPr"))
+    level = int(pPr.get("lvl", "0")) if pPr is not None else 0
+    if not 0 <= level <= 8:
+        raise UnsupportedStructureError(
+            "paragraph carries out-of-schema indent level lvl=%d (valid range 0..8)" % level
+        )
+    chain = list(resolver.paragraph_chain(p, sp, level))
+    return EffectiveParagraphFormat(
+        alignment=resolver.resolve_alignment(chain),
+        line_spacing=resolver.resolve_line_spacing(chain),
+    )
+
+
+DECK_MANIFEST_SCHEMA = "paper-deck-manifest"
+DECK_MANIFEST_VERSION = 1
+
+
+@dataclass(frozen=True)
+class ShapeManifest:
+    """Structural facts of one shape (paper-pptx v0.1). Group children nest."""
+
+    shape_id: int
+    name: str
+    kind: str  #: e.g. "PICTURE", "TEXT_BOX", "PLACEHOLDER", "GROUP", "GraphicFrame"
+    z_index: int  #: position within the containing collection (0 = backmost)
+    placeholder_type: Optional[str]
+    x: Optional[int]  #: EMU; placeholder geometry is upstream-inherited; None = unresolvable
+    y: Optional[int]
+    cx: Optional[int]
+    cy: Optional[int]
+    rotation: Optional[float]
+    text_block_count: int
+    autofit: Optional[dict]  #: {"mode", "font_scale", "line_space_reduction"} or None
+    table: Optional[dict]  #: {"rows", "cols"} or None
+    chart: Optional[dict]  #: {"chart_type", "series_names"} or None
+    image: Optional[dict]  #: {"ext", "natural_size_px", "displayed_size_emu"} or None
+    children: Tuple["ShapeManifest", ...] = ()
+
+    def to_dict(self) -> dict:
+        return {
+            "shape_id": self.shape_id,
+            "name": self.name,
+            "kind": self.kind,
+            "z_index": self.z_index,
+            "placeholder_type": self.placeholder_type,
+            "x": self.x,
+            "y": self.y,
+            "cx": self.cx,
+            "cy": self.cy,
+            "rotation": self.rotation,
+            "text_block_count": self.text_block_count,
+            "autofit": self.autofit,
+            "table": self.table,
+            "chart": self.chart,
+            "image": self.image,
+            "children": [child.to_dict() for child in self.children],
+        }
+
+
+@dataclass(frozen=True)
+class SlideManifest:
+    """Structural facts of one slide."""
+
+    part: str
+    slide_id: int
+    layout_name: str
+    has_notes: bool
+    shapes: Tuple[ShapeManifest, ...]
+    alternate_content_count: int = 0  #: mc:AlternateContent subtrees (not surveyable)
+
+    def to_dict(self) -> dict:
+        return {
+            "part": self.part,
+            "slide_id": self.slide_id,
+            "layout_name": self.layout_name,
+            "has_notes": self.has_notes,
+            "alternate_content_count": self.alternate_content_count,
+            "shapes": [shape.to_dict() for shape in self.shapes],
+        }
+
+
+@dataclass(frozen=True)
+class DeckManifest:
+    """Structural survey of a whole deck. `.to_dict()` is deterministic (golden-tested)."""
+
+    slide_width: Optional[int]  #: EMU
+    slide_height: Optional[int]
+    slides: Tuple[SlideManifest, ...]
+    masters: Tuple[dict, ...]  #: [{"part", "layouts": [names]}]
+
+    @property
+    def slide_count(self) -> int:
+        return len(self.slides)
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": DECK_MANIFEST_SCHEMA,
+            "version": DECK_MANIFEST_VERSION,
+            "slide_width": self.slide_width,
+            "slide_height": self.slide_height,
+            "slide_count": self.slide_count,
+            "slides": [slide.to_dict() for slide in self.slides],
+            "masters": [dict(master) for master in self.masters],
+        }
+
+
+def inspect_deck(prs) -> DeckManifest:
+    """Return a structural |DeckManifest| of `prs` (paper-pptx v0.1, Phase 2.1).
+
+    The survey every brownfield edit starts with, as one deterministic typed payload:
+    per-slide shape inventory (identity, kind, z-order, geometry where explicit, placeholder
+    role, table/chart/image/autofit facts), group children nested, layout and master
+    inventory. Values that are inherited rather than explicit report None — never a guess.
+    Read-only.
+    """
+    slides = []
+    for slide in prs.slides:
+        shapes = tuple(
+            _shape_manifest(shape, z_index) for z_index, shape in enumerate(slide.shapes)
+        )
+        slides.append(
+            SlideManifest(
+                part=str(slide.part.partname),
+                slide_id=slide.slide_id,
+                layout_name=slide.slide_layout.name,
+                has_notes=slide.has_notes_slide,
+                shapes=shapes,
+                alternate_content_count=len(
+                    slide._element.spTree.findall(".//" + _MC_ALTERNATE_CONTENT)
+                ),
+            )
+        )
+    masters = tuple(
+        {
+            "part": str(master.part.partname),
+            "layouts": [layout.name for layout in master.slide_layouts],
+        }
+        for master in prs.slide_masters
+    )
+    return DeckManifest(
+        slide_width=int(prs.slide_width) if prs.slide_width is not None else None,
+        slide_height=int(prs.slide_height) if prs.slide_height is not None else None,
+        slides=tuple(slides),
+        masters=masters,
+    )
+
+
+def _shape_manifest(shape, z_index: int) -> ShapeManifest:
+    from pptx.shapes.group import GroupShape
+    from pptx.shapes.picture import Picture
+    from pptx.shapes.shapetree import _shape_kind
+
+    placeholder_type = None
+    if shape.is_placeholder:
+        ph_type = shape.placeholder_format.type
+        placeholder_type = ph_type.name if ph_type is not None else None
+
+    autofit = None
+    text_block_count = 0
+    if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
+        text_frame = shape.text_frame
+        text_block_count = len(text_frame.paragraphs)
+        mode = text_frame.auto_size
+        if mode is not None or text_frame.font_scale is not None:
+            autofit = {
+                "mode": mode.name if mode is not None else None,
+                "font_scale": text_frame.font_scale,
+                "line_space_reduction": text_frame.line_space_reduction,
+            }
+
+    table = None
+    if getattr(shape, "has_table", False) and shape.has_table:
+        tbl = shape.table
+        table = {"rows": len(tbl.rows), "cols": len(tbl.columns)}
+
+    chart = None
+    if getattr(shape, "has_chart", False) and shape.has_chart:
+        chart_obj = shape.chart
+        chart = {
+            "chart_type": chart_obj.chart_type.name,
+            "series_names": [series.name for series in chart_obj.series],
+        }
+
+    image = None
+    if isinstance(shape, Picture):
+        try:
+            img = shape.image
+            image = {
+                "ext": img.ext,
+                "natural_size_px": list(img.size),
+                "displayed_size_emu": [
+                    int(shape.width) if shape.width is not None else None,
+                    int(shape.height) if shape.height is not None else None,
+                ],
+            }
+        except (KeyError, ValueError):
+            image = {"ext": None, "natural_size_px": None, "displayed_size_emu": None}
+
+    children = ()
+    if isinstance(shape, GroupShape):
+        children = tuple(
+            _shape_manifest(child, child_index)
+            for child_index, child in enumerate(shape.shapes)
+        )
+
+    def emu_or_none(value):
+        return int(value) if value is not None else None
+
+    try:
+        rotation = float(shape.rotation)
+    except (AttributeError, NotImplementedError):
+        rotation = None
+
+    return ShapeManifest(
+        shape_id=shape.shape_id,
+        name=shape.name,
+        kind=_shape_kind(shape),
+        z_index=z_index,
+        placeholder_type=placeholder_type,
+        x=emu_or_none(shape.left),
+        y=emu_or_none(shape.top),
+        cx=emu_or_none(shape.width),
+        cy=emu_or_none(shape.height),
+        rotation=rotation,
+        text_block_count=text_block_count,
+        autofit=autofit,
+        table=table,
+        chart=chart,
+        image=image,
+        children=children,
+    )
+
+
+@dataclass(frozen=True)
+class EffectiveShapeFormat:
+    """Effective solid fill and line color of one shape (paper-pptx v0.1).
+
+    v0.1 resolves EXPLICIT `p:spPr` fills fully (solid colors through the scheme/clrMap/
+    theme walk; "none" for noFill). A shape whose fill comes only from its `p:style`
+    fill/line reference reports unresolved — the provenance carries the reference index and
+    its resolved phClr color, but theme format-scheme modulation is not applied (guessing it
+    would violate fail-loudly).
+    """
+
+    fill_rgb: EffectiveValue
+    line_rgb: EffectiveValue
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper-effective-shape-format",
+            "version": 1,
+            "fill_rgb": self.fill_rgb.to_dict(),
+            "line_rgb": self.line_rgb.to_dict(),
+        }
+
+
+def effective_shape_format(shape) -> EffectiveShapeFormat:
+    """Return the effective solid fill and line color of `shape`, with provenance."""
+    from pptx.parts.slide import SlidePart
+
+    part = shape.part
+    if not isinstance(part, SlidePart):
+        raise UnsupportedStructureError(
+            "effective_shape_format resolves shapes on slide parts only in v0.1, got %r"
+            % type(part).__name__
+        )
+    resolver = _FontResolver(part)
+    sp = shape._element
+    partname = str(part.partname)
+    spPr = sp.find(qn("p:spPr"))
+    if spPr is None:
+        spPr = sp.find(qn("p:grpSpPr"))
+    style = sp.find(qn("p:style"))
+
+    fill_rgb = resolver.resolve_container_fill(
+        spPr,
+        "shape spPr",
+        partname,
+        style.find(qn("a:fillRef")) if style is not None else None,
+        "shape style fillRef",
+    )
+    ln = spPr.find(qn("a:ln")) if spPr is not None else None
+    line_rgb = resolver.resolve_container_fill(
+        ln,
+        "shape spPr a:ln",
+        partname,
+        style.find(qn("a:lnRef")) if style is not None else None,
+        "shape style lnRef",
+    )
+    return EffectiveShapeFormat(fill_rgb=fill_rgb, line_rgb=line_rgb)
+
+
+def inspect_text(slide: "Slide") -> TextInspection:
+    """Return a |TextInspection| of every text block on `slide`, visibility-complete.
+
+    Traversal is depth-first document order over the shape tree: top-level `p:sp` shapes,
+    `p:sp` shapes inside groups (recursively, to `MAX_GROUP_DEPTH`), and table cells
+    (row-major within each table graphic-frame). `block_index` numbers blocks consecutively
+    in that pinned order. Table-cell blocks report their text but are *blind regions* for
+    effective values (see |TextBlock|); chart text lives in the chart part, not the slide
+    part, and is out of scope here. Group nesting deeper than `MAX_GROUP_DEPTH` raises
+    |UnsupportedStructureError|.
     """
     part = slide.part
     partname = str(part.partname)
     resolver = _FontResolver(part)
-    blocks = []
-    block_index = 0
-    for shape in slide.shapes:
-        if not shape.has_text_frame:
-            continue
-        sp = shape._element
-        placeholder_type = (
-            shape.placeholder_format.type.name if shape.is_placeholder else None
+    blocks: list = []
+    _walk_container(
+        slide._element.spTree, (), partname, resolver, blocks
+    )
+    return TextInspection(part=partname, blocks=tuple(blocks))
+
+
+def iter_text_bodies(spTree):
+    """Yield `(kind, owner_elm, txBody, group_path, cell_detail)` depth-first, document order.
+
+    The single source of traversal truth shared by `inspect_text` and `pptx.edit`
+    (visibility-complete: top-level `p:sp`, grouped `p:sp` recursively to `MAX_GROUP_DEPTH`,
+    table cells row-major). `kind` is "shape" | "group" | "table-cell"; `owner_elm` is the
+    `p:sp` or `p:graphicFrame`; `cell_detail` is `"<frame-name>!r{row}c{col}"` for table
+    cells, None otherwise.
+    """
+    return _iter_container(spTree, ())
+
+
+_MC_ALTERNATE_CONTENT = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
+)
+
+
+def _iter_container(container_elm, group_path):
+    if len(group_path) > MAX_GROUP_DEPTH:
+        raise UnsupportedStructureError(
+            "group shapes nested more than %d deep; refusing to traverse what no real deck"
+            " produces" % MAX_GROUP_DEPTH
         )
-        for paragraph in shape.text_frame.paragraphs:
-            runs = tuple(
-                InspectedRun(r.text, resolver.effective_font(r._r, sp))
-                for r in paragraph.runs
-            )
-            text = "".join(inspected.text for inspected in runs)
-            # -- raw read: the paragraph.level proxy getter is get-or-add and would mutate
-            pPr = paragraph._p.find(qn("a:pPr"))
-            level = int(pPr.get("lvl", "0")) if pPr is not None else 0
+    for child in container_elm:
+        if child.tag == _MC_ALTERNATE_CONTENT:
+            # -- markup-compatibility content renders one of several branches depending on
+            # -- the consumer; reporting any single branch as "the" text would be a guess.
+            # -- Yield a marker so consumers can report a typed blind region (§1.5), never
+            # -- silence. One marker = one block index.
+            yield "alternate-content", child, None, group_path, None
+        elif child.tag == qn("p:sp"):
+            txBody = child.find(qn("p:txBody"))
+            if txBody is not None:
+                yield ("group" if group_path else "shape"), child, txBody, group_path, None
+        elif child.tag == qn("p:grpSp"):
+            for item in _iter_container(child, group_path + (_cNvPr_name(child),)):
+                yield item
+        elif child.tag == qn("p:graphicFrame"):
+            tbl = child.find(".//%s" % qn("a:tbl"))
+            if tbl is None:
+                continue
+            frame_name = _cNvPr_name(child)
+            for row_index, tr in enumerate(tbl.findall(qn("a:tr"))):
+                for col_index, tc in enumerate(tr.findall(qn("a:tc"))):
+                    txBody = tc.find(qn("a:txBody"))
+                    if txBody is not None:
+                        detail = "%s!r%dc%d" % (frame_name, row_index, col_index)
+                        yield "table-cell", child, txBody, group_path, detail
+
+
+def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
+    """Append TextBlocks for every text body under `spTree` (see iter_text_bodies)."""
+    for kind, owner, txBody, path, cell_detail in iter_text_bodies(spTree):
+        if kind == "alternate-content":
+            cNvPr = owner.find(".//%s" % qn("p:cNvPr"))
             blocks.append(
                 TextBlock(
-                    anchor=BlockAnchor(partname, block_index, content_hash(text)),
-                    shape_id=shape.shape_id,
-                    shape_name=shape.name,
-                    placeholder_type=placeholder_type,
-                    level=level,
-                    text=text,
-                    runs=runs,
+                    anchor=BlockAnchor(partname, len(blocks), content_hash("")),
+                    shape_id=int(cNvPr.get("id")) if cNvPr is not None else 0,
+                    shape_name=(cNvPr.get("name") or "") if cNvPr is not None else "",
+                    placeholder_type=None,
+                    level=0,
+                    text="",
+                    runs=(),
+                    container="alternate-content",
+                    container_detail="/".join(path) if path else None,
+                    blind=True,
                 )
             )
-            block_index += 1
-    return TextInspection(part=partname, blocks=tuple(blocks))
+            continue
+        if kind == "table-cell":
+            for p in txBody.findall(qn("a:p")):
+                runs = tuple(
+                    InspectedRun(_run_text(r), _blind_font("table-cell"))
+                    for r in p.findall(qn("a:r"))
+                )
+                _append_block(
+                    blocks, partname, owner, p, runs, None, "table-cell", cell_detail, True
+                )
+        else:
+            placeholder_type = None
+            if kind == "shape" and owner.has_ph_elm:
+                ph_type = owner.ph_type
+                placeholder_type = ph_type.name if ph_type is not None else None
+            container_detail = "/".join(path) if path else None
+            for p in txBody.findall(qn("a:p")):
+                runs = tuple(
+                    InspectedRun(_run_text(r), resolver.effective_font(r, owner))
+                    for r in p.findall(qn("a:r"))
+                )
+                _append_block(
+                    blocks, partname, owner, p, runs, placeholder_type, kind,
+                    container_detail, False,
+                )
+
+
+def _append_block(
+    blocks, partname, shape_elm, p, runs, placeholder_type, container, container_detail, blind
+) -> None:
+    text = "".join(inspected.text for inspected in runs)
+    pPr = p.find(qn("a:pPr"))
+    level = int(pPr.get("lvl", "0")) if pPr is not None else 0
+    cNvPr = shape_elm.find(".//%s" % qn("p:cNvPr"))
+    # -- fields (a:fld) are recognized by type but excluded from text/hash: their display
+    # -- text is volatile (PowerPoint re-renders it), so hashing it would rot anchors
+    fields = tuple(fld.get("type") or "" for fld in p.findall(qn("a:fld")))
+    blocks.append(
+        TextBlock(
+            anchor=BlockAnchor(partname, len(blocks), content_hash(text)),
+            shape_id=int(cNvPr.get("id")),
+            shape_name=cNvPr.get("name") or "",
+            placeholder_type=placeholder_type,
+            level=level,
+            text=text,
+            runs=runs,
+            container=container,
+            container_detail=container_detail,
+            blind=blind,
+            fields=fields,
+        )
+    )
+
+
+def _cNvPr_name(shape_elm) -> str:
+    cNvPr = shape_elm.find(".//%s" % qn("p:cNvPr"))
+    return (cNvPr.get("name") or "") if cNvPr is not None else ""
+
+
+def _run_text(r) -> str:
+    t = r.find(qn("a:t"))
+    return t.text or "" if t is not None else ""
+
+
+def _blind_font(region_kind: str) -> EffectiveFont:
+    """Return an EffectiveFont whose values are honestly unresolved for a blind region."""
+    step = ProvenanceStep(
+        level="%s text" % region_kind,
+        part=None,
+        detail="%s inheritance (e.g. table styles) is not resolved in v0.1; text is"
+        " reported, values are not guessed" % region_kind,
+        supplied=False,
+    )
+    unresolved = EffectiveValue(value=None, value_pt=None, resolved=False, provenance=(step,))
+    return EffectiveFont(
+        size=unresolved,
+        name=unresolved,
+        color_rgb=unresolved,
+        bold=unresolved,
+        italic=unresolved,
+        underline=unresolved,
+    )
 
 
 def _ancestor_sp(element):
@@ -293,6 +794,9 @@ class _FontResolver(object):
             size=self._resolve_size(chain),
             name=self._resolve_name(chain),
             color_rgb=self._resolve_color(chain, sp),
+            bold=self._resolve_flag(chain, "b", "bold"),
+            italic=self._resolve_flag(chain, "i", "italic"),
+            underline=self._resolve_underline(chain),
         )
 
     # ------------------------------------------------------------------- chain assembly
@@ -360,6 +864,241 @@ class _FontResolver(object):
             self._defRPr_from_lstStyle(style, level),
         )
 
+    def paragraph_chain(self, p, sp, level):
+        """Generate (label, partname, pPr-like element) for paragraph-level properties."""
+        slide_partname = str(self._slide_part.partname)
+        yield "paragraph pPr", slide_partname, p.find(qn("a:pPr"))
+        txBody = p.getparent()
+        yield (
+            "shape lstStyle lvl%d" % (level + 1),
+            slide_partname,
+            self._pPr_from_lstStyle(txBody.find(qn("a:lstStyle")), level),
+        )
+        ph = sp.find(qn("p:nvSpPr") + "/" + qn("p:nvPr") + "/" + qn("p:ph"))
+        if ph is not None:
+            idx, ph_type = sp.ph_idx, sp.ph_type
+            layout_ph = self._layout.placeholders.get(idx=idx)
+            if layout_ph is None:
+                layout_ph = next(
+                    (
+                        candidate
+                        for candidate in self._layout.placeholders
+                        if candidate.element.ph_type == ph_type
+                    ),
+                    None,
+                )
+            yield (
+                "layout placeholder lstStyle lvl%d" % (level + 1),
+                str(self._layout.part.partname),
+                self._ph_lstStyle_pPr(layout_ph, level),
+            )
+            master_ph_type = (
+                PP_PLACEHOLDER.TITLE if ph_type in _TITLE_FAMILY else PP_PLACEHOLDER.BODY
+            )
+            master_ph = self._master.placeholders.get(master_ph_type)
+            yield (
+                "master placeholder lstStyle lvl%d" % (level + 1),
+                str(self._master.part.partname),
+                self._ph_lstStyle_pPr(master_ph, level),
+            )
+            family, style = self._master_family_style(ph_type)
+            yield (
+                "master txStyles %s lvl%d" % (family, level + 1),
+                str(self._master.part.partname),
+                style.pPr_for_lvl(level) if style is not None else None,
+            )
+        else:
+            defaultTextStyle = self._presentation_part._element.find(
+                qn("p:defaultTextStyle")
+            )
+            yield (
+                "presentation defaultTextStyle lvl%d" % (level + 1),
+                str(self._presentation_part.partname),
+                self._pPr_from_lstStyle(defaultTextStyle, level),
+            )
+
+    def resolve_alignment(self, chain) -> EffectiveValue:
+        """Resolve `algn` over a paragraph chain; ECMA default is "l" (left)."""
+        steps = []
+        for label, partname, pPr in chain:
+            algn = pPr.get("algn") if pPr is not None else None
+            if algn is not None:
+                steps.append(ProvenanceStep(label, partname, 'algn="%s"' % algn, True))
+                return EffectiveValue(algn, None, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, self._absence(pPr, "no alignment"), False)
+            )
+        steps.append(
+            ProvenanceStep("schema default", None, 'alignment defaults to "l"', True)
+        )
+        return EffectiveValue("l", None, True, tuple(steps))
+
+    def resolve_line_spacing(self, chain) -> EffectiveValue:
+        """Resolve `a:lnSpc` over a paragraph chain: float lines, or |Length| for points.
+
+        The rendering default is single spacing (100%), so exhaustion resolves to 1.0.
+        """
+        steps = []
+        for label, partname, pPr in chain:
+            lnSpc = pPr.find(qn("a:lnSpc")) if pPr is not None else None
+            if lnSpc is None:
+                steps.append(
+                    ProvenanceStep(label, partname, self._absence(pPr, "no lnSpc"), False)
+                )
+                continue
+            spcPct = lnSpc.find(qn("a:spcPct"))
+            if spcPct is not None:
+                raw = spcPct.get("val")
+                lines = (
+                    float(raw[:-1]) / 100.0 if raw.endswith("%") else int(raw) / 100000.0
+                )
+                steps.append(
+                    ProvenanceStep(label, partname, 'lnSpc spcPct val="%s"' % raw, True)
+                )
+                return EffectiveValue(lines, None, True, tuple(steps))
+            spcPts = lnSpc.find(qn("a:spcPts"))
+            if spcPts is not None:
+                length = Length(Centipoints(int(spcPts.get("val"))))
+                steps.append(
+                    ProvenanceStep(
+                        label, partname, 'lnSpc spcPts val="%s"' % spcPts.get("val"), True
+                    )
+                )
+                return EffectiveValue(length, length.pt, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, "lnSpc with no spcPct/spcPts", False)
+            )
+            return EffectiveValue(None, None, False, tuple(steps))
+        steps.append(
+            ProvenanceStep("rendering default", None, "line spacing defaults to 100%", True)
+        )
+        return EffectiveValue(1.0, None, True, tuple(steps))
+
+    def resolve_container_fill(
+        self, container, label, partname, style_ref, ref_label
+    ) -> EffectiveValue:
+        """Resolve the solid fill of `container` (spPr or a:ln), else report the style ref.
+
+        Explicit solid colors resolve fully (srgb direct, scheme through clrMap/theme);
+        `a:noFill` resolves to "none". A style fill/line reference reports unresolved with
+        the reference index and its resolved phClr color in provenance — theme format-scheme
+        modulation is not applied in v0.1.
+        """
+        steps = []
+        if container is not None:
+            solidFill = container.find(qn("a:solidFill"))
+            if solidFill is not None:
+                return self._resolve_solid_fill(solidFill, label, partname, steps)
+            if container.find(qn("a:noFill")) is not None:
+                steps.append(ProvenanceStep(label, partname, "a:noFill", True))
+                return EffectiveValue("none", None, True, tuple(steps))
+            other = [
+                el.tag.rsplit("}", 1)[-1]
+                for el in container
+                if el.tag.rsplit("}", 1)[-1].endswith("Fill")
+                or el.tag.rsplit("}", 1)[-1] in ("gradFill", "blipFill", "pattFill", "grpFill")
+            ]
+            if other:
+                steps.append(
+                    ProvenanceStep(
+                        label, partname, "%s (not a single solid color)" % other[0], False
+                    )
+                )
+                return EffectiveValue(None, None, False, tuple(steps))
+            steps.append(ProvenanceStep(label, partname, "no explicit fill", False))
+        else:
+            steps.append(ProvenanceStep(label, partname, "element not present", False))
+
+        if style_ref is None:
+            steps.append(ProvenanceStep(ref_label, partname, "no style reference", False))
+            return EffectiveValue(None, None, False, tuple(steps))
+        idx = style_ref.get("idx")
+        ph_color = self._style_ref_color(style_ref, ref_label, partname)
+        steps.extend(ph_color[1])
+        steps.append(
+            ProvenanceStep(
+                ref_label,
+                partname,
+                'idx="%s": theme format-scheme modulation of the reference color%s is not'
+                " resolved in v0.1"
+                % (idx, " (%s)" % ph_color[0] if ph_color[0] else ""),
+                False,
+            )
+        )
+        return EffectiveValue(None, None, False, tuple(steps))
+
+    def _style_ref_color(self, style_ref, ref_label, partname):
+        """Return (rgb-or-None, steps) for the phClr color child of a style reference."""
+        srgbClr = style_ref.find(qn("a:srgbClr"))
+        if srgbClr is not None:
+            return srgbClr.get("val").upper(), [
+                ProvenanceStep(
+                    ref_label, partname, 'reference color srgbClr val="%s"' % srgbClr.get("val"),
+                    False,
+                )
+            ]
+        schemeClr = style_ref.find(qn("a:schemeClr"))
+        if schemeClr is not None:
+            resolved = self._resolve_scheme_color(schemeClr.get("val"), [])
+            rgb = resolved.value if resolved.resolved else None
+            return rgb, [
+                ProvenanceStep(
+                    ref_label,
+                    partname,
+                    'reference color schemeClr val="%s" -> %s'
+                    % (schemeClr.get("val"), rgb if rgb else "unresolved"),
+                    False,
+                )
+            ]
+        return None, []
+
+    def _resolve_solid_fill(self, solidFill, label, partname, steps) -> EffectiveValue:
+        srgbClr = solidFill.find(qn("a:srgbClr"))
+        if srgbClr is not None:
+            detail = 'srgbClr val="%s"%s' % (
+                srgbClr.get("val"),
+                self._transforms_note(srgbClr),
+            )
+            steps.append(ProvenanceStep(label, partname, detail, True))
+            return EffectiveValue(srgbClr.get("val").upper(), None, True, tuple(steps))
+        schemeClr = solidFill.find(qn("a:schemeClr"))
+        if schemeClr is not None:
+            steps.append(
+                ProvenanceStep(
+                    label,
+                    partname,
+                    'schemeClr val="%s"%s'
+                    % (schemeClr.get("val"), self._transforms_note(schemeClr)),
+                    False,
+                )
+            )
+            return self._resolve_scheme_color(schemeClr.get("val"), steps)
+        steps.append(
+            ProvenanceStep(
+                label,
+                partname,
+                "solidFill with unsupported color element (%s)"
+                % ", ".join(el.tag.rsplit("}", 1)[-1] for el in solidFill),
+                False,
+            )
+        )
+        return EffectiveValue(None, None, False, tuple(steps))
+
+    @staticmethod
+    def _pPr_from_lstStyle(lstStyle, level):
+        if lstStyle is None:
+            return None
+        return lstStyle.pPr_for_lvl(level)
+
+    @staticmethod
+    def _ph_lstStyle_pPr(placeholder_proxy, level):
+        if placeholder_proxy is None:
+            return None
+        txBody = placeholder_proxy._element.find(qn("p:txBody"))
+        if txBody is None:
+            return None
+        return _FontResolver._pPr_from_lstStyle(txBody.find(qn("a:lstStyle")), level)
+
     def _master_family_style(self, ph_type):
         txStyles = self._master.element.txStyles
         if ph_type in _TITLE_FAMILY:
@@ -398,6 +1137,40 @@ class _FontResolver(object):
                 return EffectiveValue(size, size.pt, True, tuple(steps))
             steps.append(ProvenanceStep(label, partname, self._absence(rPr, "no size"), False))
         return EffectiveValue(None, None, False, tuple(steps))
+
+    def _resolve_flag(self, chain, attr: str, what: str) -> EffectiveValue:
+        """Resolve boolean rPr attribute `attr` (b/i); its schema default (false) is explicit,
+        so exhaustion resolves to False rather than reporting unresolved."""
+        steps = []
+        for label, partname, rPr in chain:
+            raw = rPr.get(attr) if rPr is not None else None
+            if raw is not None:
+                value = raw in ("1", "true")
+                steps.append(ProvenanceStep(label, partname, '%s="%s"' % (attr, raw), True))
+                return EffectiveValue(value, None, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, self._absence(rPr, "no %s" % what), False)
+            )
+        steps.append(
+            ProvenanceStep("schema default", None, "%s defaults to false" % what, True)
+        )
+        return EffectiveValue(False, None, True, tuple(steps))
+
+    def _resolve_underline(self, chain) -> EffectiveValue:
+        """Resolve the `u` token ("sng", "dbl", ...); schema default is "none"."""
+        steps = []
+        for label, partname, rPr in chain:
+            raw = rPr.get("u") if rPr is not None else None
+            if raw is not None:
+                steps.append(ProvenanceStep(label, partname, 'u="%s"' % raw, True))
+                return EffectiveValue(raw, None, True, tuple(steps))
+            steps.append(
+                ProvenanceStep(label, partname, self._absence(rPr, "no underline"), False)
+            )
+        steps.append(
+            ProvenanceStep("schema default", None, 'underline defaults to "none"', True)
+        )
+        return EffectiveValue("none", None, True, tuple(steps))
 
     def _resolve_name(self, chain) -> EffectiveValue:
         steps = []

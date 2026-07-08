@@ -27,6 +27,7 @@ from .contract import (
     save_to_bytes,
     zip_member_map,
 )
+from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
 from .lo import lo_load_smoke
 from .relint import dangling_relationship_targets, missing_relationship_references
 
@@ -46,6 +47,8 @@ def _assert_relationship_integrity(pptx_bytes):
     zip_map = zip_member_map(pptx_bytes)
     assert dangling_relationship_targets(zip_map) == []
     assert missing_relationship_references(zip_map) == []
+    assert dangling_section_slide_ids(zip_map) == []
+    assert duplicate_section_slide_ids(zip_map) == []
 
 
 def _reopen(pptx_bytes):
@@ -433,6 +436,108 @@ def test_move_repositions_a_single_slide():
         prs.slides.move(0, 99)
     with pytest.raises(ValueError):
         prs.slides.move(0, -1)
+
+
+SECTIONS = "self_generated/sections.pptx"
+_P14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+_P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _sections_of(pptx_bytes):
+    presentation = etree.fromstring(zip_member_map(pptx_bytes)["ppt/presentation.xml"])
+    return [
+        (s.get("name"), [i.get("id") for i in s.iter("{%s}sldId" % _P14)])
+        for s in presentation.iter("{%s}section" % _P14)
+    ]
+
+
+def _custom_show_rids_of(pptx_bytes):
+    presentation = etree.fromstring(zip_member_map(pptx_bytes)["ppt/presentation.xml"])
+    return [
+        (show.get("name"), [s.get("{%s}id" % _R) for s in show.iter("{%s}sld" % _P)])
+        for show in presentation.iter("{%s}custShow" % _P)
+    ]
+
+
+def test_delete_removes_section_membership():
+    """PLAN-v0.1 0.1: deleting a slide must not leave its id dangling in p14:sectionLst."""
+    prs = _open(SECTIONS)
+    prs.slides.delete(0)  # -- slide id 256, sole member of "Intro"
+    saved = save_to_bytes(prs)
+    _assert_relationship_integrity(saved)
+    assert _sections_of(saved) == [
+        ("Intro", []),  # -- section survives, empty
+        ("Body", ["257", "258", "259"]),
+        ("Close", ["260"]),
+    ]
+    assert len(_reopen(saved).slides) == 4
+
+
+def test_delete_removes_custom_show_entries():
+    prs = _open(SECTIONS)
+    prs.slides.delete(1)  # -- slide id 257 = rId8, first entry of custom show "Focus"
+    saved = save_to_bytes(prs)
+    _assert_relationship_integrity(saved)  # -- a stale rId8 would be a missing-ref finding
+    assert _custom_show_rids_of(saved) == [("Focus", ["rId10"])]
+
+
+def test_clone_enrolls_copy_in_source_section_after_source():
+    prs = _open(SECTIONS)
+    clone = prs.slides.clone(2)  # -- slide id 258, middle of "Body"
+    clone_id = str(clone.slide_id)
+    saved = save_to_bytes(prs)
+    _assert_relationship_integrity(saved)
+    assert _sections_of(saved) == [
+        ("Intro", ["256"]),
+        ("Body", ["257", "258", clone_id, "259"]),
+        ("Close", ["260"]),
+    ]
+
+
+def test_clone_does_not_enroll_in_custom_shows():
+    prs = _open(SECTIONS)
+    prs.slides.clone(1)  # -- source is in custom show "Focus"; the copy must not be
+    saved = save_to_bytes(prs)
+    _assert_relationship_integrity(saved)
+    assert _custom_show_rids_of(saved) == [("Focus", ["rId8", "rId10"])]
+
+
+def test_reorder_and_move_keep_section_integrity():
+    prs = _open(SECTIONS)
+    prs.slides.reorder([4, 3, 2, 1, 0])
+    prs.slides.move(0, 2)
+    saved = save_to_bytes(prs)
+    _assert_relationship_integrity(saved)
+    # -- sections are id-keyed: membership must be untouched by ordering operations
+    assert _sections_of(saved) == [
+        ("Intro", ["256"]),
+        ("Body", ["257", "258", "259"]),
+        ("Close", ["260"]),
+    ]
+
+
+def test_slide_ops_on_sectioned_deck_reopen_clean():
+    prs = _open(SECTIONS)
+    prs.slides.delete(4)
+    prs.slides.clone(0)
+    saved = save_to_bytes(prs)
+    _assert_relationship_integrity(saved)
+    reopened = _reopen(saved)
+    assert len(reopened.slides) == 5
+
+
+@pytest.mark.lo_smoke
+def test_slide_ops_on_sectioned_deck_load_in_libreoffice(tmp_path):
+    """The Phase 0.1 section-maintenance writes get independent-loader coverage too."""
+    prs = _open(SECTIONS)
+    prs.slides.delete(0)
+    prs.slides.clone(1)
+    prs.slides.move(0, 2)
+    out = tmp_path / "sectioned_ops.pptx"
+    prs.save(str(out))
+    _assert_relationship_integrity(out.read_bytes())
+    lo_load_smoke(out, tmp_path)
 
 
 def test_delete_error_paths_leave_the_deck_untouched():

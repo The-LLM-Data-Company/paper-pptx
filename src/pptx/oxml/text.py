@@ -357,6 +357,12 @@ class CT_TextField(BaseOxmlElement):
     t: BaseOxmlElement | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
         "a:t", successors=()
     )
+    id: str = RequiredAttribute(  # pyright: ignore[reportAssignmentType]
+        "id", XsdString
+    )
+    type: str | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "type", XsdString
+    )
 
     @property
     def text(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -456,6 +462,25 @@ class CT_TextParagraph(BaseOxmlElement):
 
     get_or_add_endParaRPr: Callable[[], CT_TextCharacterProperties]
     get_or_add_pPr: Callable[[], CT_TextParagraphProperties]
+
+    def add_fld(self, id_str: str, field_type: str, cached_text: str) -> CT_TextField:
+        """Append an `a:fld` with `id_str`/`field_type` and cached `a:t` text (paper-pptx).
+
+        Content children (`a:r`/`a:br`/`a:fld`) precede `a:endParaRPr` per the schema; the
+        new field is inserted accordingly.
+        """
+        fld = self.makeelement(qn("a:fld"), {})
+        fld.set("id", id_str)
+        fld.set("type", field_type)
+        t = fld.makeelement(qn("a:t"), {})
+        t.text = cached_text
+        fld.append(t)
+        endParaRPr = self.find(qn("a:endParaRPr"))
+        if endParaRPr is not None:
+            endParaRPr.addprevious(fld)
+        else:
+            self.append(fld)
+        return fld
     r_lst: list[CT_RegularTextRun]
     _add_br: Callable[[], CT_TextLineBreak]
     _add_r: Callable[[], CT_RegularTextRun]
