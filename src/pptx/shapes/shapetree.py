@@ -548,6 +548,42 @@ def _shape_kind(shape) -> str:
     return shape_type.name if shape_type is not None else type(shape).__name__
 
 
+def _iter_shapes_deep(shapes):
+    """Yield every shape in `shapes` and, recursively, inside its group shapes (paper-pptx).
+
+    Depth-first document order — the by-name addressing APIs are group-aware so a named
+    shape is findable wherever it sits.
+    """
+    from pptx.shapes.group import GroupShape
+
+    for shape in shapes:
+        yield shape
+        if isinstance(shape, GroupShape):
+            for nested in _iter_shapes_deep(shape.shapes):
+                yield nested
+
+
+_R_NS_PREFIX = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def _subtree_rIds(element) -> "set[str]":
+    """Every relationship id referenced by any r-namespace attribute under `element`."""
+    rIds = set()
+    for descendant in element.iter():
+        for attr_name, attr_value in descendant.attrib.items():
+            if attr_value and attr_name.startswith(_R_NS_PREFIX):
+                rIds.add(attr_value)
+    return rIds
+
+
+def _part_references_rId(part_element, rId: str) -> bool:
+    for descendant in part_element.iter():
+        for attr_name, attr_value in descendant.attrib.items():
+            if attr_value == rId and attr_name.startswith(_R_NS_PREFIX):
+                return True
+    return False
+
+
 class SlideShapes(_BaseGroupShapes):
     """Sequence of shapes appearing on a slide.
 
@@ -612,18 +648,89 @@ class SlideShapes(_BaseGroupShapes):
         graphicFrame = self._add_graphicFrame_containing_table(rows, cols, left, top, width, height)
         return cast(GraphicFrame, self._shape_factory(graphicFrame))
 
+    def add_copy(self, shape):
+        """Return a copy of `shape` (from this or another slide) added to this slide.
+
+        paper-pptx addition (v0.1 Phase 1.2). The copy gets fresh shape ids; its
+        relationships follow the pinned policy: image/media parts shared, external
+        (hyperlink) relationships copied, charts deep-copied WITH their embedded workbooks
+        and style parts. Any other relationship type refuses with |RelationshipPolicyError|
+        before anything changes. A shape from another presentation raises
+        |TargetNotFoundError|.
+        """
+        from pptx.errors import RelationshipPolicyError, TargetNotFoundError
+        from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+        from pptx.slideops import _copy_chart_part, _rewrite_r_references
+
+        source_element = shape._element
+        source_part = shape.part
+        if source_part.package is not self.part.package:
+            raise TargetNotFoundError(
+                "shape %r belongs to a different presentation" % (shape.name,)
+            )
+
+        # -- full relationship plan before any mutation (§1.3) --
+        shareable = frozenset([RT.IMAGE, RT.MEDIA, RT.VIDEO, RT.AUDIO])
+        plan = []
+        for rId in sorted(_subtree_rIds(source_element)):
+            try:
+                rel = source_part.rels[rId]
+            except KeyError:
+                raise RelationshipPolicyError(
+                    "shape %r references relationship %s which does not exist on its part"
+                    % (shape.name, rId)
+                )
+            if rel.is_external:
+                plan.append((rId, "external", rel))
+            elif rel.reltype in shareable:
+                plan.append((rId, "share", rel))
+            elif rel.reltype == RT.CHART:
+                plan.append((rId, "chart", rel))
+            else:
+                raise RelationshipPolicyError(
+                    "shape %r carries relationship type %s which add_copy does not support"
+                    " in v0.1" % (shape.name, rel.reltype)
+                )
+
+        import copy as _copy_module
+
+        new_element = _copy_module.deepcopy(source_element)
+        # -- fresh, unique shape ids for every nvPr in the copied subtree --
+        next_id = self._next_shape_id
+        for cNvPr in new_element.iter(qn("p:cNvPr")):
+            cNvPr.set("id", str(next_id))
+            next_id += 1
+
+        rId_mapping = {}
+        allocated: set = set()
+        for old_rId, action, rel in plan:
+            if action == "external":
+                rId_mapping[old_rId] = self.part.rels.get_or_add_ext_rel(
+                    rel.reltype, rel.target_ref
+                )
+            elif action == "share":
+                rId_mapping[old_rId] = self.part.relate_to(rel.target_part, rel.reltype)
+            else:  # -- chart: deep copy with workbook/style parts
+                rId_mapping[old_rId] = self.part.relate_to(
+                    _copy_chart_part(rel.target_part, allocated), rel.reltype
+                )
+        _rewrite_r_references(new_element, rId_mapping)
+        self._spTree.append(new_element)
+        return self._shape_factory(new_element)
+
     def chart_by_name(self, name: str):
         """Return the |Chart| held by the shape on this slide named `name`.
 
         paper-pptx addition, the chart-addressing half of safe chart-data replacement.
-        Raises |TargetNotFoundError| when no shape has that name, or when shapes with the
-        name exist but none holds a chart (the message says what was found instead).
-        Raises |AmbiguousTargetError| when more than one chart-bearing shape has the name —
-        this API never guesses between them.
+        Group-aware since v0.1: shapes inside groups are found too. Raises
+        |TargetNotFoundError| when no shape has that name, or when shapes with the name
+        exist but none holds a chart (the message says what was found instead). Raises
+        |AmbiguousTargetError| when more than one chart-bearing shape has the name — this
+        API never guesses between them.
         """
         from pptx.errors import AmbiguousTargetError, TargetNotFoundError
 
-        named_shapes = [shape for shape in self if shape.name == name]
+        named_shapes = [shape for shape in _iter_shapes_deep(self) if shape.name == name]
         chart_shapes = [shape for shape in named_shapes if shape.has_chart]
         if not chart_shapes:
             if not named_shapes:
@@ -638,6 +745,104 @@ class SlideShapes(_BaseGroupShapes):
                 % (len(chart_shapes), name)
             )
         return chart_shapes[0].chart
+
+    def delete(self, shape) -> None:
+        """Remove `shape` from this slide, with relationship hygiene.
+
+        paper-pptx addition (v0.1 Phase 1.2). Relationships referenced by the removed
+        subtree are dropped unless something else in the part still references them (two
+        pictures can share one image relationship). A shape that is not a direct member of
+        this collection — including a shape inside a group — raises |TargetNotFoundError|
+        (delete the group, or ungroup first).
+        """
+        from pptx.errors import TargetNotFoundError
+
+        element = getattr(shape, "_element", None)
+        if element is None or element.getparent() is not self._spTree:
+            raise TargetNotFoundError(
+                "shape %r is not a direct member of this shape collection (grouped shapes"
+                " must be deleted with their group)" % getattr(shape, "name", shape)
+            )
+        subtree_rIds = _subtree_rIds(element)
+        self._spTree.remove(element)
+        for rId in sorted(subtree_rIds):
+            if not _part_references_rId(self.part._element, rId):
+                self.part.drop_rel(rId)
+
+    def move(self, shape, to_index: int) -> None:
+        """Move `shape` to 0-based `to_index` in this collection's z-order.
+
+        paper-pptx addition (v0.1 Phase 1.2). Index 0 is backmost, the last index topmost —
+        the same order this collection iterates. `to_index` outside range raises
+        |ValueError|; a shape not directly in this collection raises |TargetNotFoundError|.
+        """
+        from pptx.errors import TargetNotFoundError
+
+        element = getattr(shape, "_element", None)
+        members = list(self._iter_member_elms())
+        if element is None or element not in members:
+            raise TargetNotFoundError(
+                "shape %r is not a direct member of this shape collection"
+                % getattr(shape, "name", shape)
+            )
+        if (
+            not isinstance(to_index, int)
+            or isinstance(to_index, bool)
+            or not 0 <= to_index < len(members)
+        ):
+            raise ValueError(
+                "to_index must be an int in range 0..%d, got %r" % (len(members) - 1, to_index)
+            )
+        members.remove(element)
+        if to_index >= len(members):
+            members[-1].addnext(element)
+        else:
+            members[to_index].addprevious(element)
+
+    def picture_by_name(self, name: str):
+        """Return the |Picture| on this slide named `name` (group-aware).
+
+        paper-pptx addition (v0.1 Phase 1.3), with the same contract as `chart_by_name`:
+        |TargetNotFoundError| when nothing (or nothing picture-shaped) has the name,
+        |AmbiguousTargetError| when several pictures do.
+        """
+        from pptx.shapes.picture import Picture
+
+        return self._by_name_of_kind(name, "picture", lambda s: isinstance(s, Picture))
+
+    def shape_by_name(self, name: str):
+        """Return the single shape on this slide named `name` (group-aware).
+
+        paper-pptx addition (v0.1 Phase 1.3): |TargetNotFoundError| / |AmbiguousTargetError|,
+        never first-match.
+        """
+        return self._by_name_of_kind(name, "shape", lambda s: True)
+
+    def table_by_name(self, name: str):
+        """Return the |Table| held by the graphic frame on this slide named `name`.
+
+        paper-pptx addition (v0.1 Phase 1.3), same contract as `chart_by_name`.
+        """
+        return self._by_name_of_kind(name, "table", lambda s: s.has_table).table
+
+    def _by_name_of_kind(self, name: str, kind: str, predicate):
+        from pptx.errors import AmbiguousTargetError, TargetNotFoundError
+
+        named_shapes = [shape for shape in _iter_shapes_deep(self) if shape.name == name]
+        matching = [shape for shape in named_shapes if predicate(shape)]
+        if not matching:
+            if not named_shapes:
+                raise TargetNotFoundError("no shape named %r on this slide" % name)
+            raise TargetNotFoundError(
+                "shape named %r is not a %s (found: %s)"
+                % (name, kind, ", ".join(_shape_kind(shape) for shape in named_shapes))
+            )
+        if len(matching) > 1:
+            raise AmbiguousTargetError(
+                "%d %s shapes on this slide are named %r; refusing to pick one"
+                % (len(matching), kind, name)
+            )
+        return matching[0]
 
     def clone_layout_placeholders(self, slide_layout: SlideLayout) -> None:
         """Add placeholder shapes based on those in `slide_layout`.

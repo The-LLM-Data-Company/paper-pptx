@@ -298,6 +298,20 @@ runs collapses to the start run's formatting; text always restores) was found in
 implementation and amended per §8, not silently. Walkthrough retitle step flipped from xfail
 to anchored replace.
 
+## v0.1 Phase 1.2/1.3: shape surgery + generic by-name addressing
+
+`SlideShapes.delete` (relationship hygiene: rels referenced by the removed subtree are
+dropped only when nothing else in the part references them — the shared-image case is
+tested), `SlideShapes.move` (z-order, mirroring `Slides.move`'s contract), and
+`SlideShapes.add_copy` (fresh shape ids; image/media shared, hyperlinks copied, charts
+deep-copied with workbooks via the Phase 7 machinery; anything else →
+`RelationshipPolicyError`). Grouped shapes are not directly deletable (typed refusal says
+so). By-name addressing generalizes `chart_by_name`'s contract: `shape_by_name`,
+`picture_by_name`, `table_by_name` — group-aware, `TargetNotFoundError`/
+`AmbiguousTargetError`, never first-match. **Sanctioned extension of a v0 paper API:**
+`chart_by_name` is now group-aware too (it finds charts inside groups it previously
+missed; same refusal contract). Two more walkthrough steps flipped from xfail.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

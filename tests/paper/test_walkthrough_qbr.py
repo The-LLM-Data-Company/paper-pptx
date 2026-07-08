@@ -72,14 +72,19 @@ def _build_qbr_deck(tmp_path):
     # -- speaker notes for the talk track
     chart_slide.replace_notes_text("Walk through Q4 revenue; flag the Alpha renewal.")
 
-    # -- image swap, geometry preserved (same-format PNG)
+    # -- declutter the chart slide (Phase 1.2): drop its decorative picture, rel-safely
+    chart_slide.shapes.delete(chart_slide.shapes.picture_by_name("gauntlet_img_1"))
+
+    # -- image swap by name (Phase 1.3), geometry preserved (same-format PNG)
     from PIL import Image as PILImage
 
     replacement = io.BytesIO()
     PILImage.new("RGB", (64, 64), (10, 90, 160)).save(replacement, format="PNG")
     closing = prs.slides[-1]
-    picture = next(s for s in closing.shapes if s.name == "gauntlet_img_2")
+    picture = closing.shapes.picture_by_name("gauntlet_img_2")
     picture.replace_image(io.BytesIO(replacement.getvalue()))
+    # -- and pull the footer rail behind everything on the closing slide (z-order)
+    closing.shapes.move(closing.shapes[-1], 0)
 
     # -- normalize the one autofit frame we kept prose in (freeze what the reader sees)
     body_box = next(
@@ -140,20 +145,6 @@ def test_walkthrough_output_loads_in_libreoffice(tmp_path):
 # ---------------------------------------------------------------- unshipped steps (strict)
 # Each xfail names its PLAN-v0.1 item and FAILS the suite when the organ lands without the
 # walkthrough growing the real step.
-
-
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 1.2: shape surgery")
-def test_step_delete_leftover_placeholder_shape():
-    from pptx.shapes.shapetree import SlideShapes
-
-    assert callable(SlideShapes.delete)
-
-
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 1.3: generic by-name addressing")
-def test_step_address_picture_by_name():
-    from pptx.shapes.shapetree import SlideShapes
-
-    assert callable(SlideShapes.picture_by_name)
 
 
 @pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.1: structural deck manifest")
