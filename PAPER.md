@@ -484,6 +484,33 @@ up exactly). Baked orphans re-resolve identically (zero shift entries — the ba
 proof). Same-package only; `mc:AlternateContent` slides refuse. Cross-template rebind is
 exercised through Phase 5's adopt_theme mode, which consumes this machinery.
 
+## v0.11 Phase 5: slide import and deck merge
+
+`Presentation.import_slide(source_prs, slide, *, mode, position, notes, section,
+target_layout)` and `append_deck` (new `pptx.compose`; API proposed before implementation
+per the plan's PR gate — see API-PROPOSAL.md v0.11 Phase 5). `mode` is required, no
+default: **adopt_theme** (content transplants, rebinds to a destination layout by
+name→type→explicit via the Phase 4 machinery, orphans bake from SOURCE-resolved values,
+shifts reported — Courier New→Georgia shows up run by run), **keep_appearance** (the
+layout+master+theme chain transplants, fingerprint-deduplicated: three imports from one
+source produce ONE master that gains layouts on demand; the zero-shift invariant is
+tested), **bake** (source-side resolution written local, furniture placeholders dropped,
+placeholders freed, attached by name→type→blank→first; zero shifts by construction).
+Transplant core reuses the v0 clone recipes cross-package with the allocated-set partname
+fix. Refusal ledger, typed and validated before any destination write: OLE objects,
+controls, internal slide links, unknown reltypes (`RelationshipPolicyError`); comments
+drop (reported); media ALWAYS copies cross-package; SmartArt carries opaquely (dgm parts
++ media children); charts deep-copy with workbooks; notes re-link to the DESTINATION
+notes master. `mc:AlternateContent` slides refuse for the reconciling modes, transplant
+opaquely under keep_appearance. `append_deck` validates the complete source deck before
+the first write (poisoned-last-slide test). Section enrollment: named section or adjacent
+to the insertion point; id-list scans stay clean. Import report goldened; source
+byte-identity proven after editing the imported chart. Declared: fingerprint dedupe is
+guaranteed within one destination session; a transplanted master pruned to fewer layouts
+no longer fingerprints like its source across sessions. Cross-phase: scrub removes a
+transplanted master (and its chain) once its slides are deleted — the unused-masters
+positive case.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

@@ -11,6 +11,7 @@ from pptx.util import lazyproperty
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from pptx.compose import ImportReport
     from pptx.oxml.presentation import CT_Presentation, CT_SlideId
     from pptx.parts.presentation import PresentationPart
     from pptx.scrub import ScrubReport
@@ -72,6 +73,68 @@ class Presentation(PartElementProxy):
             fixed_date=fixed_date,
             skip_title_slides=skip_title_slides,
             now=now,
+        )
+
+    def append_deck(
+        self, source_prs: "Presentation", *, mode: str, notes: bool = True
+    ) -> "tuple[ImportReport, ...]":
+        """Import every slide of `source_prs`, in order, at the end of this deck.
+
+        paper-pptx addition (v0.11 Phase 5), built on :meth:`import_slide` — same `mode`
+        semantics and refusal ledger. The COMPLETE source deck validates before the first
+        write: a refusal on any source slide leaves this presentation untouched. Source
+        sections are not copied (this deck's section structure governs — declared).
+        """
+        from pptx.compose import append_deck
+
+        return append_deck(self, source_prs, mode=mode, notes=notes)
+
+    def import_slide(
+        self,
+        source_prs: "Presentation",
+        slide,
+        *,
+        mode: str,
+        position: int | None = None,
+        notes: bool = True,
+        section: str | None = None,
+        target_layout=None,
+    ) -> "ImportReport":
+        """Import `slide` from `source_prs` into this presentation; return the report.
+
+        paper-pptx addition (v0.11 Phase 5). `mode` is required — there is no right
+        default, the caller chooses consciously:
+
+        - `"adopt_theme"`: content transplants and rebinds to a destination layout
+          (auto by layout name, then layout type; `target_layout` overrides; orphan
+          placeholders bake from their source-resolved look). The slide takes the house
+          style; every run whose resolved values changed is in `run_shifts`.
+        - `"keep_appearance"`: the source layout+master+theme chain transplants,
+          fingerprint-deduplicated (ten slides from one source share one master).
+        - `"bake"`: resolvable effective values become explicit local properties,
+          furniture placeholders (dt/ftr/sldNum) drop, remaining placeholders become
+          free shapes, and the slide attaches to a destination layout. Stable look
+          without importing masters.
+
+        The source presentation is never mutated. Media always copies (never shared
+        across packages); charts deep-copy with workbooks; SmartArt carries opaquely;
+        comments drop (reported); OLE objects, controls, internal slide links, and
+        unknown relationship types refuse (`RelationshipPolicyError`) before any write.
+        `notes` copies the speaker-notes part re-linked to this deck's notes master.
+        `section` names an existing destination section to enroll in; None enrolls
+        adjacent to the insertion point when this deck has sections.
+        """
+        from pptx.compose import import_slide
+
+        return import_slide(
+            self,
+            source_prs,
+            slide,
+            mode=mode,
+            position=position,
+            notes=notes,
+            section=section,
+            target_layout=target_layout,
         )
 
     @property

@@ -65,6 +65,14 @@ def scrub_golden_json() -> str:
     return json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n"
 
 
+def import_golden_json() -> str:
+    """Return the canonical golden for one keep_appearance import (v0.11 Phase 5)."""
+    dest = Presentation(str(FIXTURES_DIR / "self_generated/template_alpha.pptx"))
+    source = Presentation(str(FIXTURES_DIR / "self_generated/template_beta.pptx"))
+    report = dest.import_slide(source, 0, mode="keep_appearance")
+    return json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n"
+
+
 def main() -> None:
     GOLDENS_DIR.mkdir(parents=True, exist_ok=True)
     for golden_name, fixture_relpath, slide_index in GOLDENS:
@@ -77,6 +85,9 @@ def main() -> None:
         print("wrote", out)
     out = GOLDENS_DIR / "scrub_gauntlet.scrub.json"
     out.write_text(scrub_golden_json(), encoding="utf-8")
+    print("wrote", out)
+    out = GOLDENS_DIR / "import_beta_keep.import.json"
+    out.write_text(import_golden_json(), encoding="utf-8")
     print("wrote", out)
 
 
