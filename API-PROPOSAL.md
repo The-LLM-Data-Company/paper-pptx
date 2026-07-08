@@ -604,6 +604,63 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     slides, un-bakeable orphans; `ValueError` for cross-package targets, the current
     layout, bad maps/policies.
 
+- **Phase 5 — slide import and deck merge** (machinery in new `pptx.compose`; this
+  section is the PR-gated API proposal the plan requires before implementation):
+  - `Presentation.import_slide(source_prs, slide, *, mode, position=None, notes=True,
+    section=None, target_layout=None) -> ImportReport`
+    - `source_prs`: a different `Presentation` (same-package import is `Slides.clone`;
+      `ValueError` otherwise). The source is read-only — never mutated (the
+      cross-contamination guarantee, byte-tested).
+    - `slide`: a source |Slide| or 0-based int index.
+    - `mode` is REQUIRED with no default — the caller must choose consciously:
+      - `"adopt_theme"`: transplant the slide's content, rebind it (Phase 4 machinery)
+        to a destination layout — auto-selected by layout name, then layout `type`
+        token, else refuse (pass `target_layout`). Placeholders with no destination
+        slot are baked from their SOURCE-resolved effective values. Appearance shifts
+        are reported per run, never silent.
+      - `"keep_appearance"`: transplant the source layout + master + theme chain.
+        Support parts deduplicate by content fingerprint (SHA-256 over the blob with
+        rId tokens normalized, plus child fingerprints): importing ten slides from one
+        source yields ONE master, and a master already transplanted gains additional
+        layouts on demand. Name collisions with existing destination layouts/masters
+        are allowed (names are display strings; parts are distinct).
+      - `"bake"`: snapshot every resolvable run's effective values into explicit
+        properties (source-side resolution), drop dt/ftr/sldNum furniture placeholders
+        (the destination's own `apply_footers` state governs), convert remaining
+        placeholders to free shapes, and attach to a destination layout (auto by
+        name → type → blank-type layout → first layout; `target_layout` overrides).
+        Visually stable without importing masters; blind regions (table cells) carry
+        their explicit formatting as-is.
+    - `position`: 0-based insertion index (None = append). `notes`: copy the speaker
+      notes part (re-linked to the new slide, sharing the destination notes master) or
+      drop it. `section`: name of an existing destination section to enroll in
+      (`TargetNotFoundError` if absent); None = enroll adjacent to the insertion point
+      when the destination has sections. `target_layout`: destination |SlideLayout|
+      override for adopt_theme/bake; `ValueError` with keep_appearance.
+  - `Presentation.append_deck(source_prs, *, mode, notes=True) ->
+    tuple[ImportReport, ...]` — imports every source slide in order at the end, built
+    on `import_slide`. The COMPLETE source deck validates before the first write (a
+    refusal on source slide 7 leaves the destination untouched). Source sections are
+    not copied (destination section structure governs; declared).
+  - `ImportReport` (typed, `.to_dict()`, `"paper-import-report"` v1, deterministic and
+    goldenable): mode, source/destination slide partnames, new slide id, position,
+    layout binding (partname + method: name-match / type-match / explicit /
+    transplanted / blank-fallback / first-fallback), `parts_added`, `parts_reused`
+    (dedupe hits), notes/comments disposition, section enrolled, baked shape names,
+    dropped furniture placeholders, and `run_shifts` (same shape as the rebind
+    report's; expected empty for keep_appearance — a tested invariant).
+  - Transplant policy (the refusal ledger, all validated BEFORE any destination write):
+    charts deep-copy with embedded workbooks and Microsoft style parts (v0 chart-child
+    validation); media ALWAYS copies cross-package (never shared across packages;
+    destination-side blob dedupe applies); external hyperlinks copy; SmartArt carries
+    opaquely (its dgm parts leaf-copied, one media level deep, never edited);
+    comments are dropped (reported — review artifacts don't travel);
+    `RelationshipPolicyError` for OLE objects, ActiveX controls, internal
+    slide-jump hyperlinks, and any relationship type not in the ledger; embedded
+    fonts never travel (presentation-level, out of a slide's graph anyway).
+  - Slide ids allocate as max+1 in the destination (the documented id-reuse hazard
+    from Phase 0 applies to delete-then-import sequences; the diff organ declares it).
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,
