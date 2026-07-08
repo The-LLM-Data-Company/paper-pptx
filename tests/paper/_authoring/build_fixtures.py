@@ -55,15 +55,16 @@ def _save(prs, filename: str) -> Path:
     return path
 
 
-def _png_bytes() -> bytes:
-    """Return a small deterministic 64x64 quadrant-pattern PNG."""
+def _png_bytes(palette: int = 0) -> bytes:
+    """Return a small deterministic 64x64 quadrant-pattern PNG.
+
+    `palette` selects a color rotation so callers can produce distinct-but-deterministic
+    image bytes (default 0 preserves the original v0 fixture palette exactly).
+    """
     img = Image.new("RGB", (64, 64))
-    quadrant_colors = {
-        (0, 0): (200, 30, 30),
-        (1, 0): (30, 160, 60),
-        (0, 1): (30, 60, 200),
-        (1, 1): (220, 180, 40),
-    }
+    colors = [(200, 30, 30), (30, 160, 60), (30, 60, 200), (220, 180, 40)]
+    colors = colors[palette % 4 :] + colors[: palette % 4]
+    quadrant_colors = {(0, 0): colors[0], (1, 0): colors[1], (0, 1): colors[2], (1, 1): colors[3]}
     for x in range(64):
         for y in range(64):
             img.putpixel((x, y), quadrant_colors[(x // 32, y // 32)])
@@ -659,6 +660,536 @@ def build_large_smoke() -> Path:
         if index % 10 == 0:
             slide.shapes.add_picture(io.BytesIO(png), Inches(7), Inches(4), Inches(2))
     return _save(prs, "large_smoke.pptx")
+
+
+# ---------------------------------------------------------------- v0.11 fixtures
+#
+# Added 2026-07-08 for PLAN-v0.11 Phase 0. Same rules as above: honest self-generated
+# provenance, zip surgery only where python-pptx cannot author the structure, fixed
+# GUIDs/ids for determinism, preconditions asserted so template drift fails loudly.
+# Real-PowerPoint equivalents are FIXTURE-REQUESTS.md R9-R14.
+
+_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_CTYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+
+def _xml_bytes(root) -> bytes:
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
+def _rezip(source: zipfile.ZipFile, path: Path, rewrites: dict, additions: dict) -> Path:
+    """Write `source`'s members to `path`, replacing per `rewrites`, appending `additions`."""
+    with zipfile.ZipFile(str(path), "w", zipfile.ZIP_DEFLATED) as out:
+        for info in source.infolist():
+            data = rewrites.get(info.filename)
+            out.writestr(info, source.read(info.filename) if data is None else data)
+        for name, data in additions.items():
+            out.writestr(name, data)
+    return path
+
+
+def _with_rel(rels_xml: bytes, rel_type: str, target: str) -> "tuple[bytes, str]":
+    """Return (rels_xml with one appended Relationship at the next free rId, that rId)."""
+    root = etree.fromstring(rels_xml)
+    used = [int(r.get("Id")[3:]) for r in root if r.get("Id", "").startswith("rId")]
+    rId = "rId%d" % (max(used, default=0) + 1)
+    rel = etree.SubElement(root, "{%s}Relationship" % _RELS_NS)
+    rel.set("Id", rId)
+    rel.set("Type", rel_type)
+    rel.set("Target", target)
+    return _xml_bytes(root), rId
+
+
+def _with_content_types(ct_xml: bytes, defaults: dict, overrides: dict) -> bytes:
+    root = etree.fromstring(ct_xml)
+    have = {el.get("Extension") for el in root if el.tag.endswith("Default")}
+    for extension, content_type in defaults.items():
+        if extension in have:
+            continue
+        el = etree.SubElement(root, "{%s}Default" % _CTYPES_NS)
+        el.set("Extension", extension)
+        el.set("ContentType", content_type)
+    for partname, content_type in overrides.items():
+        el = etree.SubElement(root, "{%s}Override" % _CTYPES_NS)
+        el.set("PartName", partname)
+        el.set("ContentType", content_type)
+    return _xml_bytes(root)
+
+
+def build_merged_tables() -> Path:
+    """5x4 table: header row merged across all four columns, a 2-row vertical merge in
+    column one, everything else regular with distinct text. Written with upstream's own
+    `_Cell.merge` so the gridSpan/rowSpan/hMerge/vMerge attributes are exactly what
+    python-pptx produces; the real-PowerPoint counterpart is FIXTURE-REQUESTS.md R11."""
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    shape = slide.shapes.add_table(5, 4, Inches(0.5), Inches(0.7), Inches(9), Inches(5))
+    shape.name = "merged_table"
+    table = shape.table
+    table.cell(0, 0).merge(table.cell(0, 3))  # -- header row: gridSpan=4 + 3 hMerge cells
+    table.cell(2, 0).merge(table.cell(3, 0))  # -- column one rows 3-4: rowSpan=2 + vMerge
+    table.cell(0, 0).text_frame.paragraphs[0].add_run().text = "Merged header"
+    table.cell(2, 0).text_frame.paragraphs[0].add_run().text = "Merged rows"
+    for row in range(1, 5):
+        for col in range(4):
+            cell = table.cell(row, col)
+            if cell.is_merge_origin or cell.is_spanned:
+                continue
+            cell.text_frame.paragraphs[0].add_run().text = "r%dc%d" % (row, col)
+
+    _expect(table.cell(0, 0)._tc.gridSpan == 4, "header origin gridSpan is not 4")
+    _expect(table.cell(0, 1)._tc.hMerge, "header continuation cell is not hMerge")
+    _expect(table.cell(2, 0)._tc.rowSpan == 2, "column-one origin rowSpan is not 2")
+    _expect(table.cell(3, 0)._tc.vMerge, "column-one continuation cell is not vMerge")
+    _expect(
+        all(len(tr.findall(qn("a:tc"))) == 4 for tr in table._tbl.findall(qn("a:tr"))),
+        "every row must hold exactly one a:tc per gridCol (continuations included)",
+    )
+    return _save(prs, "merged_tables.pptx")
+
+
+_HF_LAYOUT_IDX = {"dt": 10, "ftr": 11, "sldNum": 12}  # -- default-template layout furniture
+
+
+def _next_shape_id(slide) -> int:
+    ids = [
+        int(el.get("id"))
+        for el in slide.shapes._spTree.iter(qn("p:cNvPr"))
+        if el.get("id", "").isdigit()
+    ]
+    return max(ids, default=0) + 1
+
+
+def _materialize_dialog_placeholder(slide, ph_type: str, name: str, body_xml: str) -> None:
+    """Append the minimal placeholder `p:sp` PowerPoint's Header & Footer dialog persists.
+
+    Raw-XML on purpose (fixture-first: this is the structure the v0.11 Phase 2 API must
+    produce, so the fixture cannot be authored with that API). Geometry and formatting are
+    deliberately absent - they inherit from the layout's matching-idx placeholder.
+    """
+    from pptx.oxml import parse_xml
+    from pptx.oxml.ns import nsdecls
+
+    sp_xml = (
+        "<p:sp %s>"
+        "<p:nvSpPr>"
+        '<p:cNvPr id="%d" name="%s"/>'
+        '<p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>'
+        '<p:nvPr><p:ph type="%s" sz="quarter" idx="%d"/></p:nvPr>'
+        "</p:nvSpPr>"
+        "<p:spPr/>"
+        "<p:txBody><a:bodyPr/><a:lstStyle/><a:p>%s</a:p></p:txBody>"
+        "</p:sp>"
+    ) % (
+        nsdecls("p", "a"),
+        _next_shape_id(slide),
+        name,
+        ph_type,
+        _HF_LAYOUT_IDX[ph_type],
+        body_xml,
+    )
+    slide.shapes._spTree.append(parse_xml(sp_xml))
+
+
+def _fld_xml(guid_serial: int, fld_type: str, cached_text: str) -> str:
+    """A deterministic-GUID a:fld with cached text, per ISO 29500-1 21.1.2.2.4."""
+    guid = "{00000000-1111-4222-8333-%012d}" % guid_serial
+    return (
+        '<a:fld id="%s" type="%s"><a:rPr lang="en-US" smtClean="0"/><a:t>%s</a:t></a:fld>'
+        % (guid, fld_type, cached_text)
+    )
+
+
+def build_footers_applied() -> Path:
+    """Dialog-applied footer furniture, reproduced from the mechanism probe (v0.11 Phase 0).
+
+    Five slides. Each carries the three minimal placeholder shapes PowerPoint's
+    Insert > Header & Footer dialog materializes on "Apply to All": dt (a:fld
+    type="datetime", cached text), ftr (literal run), sldNum (a:fld type="slidenum",
+    cached number) - inheriting geometry from the layout's idx-10/11/12 furniture.
+    Slide 3 omits the footer placeholder (the per-slide uncheck); slide 5 is hidden
+    (`show="0"` on p:sld). p:hf is deliberately absent everywhere: all four attributes
+    default true, which is exactly what PowerPoint leaves in this state.
+    Real-PowerPoint provenance for the same mechanism is FIXTURE-REQUESTS.md R9.
+    """
+    prs = Presentation()
+    layout = prs.slide_layouts[1]
+    layout_idx = {
+        ph.get("type"): int(ph.get("idx", "0"))
+        for ph in layout._element.iter(qn("p:ph"))
+        if ph.get("type") in ("dt", "ftr", "sldNum")
+    }
+    _expect(
+        layout_idx == _HF_LAYOUT_IDX,
+        "default-template layout furniture idx map changed: %r" % layout_idx,
+    )
+
+    guid_serial = 0
+    for n in range(1, 6):
+        slide = prs.slides.add_slide(layout)
+        slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Footered slide %d" % n
+        body_tf = slide.placeholders[1].text_frame
+        body_tf.paragraphs[0].add_run().text = "Body content on slide %d." % n
+
+        guid_serial += 1
+        _materialize_dialog_placeholder(
+            slide, "dt", "Date Placeholder %d" % n, _fld_xml(guid_serial, "datetime", "7/8/2026")
+        )
+        if n != 3:  # -- slide 3: footer unchecked for this slide only
+            _materialize_dialog_placeholder(
+                slide,
+                "ftr",
+                "Footer Placeholder %d" % n,
+                '<a:r><a:rPr lang="en-US"/><a:t>Paper Fixture Footer</a:t></a:r>',
+            )
+        guid_serial += 1
+        _materialize_dialog_placeholder(
+            slide,
+            "sldNum",
+            "Slide Number Placeholder %d" % n,
+            _fld_xml(guid_serial, "slidenum", str(n)),
+        )
+
+    prs.slides[4]._element.set("show", "0")  # -- hidden slide
+    return _save(prs, "footers_applied.pptx")
+
+
+def build_scrub_gauntlet() -> Path:
+    """Everything scrub must remove, next to everything it must keep (v0.11 Phase 3).
+
+    Live content: 4 slides (slide 4 hidden), notes on slides 1 and 3, a picture on
+    slide 1 (media reachable from a live slide - must survive every scrub), core-props
+    personal info. Removal targets added by zip surgery, honestly self-generated:
+    classic comments (`p:cmLst` part on slide 1 + `p:cmAuthorLst` on the presentation),
+    a custom-properties part, an embedded font (`p:embeddedFontLst` + fntdata part), and
+    a picture reachable ONLY from unused slideLayout4 (unused-layout media - removed
+    exactly when unused layouts are). Real-PowerPoint counterparts: R12/R14.
+    """
+    buf = io.BytesIO()
+    prs = Presentation()
+    layouts = prs.slide_layouts
+    s1 = prs.slides.add_slide(layouts[1])
+    s1.shapes.title.text_frame.paragraphs[0].add_run().text = "Scrub target one"
+    s1.placeholders[1].text_frame.paragraphs[0].add_run().text = "Slide one body."
+    s1.shapes.add_picture(io.BytesIO(_png_bytes()), Inches(6), Inches(4), Inches(2)).name = (
+        "live_media_pic"
+    )
+    s1.notes_slide.notes_text_frame.text = "Notes on slide one."
+    s2 = prs.slides.add_slide(layouts[5])
+    s2.shapes.title.text_frame.paragraphs[0].add_run().text = "Scrub target two"
+    s3 = prs.slides.add_slide(layouts[1])
+    s3.shapes.title.text_frame.paragraphs[0].add_run().text = "Scrub target three"
+    s3.placeholders[1].text_frame.paragraphs[0].add_run().text = "Slide three body."
+    s3.notes_slide.notes_text_frame.text = "Notes on slide three."
+    s4 = prs.slides.add_slide(layouts[6])
+    _add_named_textbox(
+        s4, "hidden_slide_box", Inches(1), Inches(1), Inches(4), Inches(1), "Hidden slide text"
+    )
+    s4._element.set("show", "0")
+
+    core = prs.core_properties
+    core.author = "Paper Fixture Author"
+    core.last_modified_by = "Paper Fixture Editor"
+    core.comments = "Deck-level metadata comment."
+    prs.save(buf)
+
+    source = zipfile.ZipFile(buf)
+    P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    RT_BASE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+    comments_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<p:cmLst xmlns:p="%s">'
+        '<p:cm authorId="0" dt="2026-07-08T09:00:00.000" idx="1">'
+        '<p:pos x="10" y="10"/><p:text>First fixture comment.</p:text></p:cm>'
+        '<p:cm authorId="0" dt="2026-07-08T09:05:00.000" idx="2">'
+        '<p:pos x="20" y="20"/><p:text>Second fixture comment.</p:text></p:cm>'
+        "</p:cmLst>" % P
+    ).encode("utf-8")
+    authors_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<p:cmAuthorLst xmlns:p="%s">'
+        '<p:cmAuthor id="0" name="Paper Reviewer" initials="PR" lastIdx="2" clrIdx="0"/>'
+        "</p:cmAuthorLst>" % P
+    ).encode("utf-8")
+    custom_props_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        "<Properties"
+        ' xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties"'
+        ' xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+        '<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Department">'
+        "<vt:lpwstr>Fixtures</vt:lpwstr></property>"
+        "</Properties>"
+    ).encode("utf-8")
+    fntdata = b"PAPER-FIXTURE-FNTDATA\x00" * 64  # -- structural stand-in, not a real font
+
+    # -- slide 1 -> comments rel
+    slide1_rels, _ = _with_rel(
+        source.read("ppt/slides/_rels/slide1.xml.rels"),
+        RT_BASE + "/comments",
+        "../comments/comment1.xml",
+    )
+    # -- presentation -> commentAuthors + font rels
+    pres_rels, _ = _with_rel(
+        source.read("ppt/_rels/presentation.xml.rels"),
+        RT_BASE + "/commentAuthors",
+        "commentAuthors.xml",
+    )
+    pres_rels, font_rId = _with_rel(pres_rels, RT_BASE + "/font", "fonts/font1.fntdata")
+    # -- package -> custom properties rel
+    pkg_rels, _ = _with_rel(
+        source.read("_rels/.rels"), RT_BASE + "/custom-properties", "docProps/custom.xml"
+    )
+    # -- presentation.xml: p:embeddedFontLst between p:notesSz and any p:custShowLst
+    pres_root = etree.fromstring(source.read("ppt/presentation.xml"))
+    _expect(pres_root.find(qn("p:embeddedFontLst")) is None, "embeddedFontLst already present")
+    embeddedFontLst = pres_root.makeelement(qn("p:embeddedFontLst"), {})
+    embeddedFont = etree.SubElement(embeddedFontLst, qn("p:embeddedFont"))
+    font = etree.SubElement(embeddedFont, qn("p:font"))
+    font.set("typeface", "Paper Fixture Font")
+    regular = etree.SubElement(embeddedFont, qn("p:regular"))
+    regular.set(qn("r:id"), font_rId)
+    pres_root.find(qn("p:notesSz")).addnext(embeddedFontLst)
+
+    # -- unused slideLayout4 ("Two Content" in the default template): picture + rel
+    layout_rels, layout_img_rId = _with_rel(
+        source.read("ppt/slideLayouts/_rels/slideLayout4.xml.rels"),
+        RT_BASE + "/image",
+        "../media/image_unused_layout.png",
+    )
+    layout_root = etree.fromstring(source.read("ppt/slideLayouts/slideLayout4.xml"))
+    spTree = layout_root.find(qn("p:cSld")).find(qn("p:spTree"))
+    _expect(spTree is not None, "layout4 has no spTree")
+    A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    pic_xml = (
+        '<p:pic xmlns:p="%s" xmlns:a="%s" xmlns:r="%s">'
+        '<p:nvPicPr><p:cNvPr id="990" name="unused_layout_pic"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>'
+        '<p:blipFill><a:blip r:embed="%s"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>'
+        '<p:spPr><a:xfrm><a:off x="457200" y="457200"/><a:ext cx="914400" cy="914400"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>'
+        "</p:pic>" % (P, A, RT_BASE, layout_img_rId)
+    )
+    spTree.append(etree.fromstring(pic_xml))
+
+    content_types = _with_content_types(
+        source.read("[Content_Types].xml"),
+        defaults={"fntdata": "application/x-fontdata"},
+        overrides={
+            "/ppt/comments/comment1.xml": (
+                "application/vnd.openxmlformats-officedocument.presentationml.comments+xml"
+            ),
+            "/ppt/commentAuthors.xml": (
+                "application/vnd.openxmlformats-officedocument.presentationml.commentAuthors+xml"
+            ),
+            "/docProps/custom.xml": (
+                "application/vnd.openxmlformats-officedocument.custom-properties+xml"
+            ),
+        },
+    )
+
+    return _rezip(
+        source,
+        OUT_DIR / "scrub_gauntlet.pptx",
+        rewrites={
+            "[Content_Types].xml": content_types,
+            "_rels/.rels": pkg_rels,
+            "ppt/_rels/presentation.xml.rels": pres_rels,
+            "ppt/presentation.xml": _xml_bytes(pres_root),
+            "ppt/slides/_rels/slide1.xml.rels": slide1_rels,
+            "ppt/slideLayouts/_rels/slideLayout4.xml.rels": layout_rels,
+            "ppt/slideLayouts/slideLayout4.xml": _xml_bytes(layout_root),
+        },
+        additions={
+            "ppt/comments/comment1.xml": comments_xml,
+            "ppt/commentAuthors.xml": authors_xml,
+            "docProps/custom.xml": custom_props_xml,
+            "ppt/fonts/font1.fntdata": fntdata,
+            "ppt/media/image_unused_layout.png": _png_bytes(palette=1),
+        },
+    )
+
+
+_THEME_FONT_DEFAULTS = ("Calibri", "Calibri")  # -- default-template major/minor latin
+_THEME_ACCENT1_DEFAULT = "4F81BD"
+
+
+def _retheme(source: zipfile.ZipFile, theme_name: str, major: str, minor: str, accent1: str):
+    """Return theme1.xml bytes with renamed theme, new major/minor latin fonts, new accent1."""
+    A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    root = etree.fromstring(source.read("ppt/theme/theme1.xml"))
+    _expect(root.get("name") == "Office Theme", "theme name is not the expected default")
+    root.set("name", theme_name)
+    fontScheme = root.find("{%s}themeElements/{%s}fontScheme" % (A, A))
+    major_latin = fontScheme.find("{%s}majorFont/{%s}latin" % (A, A))
+    minor_latin = fontScheme.find("{%s}minorFont/{%s}latin" % (A, A))
+    _expect(
+        (major_latin.get("typeface"), minor_latin.get("typeface")) == _THEME_FONT_DEFAULTS,
+        "theme font defaults changed",
+    )
+    major_latin.set("typeface", major)
+    minor_latin.set("typeface", minor)
+    accent1_el = root.find("{%s}themeElements/{%s}clrScheme/{%s}accent1/{%s}srgbClr" % (A, A, A, A))
+    _expect(accent1_el.get("val") == _THEME_ACCENT1_DEFAULT, "accent1 default changed")
+    accent1_el.set("val", accent1)
+    return _xml_bytes(root)
+
+
+def build_template_alpha() -> Path:
+    """Import/rebind corpus, house style A (v0.11 Phases 4-5).
+
+    Default-template deck rethemed by zip surgery ("Paper Alpha": Georgia/Verdana, accent1
+    AA3311). Three slides: title, title-and-content with two bullet levels, blank with a
+    named picture and textbox. Layout names keep the default-template set, so every name
+    collides with template beta's (the import-collision requirement); real-PowerPoint
+    counterpart is FIXTURE-REQUESTS.md R10.
+    """
+    buf = io.BytesIO()
+    prs = Presentation()
+    s1 = prs.slides.add_slide(prs.slide_layouts[0])
+    s1.shapes.title.text_frame.paragraphs[0].add_run().text = "Alpha Overview"
+    s1.placeholders[1].text_frame.paragraphs[0].add_run().text = "Paper template alpha"
+    s2 = prs.slides.add_slide(prs.slide_layouts[1])
+    s2.shapes.title.text_frame.paragraphs[0].add_run().text = "Alpha Content"
+    body_tf = s2.placeholders[1].text_frame
+    body_tf.paragraphs[0].add_run().text = "Alpha point one"
+    p2 = body_tf.add_paragraph()
+    p2.level = 1
+    p2.add_run().text = "Alpha point two"
+    s3 = prs.slides.add_slide(prs.slide_layouts[6])
+    picture = s3.shapes.add_picture(
+        io.BytesIO(_png_bytes(palette=2)), Inches(1), Inches(1), Inches(2)
+    )
+    picture.name = "alpha_pic"
+    _add_named_textbox(
+        s3, "alpha_box", Inches(4), Inches(2), Inches(4), Inches(1), "Alpha floating text"
+    )
+    prs.save(buf)
+    source = zipfile.ZipFile(buf)
+    return _rezip(
+        source,
+        OUT_DIR / "template_alpha.pptx",
+        rewrites={
+            "ppt/theme/theme1.xml": _retheme(
+                source, "Paper Alpha", "Georgia", "Verdana", "AA3311"
+            )
+        },
+        additions={},
+    )
+
+
+def build_template_beta() -> Path:
+    """Import/rebind corpus, house style B ("Paper Beta": Courier New/Times New Roman,
+    accent1 1166BB). Four slides: title, title-and-content, a chart (with embedded
+    workbook) on the layout renamed "Beta Special" (a layout name alpha does NOT have),
+    and a picture slide. All other layout names collide with alpha's by construction."""
+    buf = io.BytesIO()
+    prs = Presentation()
+    beta_special = prs.slide_layouts[5]  # -- "Title Only" in the default template
+    _expect(beta_special.name == "Title Only", "layout 5 is not 'Title Only'")
+    beta_special.name = "Beta Special"
+
+    s1 = prs.slides.add_slide(prs.slide_layouts[0])
+    s1.shapes.title.text_frame.paragraphs[0].add_run().text = "Beta Overview"
+    s1.placeholders[1].text_frame.paragraphs[0].add_run().text = "Paper template beta"
+    s2 = prs.slides.add_slide(prs.slide_layouts[1])
+    s2.shapes.title.text_frame.paragraphs[0].add_run().text = "Beta Content"
+    body_tf = s2.placeholders[1].text_frame
+    body_tf.paragraphs[0].add_run().text = "Beta point one"
+    p2 = body_tf.add_paragraph()
+    p2.level = 1
+    p2.add_run().text = "Beta point two"
+    s3 = prs.slides.add_slide(beta_special)
+    s3.shapes.title.text_frame.paragraphs[0].add_run().text = "Beta Chart"
+    chart_data = CategoryChartData()
+    chart_data.categories = ["North", "South"]
+    chart_data.add_series("FY26", (12.5, 8.75))
+    frame = s3.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1.5), Inches(6), Inches(4), chart_data
+    )
+    frame.name = "beta_chart"
+    s4 = prs.slides.add_slide(prs.slide_layouts[6])
+    picture = s4.shapes.add_picture(
+        io.BytesIO(_png_bytes(palette=3)), Inches(2), Inches(2), Inches(3)
+    )
+    picture.name = "beta_pic"
+    prs.save(buf)
+    source = zipfile.ZipFile(buf)
+    return _rezip(
+        source,
+        OUT_DIR / "template_beta.pptx",
+        rewrites={
+            "ppt/theme/theme1.xml": _retheme(
+                source, "Paper Beta", "Courier New", "Times New Roman", "1166BB"
+            )
+        },
+        additions={},
+    )
+
+
+def build_lineage_trio() -> "tuple[Path, Path, Path]":
+    """Diff ground-truth corpus (v0.11 Phase 6): v1, v2 saved FROM v1 with known edits,
+    and a reorder-only variant. v2/reorder are built by loading v1's frozen bytes and
+    applying shipped paper-pptx v0/v0.1 APIs, so permanent slide ids persist exactly as
+    they do in real save-a-copy lineage. The exact edit list lives in the sidecars; the
+    real-PowerPoint counterpart is FIXTURE-REQUESTS.md R13.
+    """
+    from pptx.edit import replace_text
+
+    prs = Presentation()
+    s1 = prs.slides.add_slide(prs.slide_layouts[1])
+    s1.shapes.title.text_frame.paragraphs[0].add_run().text = "Lineage slide one"
+    s1.placeholders[1].text_frame.paragraphs[0].add_run().text = "Constant body text."
+    s2 = prs.slides.add_slide(prs.slide_layouts[1])
+    s2.shapes.title.text_frame.paragraphs[0].add_run().text = "Lineage slide two"
+    s2.placeholders[1].text_frame.paragraphs[0].add_run().text = "Second slide body."
+    s2.notes_slide.notes_text_frame.text = "Original notes for slide two."
+    s3 = prs.slides.add_slide(prs.slide_layouts[5])
+    s3.shapes.title.text_frame.paragraphs[0].add_run().text = "Lineage slide three"
+    chart_data = CategoryChartData()
+    chart_data.categories = ["North", "South"]
+    chart_data.add_series("FY", (10.0, 20.0))
+    frame = s3.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1.5), Inches(6), Inches(4), chart_data
+    )
+    frame.name = "lineage_chart"
+    s4 = prs.slides.add_slide(prs.slide_layouts[6])
+    s4.shapes.add_picture(io.BytesIO(_png_bytes()), Inches(1), Inches(1), Inches(2)).name = (
+        "lineage_pic"
+    )
+    _add_named_textbox(
+        s4, "lineage_box", Inches(4), Inches(5), Inches(3), Inches(1), "Anchored box"
+    )
+    s5 = prs.slides.add_slide(prs.slide_layouts[1])
+    s5.shapes.title.text_frame.paragraphs[0].add_run().text = "Lineage slide five"
+    s5.placeholders[1].text_frame.paragraphs[0].add_run().text = "Fifth slide body."
+    v1_path = _save(prs, "lineage_v1.pptx")
+
+    # -- v2: load v1's bytes and apply the documented edit list with shipped APIs --------
+    prs2 = Presentation(str(v1_path))
+    replace_text(prs2, "Lineage slide one", "Lineage slide one, retitled")  # 1. text edit
+    chart = prs2.slides[2].shapes.chart_by_name("lineage_chart")
+    chart.replace_data_safe(["North", "South"], [("FY", (10.0, 25.0))])  # 2. chart data
+    prs2.slides[1].replace_notes_text("Updated notes for slide two.")  # 3. notes edit
+    box = prs2.slides[3].shapes.shape_by_name("lineage_box")
+    box.left = Inches(5)  # 4. geometry change
+    prs2.slides[3].shapes.picture_by_name("lineage_pic").replace_image(
+        io.BytesIO(_png_bytes(palette=1))
+    )  # 5. image replacement
+    # -- add BEFORE delete: upstream allocates slide ids as max+1, so deleting the max id
+    # -- (260, "five") first would hand the new slide that same id - id reuse would make
+    # -- id-based diff matching read delete+add as one edited slide. That hazard is real
+    # -- and documented for the diff organ, but this fixture pins the clean lineage case.
+    s6 = prs2.slides.add_slide(prs2.slide_layouts[1])  # 6. add a new slide (id 261)
+    s6.shapes.title.text_frame.paragraphs[0].add_run().text = "Lineage slide six, new"
+    prs2.slides.delete(4)  # 7. delete "Lineage slide five" (id 260)
+    prs2.slides.move(1, 0)  # 8. move "two" to the front
+    v2_path = _save(prs2, "lineage_v2.pptx")
+
+    # -- reorder-only variant: identical content, one move -------------------------------
+    prs3 = Presentation(str(v1_path))
+    prs3.slides.move(4, 0)
+    reorder_path = _save(prs3, "lineage_reorder.pptx")
+    return v1_path, v2_path, reorder_path
 
 
 def main() -> None:

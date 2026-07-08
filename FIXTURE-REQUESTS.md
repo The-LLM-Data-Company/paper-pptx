@@ -98,6 +98,75 @@ bytes.
 
 ---
 
+Requested 2026-07-08 (v0.11 Phase 0). These are the external dependency of the v0.11 release:
+Phase 2 (fields/footers) acceptance and the import corpus depend on them.
+
+## R9 — `office_authored/ppt_footers_applied.pptx` (+ override variant; unblocks v0.11 Phase 2)
+
+In desktop PowerPoint, from a blank presentation, five slides with any content. Then
+Insert → Header & Footer: check **Date and time** (Update automatically), **Slide number**,
+and **Footer** with the text `Paper Fixture Footer`; click **Apply to All**. Save.
+
+Save a second variant `office_authored/ppt_footers_override.pptx`: same deck, but first
+select slide 3 and via the same dialog uncheck **Footer** for that slide only (Apply, not
+Apply to All), and also right-click slide 5 in the thumbnail pane → **Hide Slide**. Save.
+
+Sidecar ground truth (both files): for each slide, which of the dt/ftr/sldNum placeholder
+shapes exist in `ppt/slides/slideN.xml`, the `a:fld` types present (`slidenum`,
+`datetime`/`datetimeN`), the footer literal text, and any `p:hf` attribute values written on
+layouts/masters; for the variant, slide 5's `show` attribute in `ppt/presentation.xml`.
+This is the deck that proves what "Apply to All" actually persists — our Phase 2 API is
+verified against these bytes, and the release checklist opens our regenerated equivalent in
+PowerPoint to confirm live renumbering after a manual slide move.
+
+## R10 — Two-template import pair: `office_authored/ppt_template_alpha.pptx` + `ppt_template_beta.pptx`
+
+Two small decks (3–4 slides each) built on **different built-in Designs** (e.g. "Ion" and
+"Retrospect"), each with: a title slide, a title-and-content slide with bulleted body text, and
+one slide containing a picture. Requirement: both templates must contain a layout **with the
+same name but different definitions** (the built-in "Title and Content" satisfies this) — that
+name collision is the import-fixture requirement. In beta, also rename one layout (Slide Master
+view → right-click layout → Rename) to a name that does NOT exist in alpha. Sidecar ground
+truth: theme names, layout names per master, major/minor theme fonts, and the two accent-1 RGB
+values. These two decks are the cross-template corpus for v0.11 Phases 4–5 (rebind + import).
+
+## R11 — `office_authored/ppt_merged_tables.pptx` (unblocks v0.11 Phase 1 verification)
+
+One slide with a 5×4 table: merge the four header-row cells into one (row 1 spans all 4
+columns); separately merge a 2-row vertical block in column 1 (rows 3–4); leave everything else
+unmerged. Type distinct text in each visible cell. Sidecar ground truth: the `gridSpan`,
+`rowSpan`, `hMerge`, `vMerge` attributes PowerPoint writes for each affected `a:tc`, and the
+`a:gridCol` widths.
+
+## R12 — `office_authored/ppt_comments_notes.pptx` (comments + notes; unblocks scrub provenance)
+
+Three slides. Slide 1: add a modern comment (Review → New Comment) with one reply from any
+second account if available (a thread), plus speaker notes `Notes on slide one.` Slide 2: no
+comment, no notes. Slide 3: speaker notes only. Save. Sidecar ground truth: the comment part
+names PowerPoint writes (modern comments live under `ppt/comments/`, authors in
+`ppt/commentAuthors.xml` or the modern equivalent), which slides have notes parts, and the
+comment/reply text. This pins the real part layout scrub must remove.
+
+## R13 — Lineage diff pair: `office_authored/ppt_lineage_v1.pptx` + `ppt_lineage_v2.pptx` (+ reorder-only)
+
+Build a five-slide deck (v1), including one chart slide (Insert → Chart, edit a value or two)
+and distinct title text per slide. **Save as v1. Then File → Save a Copy as v2 and, in v2
+only:** change one title's text; edit one chart data value; move one slide to a new position;
+delete one slide; insert one new slide. Save. Also save a third file
+`ppt_lineage_reorder.pptx`: from v1, ONLY reorder two slides (no other edit). Sidecar ground
+truth: the exact edit list, and the `p:sldId` id values per file so the id-matching claim is
+checkable. This is the diff ground-truth corpus (v0.11 Phase 6): same-lineage decks share
+permanent slide ids; the reorder-only file must read as moves, never delete-plus-add.
+
+## R14 — `office_authored/ppt_embedded_font.pptx` (scrub's font target)
+
+Any one-slide deck saved with File → Options → Save → **Embed fonts in the file** enabled
+(either embed option). Sidecar ground truth: the `p:embeddedFontLst` entry and the
+`ppt/fonts/*.fntdata` part names. Scrub's optional embedded-font removal is verified against
+this real layout.
+
+---
+
 Also welcome, lower priority: any real-world decks from other producers (Keynote export,
 Canva export, LibreOffice authored-from-scratch) into `other_producers/` — one feature focus
 per file, same sidecar rules.

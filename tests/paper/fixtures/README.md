@@ -34,8 +34,8 @@ files is untested — that is why the real-Office requests in `FIXTURE-REQUESTS.
 | Taxonomy class | Fixtures |
 | --- | --- |
 | minimal-clean | `minimal_clean`, `lo_minimal_clean` |
-| feature-isolated | `branded_template` (inherited size/font), `clrmap_remap`, `chart_notes` (clone fixture), `shared_media`, `autofit_none` / `autofit_normal` / `autofit_shape`, `whitespace_trailing_a`/`_b` (Phase 5 trap pair), plus the `lo_*` producer variants |
-| gauntlet | `gauntlet` |
+| feature-isolated | `branded_template` (inherited size/font), `clrmap_remap`, `chart_notes` (clone fixture), `shared_media`, `autofit_none` / `autofit_normal` / `autofit_shape`, `autofit_inherited`, `whitespace_trailing_a`/`_b` (kernel trap pair), `sections`, `tables_in_group`, `nested_groups`, `hf_flags`, `merged_tables` (v0.11 tables), `footers_applied` (v0.11 fields/footers + hidden slide), `template_alpha`/`template_beta` (v0.11 import/rebind corpus), `lineage_v1`/`lineage_v2`/`lineage_reorder` (v0.11 diff ground truth), plus the `lo_*` producer variants |
+| gauntlet | `gauntlet`, `scrub_gauntlet` (v0.11 scrub targets) |
 | corrupt-by-construction | `corrupt_dangling_sldid` (negative tests only) |
 | large (perf smoke) | `large_smoke` |
 

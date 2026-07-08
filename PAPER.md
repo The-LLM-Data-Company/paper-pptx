@@ -366,6 +366,46 @@ regression test:
   `add_copy`, `effective_paragraph_format`, `add_datetime_field`, `table_by_name`, and the
   stale-anchor → `refind` recovery path.
 
+## v0.11 Phase 0: mechanism findings and fixture corpus
+
+Per `agent_docs/PLAN-v0.11-paper-pptx.md`, established from the spec (ISO/IEC 29500-1 §19.3.1.25
+hf, §21.1.2.2.4 fld; the -4 transitional schemas) plus probing real files (PowerPoint-authored
+upstream test decks, the default template, LibreOffice round-trips) — not from memory:
+
+- **Header/footer mechanism.** `p:hf` exists ONLY on layout/master/notesMaster/handoutMaster —
+  never on a slide — and all four attributes (`dt`/`ftr`/`hdr`/`sldNum`) default **true**
+  ("enabled"). Masters and layouts carry dt/ftr/sldNum *placeholder furniture* (default
+  template: master idx 2/3/4, every layout idx 10/11/12; LibreOffice instead numbers layout
+  furniture sequentially and puts none on the master). A slide *shows* footer content only when
+  the placeholder shapes are **materialized on the slide itself** — the dialog's per-slide
+  fingerprint; no upstream-shipped file has them (none has dialog-applied footers), which is
+  exactly what FIXTURE-REQUESTS.md R9 exists to provide. Slide-number/date content is an
+  `a:fld` (`slidenum`, `datetime`–`datetime13`) with a GUID `id` unique per document and a
+  cached-text child that consuming applications refresh on open; footer text is a literal run.
+  Producer evidence: LibreOffice consumed our dialog-style fixture and round-tripped the
+  furniture per slide, honored the slide-3 footer override, **renumbered every `slidenum`
+  cached text** (1–5), and normalized our generic `datetime` fld to `datetime1` with re-cached
+  text — confirming cached text is consumer-owned and fields must never be baked as literals.
+- **Hidden slides.** `show="0"` lives on the slide part's root `p:sld` element (CT_Slide),
+  NOT on `p:sldId` — first probed in the wrong place during authoring, worth writing down.
+  LibreOffice preserves the flag through a round trip.
+- **Table merges.** Origin cells carry `gridSpan`/`rowSpan`; continuation cells are
+  *physically present* with `hMerge`/`vMerge` — so every `a:tr` always holds exactly one
+  `a:tc` per `a:gridCol` (the grid invariant Phase 1 must maintain). LibreOffice round-trips
+  the attributes and cell counts identically to what upstream `_Cell.merge` writes.
+- **Slide-id allocation hazard (for Phase 6 diff).** Upstream `add_slide` allocates slide ids
+  as max+1, so deleting the max-id slide then adding a new one **recycles the deleted id** —
+  id-based lineage matching would read that delete+add as one edited slide. The lineage
+  fixtures pin the clean case (add before delete → fresh id) and the hazard is documented in
+  the `lineage_v2` sidecar for the diff organ's declared contract.
+- **Corpus** grew from 23 to 34 frozen fixtures: `merged_tables`, `footers_applied` (dialog
+  mechanism + hidden slide), `scrub_gauntlet` (classic comments, custom props, embedded font,
+  unused-layout media — zip surgery, honestly labeled), `template_alpha`/`template_beta`
+  (retheme + layout-name collision contract for import/rebind), `lineage_v1`/`v2`/`reorder`
+  (diff ground truth, v2 built from v1's frozen bytes with shipped APIs; exact edit list in
+  the sidecar), plus `lo_merged_tables`/`lo_footers_applied`/`lo_template_alpha` producer
+  variants. Real-PowerPoint counterparts filed day-one as FIXTURE-REQUESTS.md **R9–R14**.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
