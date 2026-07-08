@@ -444,6 +444,25 @@ page-number anti-pattern from the reference's `deck_furniture.py` is dead: renum
 slide moves belongs to consumers, tested structurally. Real-PowerPoint verification is
 RELEASE-CHECKLIST item 11 + FIXTURE-REQUESTS R9.
 
+## v0.11 Phase 3: scrub (the exit gate)
+
+`Presentation.scrub(...)` → `ScrubReport` (new `pptx.scrub`). Every toggle defaults to
+touch-nothing; every removal is relationship-graph surgery, so a part reachable from any
+live slide, layout, or master structurally cannot be removed (parts leave the package only
+by becoming unreachable — the v0 slideops insight, now load-bearing). Targets: notes (notes
+master retained, declared), comments (classic parts in the corpus; modern 2018/10 reltypes
+matched too, real fixture tracked as R12), metadata (core text fields cleared;
+app/custom/thumbnail parts removed; created/modified/revision declared retained),
+hidden slides (via the section-maintaining v0.1 delete), unused layouts (their exclusive
+media orphans with them), unused masters, unreachable media (drops only media rels no XML
+reference uses — referenced media provably untouched), embedded fonts (`p:embeddedFontLst`
++ fntdata parts). The report carries the exact zip-member budget (`parts_removed` computed
+from actual before/after reachability, `parts_modified` tracked per touched member incl.
+the content-types rule) and every test holds the real diff to it member for member; the
+full-scrub report is goldened. Acceptance proven job-shaped: scrub_gauntlet →
+scrub(everything) → reopens clean (relint + section scan + LO smoke), 3 visibly-identical
+slides, zero notes/comments/metadata/fonts, file half the size.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

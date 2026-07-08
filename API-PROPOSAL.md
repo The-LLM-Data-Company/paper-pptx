@@ -574,6 +574,20 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     layout without the needed furniture placeholder; explicit `p:hf` flags disabling a
     wanted element (nearest declaration wins, layout over master).
 
+- **Phase 3 — scrub** (machinery in new `pptx.scrub`):
+  - `Presentation.scrub(*, notes=False, comments=False, metadata=False,
+    hidden_slides=False, unused_layouts=False, unused_masters=False,
+    unreachable_media=False, embedded_fonts=False) -> ScrubReport` — removes exactly the
+    toggled targets; all-False is a proven no-op. Non-bool toggles are `ValueError`.
+  - `ScrubReport` (typed, frozen, `.to_dict()` with `"paper-scrub-report"` v1): per-
+    category removal lists, `metadata_fields_cleared`, `notes_master_retained`, and the
+    exact zip-member budget (`parts_removed`, `parts_modified`) that tests hold the
+    actual changed-part diff to.
+  - Reachability contract: removals are rel-graph surgery only; anything reachable from
+    a live slide/layout/master cannot be removed. Declared: notes master retained;
+    created/modified/revision core properties retained; modern (2018/10) comment
+    reltypes matched (fixture pending, R12).
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,
