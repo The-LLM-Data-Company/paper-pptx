@@ -337,6 +337,35 @@ missed; same refusal contract). Two more walkthrough steps flipped from xfail.
 - **Wave complete:** the QBR walkthrough eval runs with zero xfails, satisfying
   PLAN-v0.1's definition of done.
 
+## v0.1 hardening: final adversarial review findings, all fixed
+
+A five-dimension review panel (additivity, organ bug-hunting, conventions, test quality,
+consumer experience) ran against the complete wave; every confirmed finding was fixed with a
+regression test:
+
+- **Critical** — `SlideShapes.add_copy` skipped the chart child-relationship validation
+  `Slides.clone` performs, silently producing dangling rIds; now refuses identically.
+- **Major** — `replace_text` mutated while traversing, so a traversal refusal (depth guard)
+  on a later slide left earlier edits behind; it now materializes the complete plan before
+  the first write. `mc:AlternateContent` was silently invisible; it is now a typed counted
+  blind region in `inspect_text`, a per-slide count in `inspect_deck`, a refusal in
+  `replace_text`, and an anchor-index-stable entry for `replace_text_at`/`refind`.
+  `replace_data_safe` could desync chart XML from the workbook on float-unrepresentable
+  ints (10**400); non-finite/non-representable values now refuse up front. The walkthrough's
+  normalize step was dead code (a None-guard silently skipped it); it now runs, asserted on
+  the reopened output. Occurrence semantics (non-overlapping, multi-match counts) were
+  untested — mutation-proven tests added. Phase 2 shipped without API-PROPOSAL amendments;
+  recorded now, with the stale Phase 9 sentence corrected in place.
+- **Minor** — cross-boundary anchored matches now refuse instead of returning a
+  success-shaped zero; C0 control characters are rejected before mutation; the master-frame
+  `resolve=True` crash is a typed refusal; field construction moved into the oxml layer
+  (§3); boolean effective values serialize as JSON booleans (goldens regenerated); the
+  spacing refusal names its recovery path; new `hf_flags` fixture covers authored-elsewhere
+  `p:hf`; sectioned slide-op outputs gained LibreOffice smoke coverage; inverse-invariant
+  and refusal tests routed through reopen/atomicity helpers; the walkthrough grew steps for
+  `add_copy`, `effective_paragraph_format`, `add_datetime_field`, `table_by_name`, and the
+  stale-anchor → `refind` recovery path.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

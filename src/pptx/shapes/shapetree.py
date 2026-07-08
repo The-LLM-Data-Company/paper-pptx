@@ -660,7 +660,7 @@ class SlideShapes(_BaseGroupShapes):
         """
         from pptx.errors import RelationshipPolicyError, TargetNotFoundError
         from pptx.opc.constants import RELATIONSHIP_TYPE as RT
-        from pptx.slideops import _copy_chart_part, _rewrite_r_references
+        from pptx.slideops import _copy_chart_part, _rewrite_r_references, _validate_chart_rels
 
         source_element = shape._element
         source_part = shape.part
@@ -685,6 +685,9 @@ class SlideShapes(_BaseGroupShapes):
             elif rel.reltype in shareable:
                 plan.append((rId, "share", rel))
             elif rel.reltype == RT.CHART:
+                # -- same refusal contract as Slides.clone: a chart whose child rels the
+                # -- deep copy cannot honor refuses BEFORE anything mutates
+                _validate_chart_rels(rel.target_part)
                 plan.append((rId, "chart", rel))
             else:
                 raise RelationshipPolicyError(

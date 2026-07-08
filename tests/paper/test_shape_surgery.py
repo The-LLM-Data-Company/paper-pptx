@@ -216,12 +216,38 @@ def test_add_copy_refuses_unsupported_relationship_types_atomically():
     assert "does not support" in str(raised)
 
 
-def test_add_copy_refuses_shapes_from_another_presentation():
+def test_add_copy_refuses_shapes_from_another_presentation_atomically():
     prs = _open(GAUNTLET)
     other = _open(CHART_NOTES)
     foreign = next(s for s in other.slides[0].shapes if s.has_chart)
-    with pytest.raises(TargetNotFoundError, match="different presentation"):
-        prs.slides[0].shapes.add_copy(foreign)
+
+    raised = assert_refusal_atomic(
+        prs, lambda p: p.slides[0].shapes.add_copy(foreign), TargetNotFoundError
+    )
+    assert "different presentation" in str(raised)
+
+
+def test_add_copy_refuses_chart_with_unsupported_child_relationship():
+    """Regression (review, CRITICAL): add_copy used to skip the chart child-relationship
+    validation Slides.clone performs, silently leaf-copying a chart whose child rels the
+    copy cannot honor — dangling rIds in the output."""
+    prs = _open(CHART_NOTES)
+    chart_shape = next(s for s in prs.slides[0].shapes if s.has_chart)
+    chart_part = chart_shape.chart.part
+    image_part = prs.slides[0].part.package.get_or_add_image_part(
+        io.BytesIO(
+            Presentation(str(corpus.fixture_path(GAUNTLET)))
+            .slides[1]
+            .shapes.picture_by_name("gauntlet_img_1")
+            .image.blob
+        )
+    )
+    chart_part.relate_to(image_part, "http://example.com/relationships/bogus")
+
+    raised = assert_refusal_atomic(
+        prs, lambda p: p.slides[0].shapes.add_copy(chart_shape), RelationshipPolicyError
+    )
+    assert "chart part" in str(raised)
 
 
 # ------------------------------------------------------------------------ by-name addressing

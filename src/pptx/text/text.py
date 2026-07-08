@@ -243,7 +243,10 @@ class TextFrame(Subshape):
                 if lnSpc is None:
                     raise UnsupportedStructureError(
                         "cannot freeze line-spacing reduction %.1f%%: paragraph %d of shape"
-                        " %r has no explicit line spacing" % (reduction, para_idx, shape_name)
+                        " %r has no explicit line spacing (set paragraph.line_spacing on"
+                        " every paragraph first; resolve=True resolves font sizes only —"
+                        " spacing resolution is not supported in this version)"
+                        % (reduction, para_idx, shape_name)
                     )
 
         # -- mutation pass --
@@ -278,10 +281,13 @@ class TextFrame(Subshape):
         leaf module and importing it at module scope would be a cycle.
         """
         from pptx.inspect import _FontResolver
+        from pptx.parts.slide import SlidePart
 
         sp = self._txBody.getparent()
         if sp is None or sp.tag != qn("p:sp"):
             return None  # -- only p:sp text bodies resolve through the placeholder chain
+        if not isinstance(self.part, SlidePart):
+            return None  # -- layout/master frames have no slide chain; typed refusal follows
         effective = _FontResolver(self.part).effective_font(r, sp)
         if not effective.size.resolved:
             return None
@@ -670,17 +676,7 @@ class _Paragraph(Subshape):
     def _add_field(self, field_type: str, cached_text: str) -> None:
         import uuid
 
-        fld = self._p.makeelement(qn("a:fld"), {})
-        fld.set("id", "{%s}" % str(uuid.uuid4()).upper())
-        fld.set("type", field_type)
-        t = fld.makeelement(qn("a:t"), {})
-        t.text = cached_text
-        fld.append(t)
-        endParaRPr = self._p.find(qn("a:endParaRPr"))
-        if endParaRPr is not None:
-            endParaRPr.addprevious(fld)
-        else:
-            self._p.append(fld)
+        self._p.add_fld("{%s}" % str(uuid.uuid4()).upper(), field_type, cached_text)
 
     def add_run(self) -> _Run:
         """Return a new run appended to the runs in this paragraph."""

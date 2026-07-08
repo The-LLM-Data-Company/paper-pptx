@@ -189,6 +189,19 @@ def test_refuses_multi_plot_combo_charts_atomically():
     assert "multi-plot" in str(raised)
 
 
+def test_nonrepresentable_numerics_are_rejected_before_any_mutation():
+    """Regression (review): 10**400 passed isinstance(int) then raised OverflowError AFTER
+    the chart XML was rewritten — the exact XML/workbook desync the API exists to prevent.
+    inf/nan would serialize as schema-invalid lexical values."""
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    before = save_to_bytes(prs)
+    for bad_value in (10**400, float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(ValueError):
+            chart.replace_data_safe(["x"], [("s", (bad_value,))])
+    assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
+
+
 def test_lone_surrogate_strings_are_rejected_before_any_mutation():
     """Regression: a str containing a lone surrogate passed isinstance validation, then
     exploded during serialization AFTER the chart XML had already been rewritten."""

@@ -63,6 +63,11 @@ def _build_qbr_deck(tmp_path):
     assert language_pass.replacements == 6  # -- two lines on each of the three sections
     closing_title = prs.slides[-1].shapes.title
     closing_title.text_frame.paragraphs[0].runs[0].text = "Next steps"
+    # -- capture an anchor now; later structural passes will shift block indices and the
+    # -- refind recovery path (Phase 1.1) brings it back
+    closing_title_anchor = next(
+        b.anchor for b in inspect_text(prs.slides[-1]).blocks if b.text == "Next steps"
+    )
 
     # -- chart data update, by name, validated
     chart_slide = next(s for s in prs.slides if any(sh.has_chart for sh in s.shapes))
@@ -84,28 +89,53 @@ def _build_qbr_deck(tmp_path):
     closing = prs.slides[-1]
     picture = closing.shapes.picture_by_name("gauntlet_img_2")
     picture.replace_image(io.BytesIO(replacement.getvalue()), allow_format_change=True)
-    # -- and pull the footer rail behind everything on the closing slide (z-order)
+    # -- reuse the swapped brand asset on the title slide (Phase 1.2 add_copy: image shared)
+    brand_mark = prs.slides[0].shapes.add_copy(picture)
+    title_slide_ids = [s.shape_id for s in prs.slides[0].shapes]
+    assert title_slide_ids.count(brand_mark.shape_id) == 1  # -- fresh id on ITS slide
+    # -- and push the link box behind everything on the closing slide (z-order)
     closing.shapes.move(closing.shapes[-1], 0)
 
-    # -- normalize the one autofit frame we kept prose in (freeze what the reader sees)
+    # -- normalize the autofit frame we kept prose in (freeze what the reader sees). The
+    # -- box lives on the closing slide; no None-guard — a missing box must fail loudly.
     body_box = next(
-        (s for s in prs.slides[0].shapes if s.name == "hyperlink_box"), None
+        s for slide in prs.slides for s in slide.shapes if s.name == "hyperlink_box"
     )
-    if body_box is not None:
-        tf = body_box.text_frame
-        for paragraph in tf.paragraphs:
-            paragraph.line_spacing = 1.0
-        tf.normalize_autofit(resolve=True, min_font_size=Pt(11))
-        assert tf.auto_size == MSO_AUTO_SIZE.NONE
+    tf = body_box.text_frame
+    for paragraph in tf.paragraphs:
+        paragraph.line_spacing = 1.0
+    tf.normalize_autofit(resolve=True, min_font_size=Pt(11))
+    assert tf.auto_size == MSO_AUTO_SIZE.NONE
 
-    # -- footer pass (Phase 2.5): real slide-number fields, right across reordering
+    # -- footer pass (Phase 2.5): real slide-number fields, right across reordering;
+    # -- the title slide also carries a datetime field
+    from pptx.inspect import effective_paragraph_format
+
     for index, slide in enumerate(prs.slides):
         footer = slide.shapes.add_textbox(Pt(20), Pt(520), Pt(200), Pt(20))
         footer.name = "meta_footer_%d" % (index + 1)
         paragraph = footer.text_frame.paragraphs[0]
         paragraph.add_run().text = "Q4 QBR - page "
         paragraph.add_slide_number_field()
+        if index == 0:
+            paragraph.add_datetime_field("datetime1")
     prs.slide_masters[0].header_footers.slide_number_visible = True
+    # -- Phase 2.2: verify the footer rail's effective alignment (default left)
+    footer_format = effective_paragraph_format(
+        prs.slides[0].shapes.shape_by_name("meta_footer_1").text_frame.paragraphs[0]
+    )
+    assert footer_format.alignment.value == "l"
+
+    # -- the early anchor is now stale (z-order + footer passes shifted indices or will);
+    # -- the pinned recovery path: refuse -> refind -> retry (Phase 1.1)
+    from pptx.edit import refind
+    from pptx.errors import StaleAnchorError, TargetNotFoundError
+
+    try:
+        replace_text_at(prs, closing_title_anchor, "Next steps", "Next steps & owners")
+    except (StaleAnchorError, TargetNotFoundError):
+        fresh = refind(prs, closing_title_anchor)
+        replace_text_at(prs, fresh, "Next steps", "Next steps & owners")
 
     # -- narrow save: only genuinely-changed parts differ from the template
     out_path = tmp_path / "qbr.pptx"
@@ -129,7 +159,11 @@ def test_walkthrough_end_to_end(tmp_path):
 
     reopened = Presentation(io.BytesIO(saved))
     assert len(reopened.slides) == 5
-    assert reopened.slides[0].shapes.title.text == "Q4 Business Review"
+    titles = [
+        s.shapes.title.text if s.shapes.title is not None else None for s in reopened.slides
+    ]
+    assert titles[:3] == ["Q4 Business Review", "Wins", "Risks"]
+    assert titles[-1] == "Next steps & owners"  # -- the refind recovery path landed
     chart = next(
         sh.chart for s in reopened.slides for sh in s.shapes if sh.has_chart
     )
@@ -138,6 +172,35 @@ def test_walkthrough_end_to_end(tmp_path):
     assert chart_slide.read_notes_text() == (
         "Walk through Q4 revenue; flag the Alpha renewal."
     )
+
+    # -- footer fields landed on every slide (slide 1 also carries the datetime field)
+    from pptx.inspect import inspect_text as _inspect_text
+
+    for index, slide in enumerate(reopened.slides):
+        footer_block = next(
+            b for b in _inspect_text(slide).blocks
+            if b.shape_name == "meta_footer_%d" % (index + 1)
+        )
+        expected_fields = ("slidenum", "datetime1") if index == 0 else ("slidenum",)
+        assert footer_block.fields == expected_fields, footer_block.shape_name
+
+    # -- the brand asset swapped formats and was copied to the title slide (shared part)
+    closing_pic = reopened.slides[-1].shapes.picture_by_name("gauntlet_img_2")
+    assert closing_pic.image.ext in ("jpg", "jpeg")
+    title_mark = next(
+        s for s in reopened.slides[0].shapes if s.shape_type.name == "PICTURE"
+    )
+    assert title_mark.image.blob == closing_pic.image.blob
+
+    # -- z-order held: the link box is backmost on the closing slide
+    assert reopened.slides[-1].shapes[0].name == "hyperlink_box"
+
+    # -- the normalized frame persisted explicit no-autofit with floored sizes
+    normalized = next(
+        s for slide in reopened.slides for s in slide.shapes if s.name == "hyperlink_box"
+    )
+    assert normalized.text_frame.auto_size == MSO_AUTO_SIZE.NONE
+    assert reopened.slide_masters[0].header_footers.slide_number_visible is True
 
 
 @pytest.mark.lo_smoke
@@ -155,13 +218,21 @@ def test_step_survey_template_with_deck_manifest():
     """Phase 2.1 step (was xfail): the job starts with a structural survey, not guesswork."""
     from pptx.inspect import inspect_deck
 
-    manifest = inspect_deck(Presentation(str(corpus.fixture_path(GAUNTLET))))
+    prs = Presentation(str(corpus.fixture_path(GAUNTLET)))
+    manifest = inspect_deck(prs)
     assert manifest.slide_count == 4
     chart_slides = [
         slide.part for slide in manifest.slides
         if any(shape.chart for shape in slide.shapes)
     ]
     assert chart_slides == ["/ppt/slides/slide2.xml"]
+    # -- and the template's table is addressable by name (Phase 1.3) from the survey
+    table_slide_index = next(
+        index for index, slide in enumerate(manifest.slides)
+        if any(shape.table for shape in slide.shapes)
+    )
+    table = prs.slides[table_slide_index].shapes.table_by_name("gauntlet_table")
+    assert table.cell(0, 0).text == "r0c0"
 
 
 def test_step_check_brand_accent_via_effective_shape_format():

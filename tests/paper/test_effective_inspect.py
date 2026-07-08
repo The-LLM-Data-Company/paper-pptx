@@ -363,6 +363,38 @@ def test_out_of_schema_indent_level_refuses_instead_of_crashing():
         run.effective_font()
 
 
+def test_alternate_content_is_a_typed_counted_blind_region_not_silence():
+    """Regression (review): mc:AlternateContent used to be invisible to inspect_text and
+    inspect_deck — a fail-silent hole in the visibility-complete contract."""
+    from pptx.inspect import inspect_deck
+    from tests.paper.test_edit_text import _wrap_first_textbox_in_alternate_content
+
+    prs = _wrap_first_textbox_in_alternate_content(
+        _open("self_generated/minimal_clean.pptx")
+    )
+    inspection = inspect_text(prs.slides[0])
+    ac_blocks = [b for b in inspection.blocks if b.container == "alternate-content"]
+    assert len(ac_blocks) == 1
+    assert ac_blocks[0].blind is True
+    assert inspection.blind_region_count == 1
+    assert inspection.to_dict()["blind_region_count"] == 1
+
+    manifest = inspect_deck(prs)
+    assert manifest.slides[0].alternate_content_count == 1
+    assert manifest.to_dict()["slides"][0]["alternate_content_count"] == 1
+
+
+def test_boolean_effective_values_serialize_as_json_booleans():
+    """Regression (review): bool is an int subclass; the payload used to emit 0/1."""
+    payload = (
+        _open(BRANDED).slides[0].placeholders[1].text_frame.paragraphs[0].runs[0]
+        .effective_font()
+        .to_dict()
+    )
+    assert payload["bold"]["value"] is False
+    assert payload["italic"]["value"] is False
+
+
 # --------------------------------------------------------- v0.1 Phase 2.2 walk extensions
 
 
@@ -370,10 +402,13 @@ def test_bold_italic_underline_resolve_with_schema_defaults():
     prs = _open(BRANDED)
     run = prs.slides[0].placeholders[1].text_frame.paragraphs[0].runs[0]
     font = run.effective_font()
-    assert font.bold.value is False and font.bold.resolved is True
+    assert font.bold.value is False
+    assert font.bold.resolved is True
     assert font.bold.provenance[-1].level == "schema default"
-    assert font.italic.value is False and font.italic.resolved is True
-    assert font.underline.value == "none" and font.underline.resolved is True
+    assert font.italic.value is False
+    assert font.italic.resolved is True
+    assert font.underline.value == "none"
+    assert font.underline.resolved is True
 
     run.font.bold = True
     run.font.underline = True  # -- upstream writes u="sng"

@@ -216,6 +216,28 @@ def test_normalize_autofit_resolve_still_refuses_unresolvable_spacing():
     assert "line spacing" in str(raised) or "line-spacing" in str(raised)
 
 
+def test_normalize_autofit_resolve_on_master_frame_refuses_typed():
+    """Regression (review): a layout/master frame used to crash with a raw AttributeError
+    from the resolver instead of the documented typed refusal."""
+    from lxml import etree
+
+    _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    prs = _open(NORMAL)
+    master_ph = prs.slide_masters[0].placeholders[0]
+    tf = master_ph.text_frame
+    if not tf.paragraphs[0].runs:
+        tf.paragraphs[0].add_run().text = "master text"
+    bodyPr = tf._txBody.find("{%s}bodyPr" % _A)
+    normAutofit = bodyPr.find("{%s}normAutofit" % _A)
+    if normAutofit is None:
+        normAutofit = etree.SubElement(bodyPr, "{%s}normAutofit" % _A)
+    normAutofit.set("fontScale", "50000")
+    assert tf.font_scale == 50.0  # -- the frame the resolver will be asked about
+
+    with pytest.raises(UnsupportedStructureError):
+        tf.normalize_autofit(resolve=True)
+
+
 def test_normalize_autofit_resolve_rejects_non_bool():
     prs = _open(NORMAL)
     with pytest.raises(ValueError):

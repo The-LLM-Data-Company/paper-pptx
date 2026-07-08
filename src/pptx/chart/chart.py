@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 from pptx.chart.axis import CategoryAxis, DateAxis, ValueAxis
@@ -261,6 +262,22 @@ class Chart(PartElementProxy):
                     raise ValueError(
                         "series %r values must be numbers or None, got %r" % (name, value)
                     )
+                if value is not None:
+                    # -- finite-float representability, validated BEFORE any XML write:
+                    # -- a 10**400 int would otherwise raise OverflowError mid-mutation
+                    # -- (chart XML rewritten, workbook not), and inf/nan serialize as
+                    # -- schema-invalid lexical values
+                    try:
+                        as_float = float(value)
+                    except OverflowError:
+                        raise ValueError(
+                            "series %r value %r is too large to represent as a chart value"
+                            % (name, value)
+                        )
+                    if math.isnan(as_float) or math.isinf(as_float):
+                        raise ValueError(
+                            "series %r values must be finite numbers, got %r" % (name, value)
+                        )
             normalized_series.append((name, values))
         if number_format is not None and not isinstance(number_format, str):
             raise ValueError("number_format must be a str or None, got %r" % (number_format,))

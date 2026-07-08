@@ -412,10 +412,11 @@ def replace_data_safe(self, categories: Sequence[str],
 
 `replace_data_safe` validates fully, then routes to upstream `Chart.replace_data` with a
 `CategoryChartData`: chart type must be a category chart exercised by the reference
-(bar/column/line and their stacked variants, pie, doughnut, area) — XY/bubble/stock/surface,
-multi-plot charts, and charts without an embedded workbook → `UnsupportedStructureError`
-naming the chart type. Data-shape problems (empty categories, length mismatch, non-numeric
-values, duplicate series names) are `ValueError` (programmer error). Refusal atomicity: all
+(bar/column/line and their stacked variants, pie, doughnut, area) — XY/bubble/stock/surface
+and multi-plot charts → `UnsupportedStructureError` naming the chart type. *(Amended in
+v0.1 Phase 2.4: the original workbook-less refusal is lifted — see the v0.1 amendments.)*
+Data-shape problems (empty categories, length mismatch, non-numeric or non-finite values,
+duplicate series names) are `ValueError` (programmer error). Refusal atomicity: all
 validation precedes the first XML write.
 
 ```python
@@ -497,6 +498,40 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
     all with `chart_by_name`'s contract: `shape_by_name(name)`, `picture_by_name(name)`,
     `table_by_name(name)` — `TargetNotFoundError` (with found-kind detail on type mismatch)
     / `AmbiguousTargetError`, never first-match.
+
+- **Phase 2 amendments** (recorded late — flagged by the v0.1 final review; nothing below
+  shipped differently than described here):
+  - **2.1** `pptx.inspect.inspect_deck(prs) -> DeckManifest` — typed structural survey
+    (`SlideManifest`/`ShapeManifest`, group children nested, layout/master inventory),
+    payload schema `"paper-deck-manifest"` v1, goldened. `SlideManifest` carries
+    `alternate_content_count`; placeholder geometry reports upstream's resolved inheritance.
+  - **2.2** `EffectiveFont` v2 adds `bold`/`italic`/`underline` (explicit schema defaults
+    resolve with a final provenance step; JSON booleans, not 0/1). New
+    `effective_paragraph_format(paragraph) -> EffectiveParagraphFormat` (alignment, line
+    spacing; payload v1) and `effective_shape_format(shape) -> EffectiveShapeFormat`
+    (fill/line color; explicit `spPr` fills resolve fully, `a:noFill` → `"none"`, style
+    fill/line references report unresolved with the reference color in provenance;
+    payload v1).
+  - **2.3** `Picture.replace_image(image_file, *, allow_format_change: bool = False)` — the
+    v0 extension-mismatch refusal remains the default; `True` performs the cross-format swap
+    (typed new part, content types follow at save, geometry/crop untouched).
+  - **2.4** `replace_data_safe` on a chart with no embedded workbook rewrites chart XML via
+    the same series rewriter and skips the (absent) workbook update — the v0 refusal is
+    lifted; series values must additionally be finite and float-representable
+    (`ValueError` otherwise, validated before any write).
+  - **2.5** `_Paragraph.add_slide_number_field() -> None`,
+    `_Paragraph.add_datetime_field(format_code: str = "datetime") -> None` ("datetime",
+    "datetime1"–"datetime13"); `SlideLayout.header_footers` / `SlideMaster.header_footers`
+    → `HeaderFooters` with tri-state `slide_number_visible`/`footer_visible`/`date_visible`
+    (None = inherit). `inspect_text` reports per-block `fields` (type tokens) while keeping
+    volatile field display text out of block text and anchors.
+  - **Hardening (post-review):** `replace_text` materializes its full traversal before the
+    first write (refusal atomicity under the depth guard); `mc:AlternateContent` is a typed,
+    counted blind region in `inspect_text` (`container="alternate-content"`), a per-slide
+    count in `inspect_deck`, a refusal in `replace_text`, and occupies one anchor index;
+    `replace_text_at` refuses when the only occurrence crosses a field/line-break boundary;
+    C0 control characters are rejected in find/replace; `SlideShapes.add_copy` validates
+    chart child relationships exactly like `Slides.clone`.
 
 ## Stub tests
 

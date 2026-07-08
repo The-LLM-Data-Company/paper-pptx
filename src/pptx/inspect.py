@@ -104,7 +104,11 @@ class EffectiveValue:
 
     def to_dict(self) -> dict:
         return {
-            "value": int(self.value) if isinstance(self.value, int) else self.value,
+            "value": (
+                int(self.value)
+                if isinstance(self.value, int) and not isinstance(self.value, bool)
+                else self.value
+            ),
             "value_pt": self.value_pt,
             "resolved": self.resolved,
             "provenance": [step.to_dict() for step in self.provenance],
@@ -358,6 +362,7 @@ class SlideManifest:
     layout_name: str
     has_notes: bool
     shapes: Tuple[ShapeManifest, ...]
+    alternate_content_count: int = 0  #: mc:AlternateContent subtrees (not surveyable)
 
     def to_dict(self) -> dict:
         return {
@@ -365,6 +370,7 @@ class SlideManifest:
             "slide_id": self.slide_id,
             "layout_name": self.layout_name,
             "has_notes": self.has_notes,
+            "alternate_content_count": self.alternate_content_count,
             "shapes": [shape.to_dict() for shape in self.shapes],
         }
 
@@ -415,6 +421,9 @@ def inspect_deck(prs) -> DeckManifest:
                 layout_name=slide.slide_layout.name,
                 has_notes=slide.has_notes_slide,
                 shapes=shapes,
+                alternate_content_count=len(
+                    slide._element.spTree.findall(".//" + _MC_ALTERNATE_CONTENT)
+                ),
             )
         )
     masters = tuple(
@@ -610,6 +619,11 @@ def iter_text_bodies(spTree):
     return _iter_container(spTree, ())
 
 
+_MC_ALTERNATE_CONTENT = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
+)
+
+
 def _iter_container(container_elm, group_path):
     if len(group_path) > MAX_GROUP_DEPTH:
         raise UnsupportedStructureError(
@@ -617,7 +631,13 @@ def _iter_container(container_elm, group_path):
             " produces" % MAX_GROUP_DEPTH
         )
     for child in container_elm:
-        if child.tag == qn("p:sp"):
+        if child.tag == _MC_ALTERNATE_CONTENT:
+            # -- markup-compatibility content renders one of several branches depending on
+            # -- the consumer; reporting any single branch as "the" text would be a guess.
+            # -- Yield a marker so consumers can report a typed blind region (§1.5), never
+            # -- silence. One marker = one block index.
+            yield "alternate-content", child, None, group_path, None
+        elif child.tag == qn("p:sp"):
             txBody = child.find(qn("p:txBody"))
             if txBody is not None:
                 yield ("group" if group_path else "shape"), child, txBody, group_path, None
@@ -640,6 +660,23 @@ def _iter_container(container_elm, group_path):
 def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
     """Append TextBlocks for every text body under `spTree` (see iter_text_bodies)."""
     for kind, owner, txBody, path, cell_detail in iter_text_bodies(spTree):
+        if kind == "alternate-content":
+            cNvPr = owner.find(".//%s" % qn("p:cNvPr"))
+            blocks.append(
+                TextBlock(
+                    anchor=BlockAnchor(partname, len(blocks), content_hash("")),
+                    shape_id=int(cNvPr.get("id")) if cNvPr is not None else 0,
+                    shape_name=(cNvPr.get("name") or "") if cNvPr is not None else "",
+                    placeholder_type=None,
+                    level=0,
+                    text="",
+                    runs=(),
+                    container="alternate-content",
+                    container_detail="/".join(path) if path else None,
+                    blind=True,
+                )
+            )
+            continue
         if kind == "table-cell":
             for p in txBody.findall(qn("a:p")):
                 runs = tuple(

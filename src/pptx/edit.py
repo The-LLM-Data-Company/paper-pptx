@@ -21,7 +21,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterator, List, Tuple
 
-from pptx.errors import AmbiguousTargetError, StaleAnchorError, TargetNotFoundError
+from pptx.errors import (
+    AmbiguousTargetError,
+    StaleAnchorError,
+    TargetNotFoundError,
+    UnsupportedStructureError,
+)
 from pptx.inspect import BlockAnchor, content_hash, iter_text_bodies
 from pptx.oxml.ns import qn
 
@@ -58,19 +63,19 @@ def replace_text(
     `ReplaceResult(0)`, not a refusal. Validation completes before the first write.
     """
     _validate_find_replace(find, replace)
+    # -- validate-fully-then-mutate (§1.3): materialize the COMPLETE traversal first, so any
+    # -- traversal refusal (depth guard, unsupported markup) fires before the first write —
+    # -- a refusal must never leave earlier blocks already rewritten
+    plan = _materialize_blocks(prs, include_notes)
     total = 0
     touched: List[BlockAnchor] = []
-    for partname, spTree in _iter_story_trees(prs, include_notes):
-        block_index = 0
-        for _, _, txBody, _, _ in iter_text_bodies(spTree):
-            for p in txBody.findall(qn("a:p")):
-                count = _replace_in_paragraph(p, find, replace)
-                if count:
-                    total += count
-                    touched.append(
-                        BlockAnchor(partname, block_index, content_hash(_paragraph_text(p)))
-                    )
-                block_index += 1
+    for partname, block_index, p in plan:
+        count = _replace_in_paragraph(p, find, replace)
+        if count:
+            total += count
+            touched.append(
+                BlockAnchor(partname, block_index, content_hash(_paragraph_text(p)))
+            )
     return ReplaceResult(total, tuple(touched))
 
 
@@ -101,6 +106,14 @@ def replace_text_at(
             "%r does not occur in the anchored block (text %r)" % (find, current_text)
         )
     count = _replace_in_paragraph(p, find, replace)
+    if count == 0:
+        # -- `find` appears in the hash-text but every occurrence crosses a field or
+        # -- line-break boundary, which matches never do: refuse rather than return a
+        # -- success-shaped zero (§1.5)
+        raise TargetNotFoundError(
+            "%r occurs in the anchored block only across a field or line-break boundary;"
+            " matches never cross a:fld/a:br" % (find,)
+        )
     return ReplaceResult(
         count, (BlockAnchor(anchor.part, anchor.block_index, content_hash(_paragraph_text(p))),)
     )
@@ -120,7 +133,10 @@ def refind(prs: "Presentation", anchor: BlockAnchor) -> BlockAnchor:
         if partname != anchor.part:
             continue
         block_index = 0
-        for _, _, txBody, _, _ in iter_text_bodies(spTree):
+        for kind, _, txBody, _, _ in iter_text_bodies(spTree):
+            if kind == "alternate-content":
+                block_index += 1  # -- occupies an index but is never hash-matchable
+                continue
             for p in txBody.findall(qn("a:p")):
                 if content_hash(_paragraph_text(p)) == anchor.content_hash:
                     matches.append(BlockAnchor(partname, block_index, anchor.content_hash))
@@ -162,6 +178,13 @@ def _validate_find_replace(find, replace) -> None:
                 "%s must not contain line breaks (matches and replacements never cross"
                 " paragraph or line-break boundaries); got %r" % (name, value)
             )
+        # -- C0 controls (other than tab) are invalid in XML 1.0 text; the upstream setter
+        # -- would silently rewrite them as _xHHHH_ escape literals visible to the reader
+        if any(ch < " " and ch != "\t" for ch in value):
+            raise ValueError(
+                "%s contains control characters that cannot appear in XML text: %r"
+                % (name, value)
+            )
 
 
 def _iter_story_trees(prs, include_notes) -> "Iterator[Tuple[str, object]]":
@@ -175,13 +198,49 @@ def _iter_story_trees(prs, include_notes) -> "Iterator[Tuple[str, object]]":
             yield str(notes_part.partname), notes_part._element.spTree
 
 
+def _materialize_blocks(prs, include_notes):
+    """Return the complete [(partname, block_index, a:p element)] plan, refusing first.
+
+    Exhausting the traversal before any mutation is what makes deck-wide replacement
+    refusal-atomic: the depth guard and the markup-compatibility refusal below fire while
+    the document is still untouched. `mc:AlternateContent` refuses because "replace every
+    occurrence" cannot be honored over content this library cannot see into.
+    """
+    plan = []
+    for partname, spTree in _iter_story_trees(prs, include_notes):
+        block_index = 0
+        for kind, _, txBody, _, _ in iter_text_bodies(spTree):
+            if kind == "alternate-content":
+                raise UnsupportedStructureError(
+                    "%s contains mc:AlternateContent; deck-wide replacement cannot"
+                    " guarantee every occurrence is reached inside markup-compatibility"
+                    " branches (inspect_text reports these as blind regions)" % partname
+                )
+            for p in txBody.findall(qn("a:p")):
+                plan.append((partname, block_index, p))
+                block_index += 1
+    return plan
+
+
 def _block_paragraph(prs, anchor: BlockAnchor):
-    """Return the `a:p` element at `anchor.block_index` within `anchor.part`."""
+    """Return the `a:p` element at `anchor.block_index` within `anchor.part`.
+
+    Block indices align with `inspect_text`: an `mc:AlternateContent` subtree occupies
+    exactly one (blind) index; anchoring it refuses.
+    """
     for partname, spTree in _iter_story_trees(prs, include_notes=True):
         if partname != anchor.part:
             continue
         block_index = 0
-        for _, _, txBody, _, _ in iter_text_bodies(spTree):
+        for kind, _, txBody, _, _ in iter_text_bodies(spTree):
+            if kind == "alternate-content":
+                if block_index == anchor.block_index:
+                    raise UnsupportedStructureError(
+                        "the anchored block is mc:AlternateContent (a blind region);"
+                        " markup-compatibility content is not editable in v0.1"
+                    )
+                block_index += 1
+                continue
             for p in txBody.findall(qn("a:p")):
                 if block_index == anchor.block_index:
                     return p

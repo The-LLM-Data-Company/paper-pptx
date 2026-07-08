@@ -517,7 +517,7 @@ def test_reorder_and_move_keep_section_integrity():
     ]
 
 
-def test_slide_ops_on_sectioned_deck_pass_lo_and_reopen():
+def test_slide_ops_on_sectioned_deck_reopen_clean():
     prs = _open(SECTIONS)
     prs.slides.delete(4)
     prs.slides.clone(0)
@@ -525,6 +525,19 @@ def test_slide_ops_on_sectioned_deck_pass_lo_and_reopen():
     _assert_relationship_integrity(saved)
     reopened = _reopen(saved)
     assert len(reopened.slides) == 5
+
+
+@pytest.mark.lo_smoke
+def test_slide_ops_on_sectioned_deck_load_in_libreoffice(tmp_path):
+    """The Phase 0.1 section-maintenance writes get independent-loader coverage too."""
+    prs = _open(SECTIONS)
+    prs.slides.delete(0)
+    prs.slides.clone(1)
+    prs.slides.move(0, 2)
+    out = tmp_path / "sectioned_ops.pptx"
+    prs.save(str(out))
+    _assert_relationship_integrity(out.read_bytes())
+    lo_load_smoke(out, tmp_path)
 
 
 def test_delete_error_paths_leave_the_deck_untouched():

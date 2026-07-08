@@ -17,6 +17,7 @@ from pptx.errors import (
     AmbiguousTargetError,
     StaleAnchorError,
     TargetNotFoundError,
+    UnsupportedStructureError,
 )
 from pptx.inspect import BlockAnchor, inspect_text
 from pptx.util import Emu
@@ -198,6 +199,8 @@ def test_result_payload_carries_pinned_schema():
         lambda prs: replace_text(prs, "x", "multi\nline"),
         lambda prs: replace_text(prs, "with\nbreak", "x"),
         lambda prs: replace_text(prs, "x", "bad\udc80"),
+        lambda prs: replace_text(prs, "x", "bad\x01ctrl"),
+        lambda prs: replace_text(prs, "bad\x00find", "x"),
         lambda prs: replace_text_at(prs, "not-an-anchor", "x", "y"),
     ],
 )
@@ -209,11 +212,133 @@ def test_bad_arguments_raise_valueerror_and_touch_nothing(bad_call):
     assert snapshot_parts(prs) == before
 
 
+def test_overlapping_occurrences_are_matched_non_overlapping_left_to_right():
+    """Pinned occurrence semantics (was only a docstring): 'aaa' has ONE match of 'aa'."""
+    prs = _open(MINIMAL)
+    box = _multi_run_paragraph(prs, [("aaa", None)])
+    result = replace_text(prs, "aa", "X")
+    assert result.replacements == 1
+    assert box.text_frame.paragraphs[0].text == "Xa"
+
+
+def test_multiple_matches_in_one_paragraph_are_all_replaced_and_counted():
+    prs = _open(MINIMAL)
+    box = _multi_run_paragraph(prs, [("banana", None)])
+    result = replace_text(prs, "na", "NA")  # -- "na" occurs nowhere else in the fixture
+    assert result.replacements == 2
+    assert box.text_frame.paragraphs[0].text == "baNANA"
+
+
+def _add_deep_group(slide, depth=17):
+    group = slide.shapes.add_group_shape()
+    for _ in range(depth):
+        group = group.shapes.add_group_shape()
+    box = group.shapes.add_textbox(0, 0, 914400, 914400)
+    box.text_frame.paragraphs[0].add_run().text = "unreachable target"
+
+
+def test_traversal_refusal_fires_before_any_write():
+    """Regression (review, two dimensions): the depth guard on a LATER slide used to fire
+    after earlier blocks were already rewritten — a refusal must leave zero edits behind."""
+    prs = Presentation(str(corpus.fixture_path("self_generated/gauntlet.pptx")))
+    _add_deep_group(prs.slides[3])  # -- refusal source is on the LAST slide
+
+    def operation(p):
+        replace_text(p, "Gauntlet", "REWRITTEN")  # -- would match on earlier slides
+
+    from .contract import assert_refusal_atomic
+
+    raised = assert_refusal_atomic(prs, operation, UnsupportedStructureError)
+    assert "nested" in str(raised)
+
+
+_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+
+
+def _wrap_first_textbox_in_alternate_content(prs):
+    """Wrap a new textbox's p:sp in mc:AlternateContent (Choice + Fallback branches)."""
+    import copy as copy_module
+
+    slide = prs.slides[0]
+    box = slide.shapes.add_textbox(0, 0, 914400, 914400)
+    box.text_frame.paragraphs[0].add_run().text = "mc content"
+    sp = box._element
+    spTree = sp.getparent()
+    ac = spTree.makeelement("{%s}AlternateContent" % _MC, {})
+    choice = ac.makeelement("{%s}Choice" % _MC, {"Requires": "p14"})
+    fallback = ac.makeelement("{%s}Fallback" % _MC, {})
+    ac.append(choice)
+    ac.append(fallback)
+    choice.append(copy_module.deepcopy(sp))
+    sp.addprevious(ac)
+    spTree.remove(sp)
+    fallback.append(sp)
+    return prs
+
+
+def test_replace_text_refuses_alternate_content_decks_atomically():
+    """Regression: mc:AlternateContent used to be silently skipped; 'replace every
+    occurrence' cannot be honored over content the library cannot see into."""
+    prs = _wrap_first_textbox_in_alternate_content(_open(MINIMAL))
+
+    from .contract import assert_refusal_atomic
+
+    raised = assert_refusal_atomic(
+        prs, lambda p: replace_text(p, "Minimal", "X"), UnsupportedStructureError
+    )
+    assert "AlternateContent" in str(raised)
+
+
+def test_alternate_content_occupies_one_block_index_consistently():
+    """inspect_text reports the AC subtree as ONE blind block; anchors before/after it stay
+    editable and index-aligned between inspect and edit."""
+    prs = _wrap_first_textbox_in_alternate_content(_open(MINIMAL))
+    inspection = inspect_text(prs.slides[0])
+    ac_blocks = [b for b in inspection.blocks if b.container == "alternate-content"]
+    assert len(ac_blocks) == 1
+    assert ac_blocks[0].blind is True
+    assert inspection.blind_region_count == 1
+
+    # -- a normal block found by inspect is editable at the same index via edit
+    title_block = next(b for b in inspection.blocks if b.text == "Minimal clean fixture")
+    result = replace_text_at(prs, title_block.anchor, "Minimal clean", "Aligned")
+    assert result.replacements == 1
+
+    # -- anchoring the AC block itself refuses, typed
+    with pytest.raises(UnsupportedStructureError, match="AlternateContent"):
+        replace_text_at(prs, ac_blocks[0].anchor, "x", "y")
+
+
+def test_cross_boundary_occurrence_in_anchored_block_refuses():
+    """Regression: `find` present in the hash-text but only across a field boundary used to
+    return a success-shaped ReplaceResult(0) that listed the block as touched."""
+    prs = _open(MINIMAL)
+    box = prs.slides[0].shapes.add_textbox(0, 0, Emu(914400 * 3), Emu(914400))
+    box.name = "field_box"
+    paragraph = box.text_frame.paragraphs[0]
+    paragraph.add_run().text = "Page "
+    paragraph.add_slide_number_field()
+    run = paragraph.add_run()
+    run.text = " of 10"
+
+    anchor = next(
+        b.anchor for b in inspect_text(prs.slides[0]).blocks if b.shape_name == "field_box"
+    )
+    from .contract import snapshot_parts
+
+    before = snapshot_parts(prs)
+    with pytest.raises(TargetNotFoundError, match="boundary"):
+        replace_text_at(prs, anchor, "e  o", "X")  # -- spans the a:fld
+    assert snapshot_parts(prs) == before
+
+
 # --------------------------------------------------------------------------- the invariant
 
 
 def test_replace_inverse_restores_text_and_formatting():
-    """CONVENTIONS §4: replace(x→y) then replace(y→x) restores text AND formatting."""
+    """CONVENTIONS §4: replace(x→y) then replace(y→x) restores text AND formatting —
+    asserted on the REOPENED document (§1.4), not the live object."""
     prs = _open(BRANDED)
     paragraph = prs.slides[0].placeholders[1].text_frame.paragraphs[0]
     text_before = paragraph.text
@@ -222,8 +347,10 @@ def test_replace_inverse_restores_text_and_formatting():
     assert replace_text(prs, "level one", "tier 1").replacements == 1
     assert replace_text(prs, "tier 1", "level one").replacements == 1
 
-    assert paragraph.text == text_before
-    assert _char_formatting_fingerprint(paragraph) == fingerprint_before
+    reopened = _reopen(save_to_bytes(prs))
+    reopened_paragraph = reopened.slides[0].placeholders[1].text_frame.paragraphs[0]
+    assert reopened_paragraph.text == text_before
+    assert _char_formatting_fingerprint(reopened_paragraph) == fingerprint_before
 
 
 def test_replace_inverse_is_exact_across_identically_formatted_runs():
@@ -232,11 +359,16 @@ def test_replace_inverse_is_exact_across_identically_formatted_runs():
     paragraph = box.text_frame.paragraphs[0]
     fingerprint_before = _char_formatting_fingerprint(paragraph)
 
+    box_id = box.shape_id
     replace_text(prs, "abbc", "XYZ")
     replace_text(prs, "XYZ", "abbc")
 
-    assert paragraph.text == "aabbcc"
-    assert _char_formatting_fingerprint(paragraph) == fingerprint_before
+    reopened = _reopen(save_to_bytes(prs))
+    reopened_paragraph = next(
+        s for s in reopened.slides[0].shapes if s.shape_id == box_id
+    ).text_frame.paragraphs[0]
+    assert reopened_paragraph.text == "aabbcc"
+    assert _char_formatting_fingerprint(reopened_paragraph) == fingerprint_before
 
 
 def test_replace_inverse_across_mixed_formatting_restores_text_and_collapses_formatting():
@@ -294,19 +426,39 @@ def test_stale_anchor_refusal_is_atomic():
     assert snapshot_parts(prs) == before
 
 
-def test_find_absent_from_anchored_block_refuses():
+def test_find_absent_from_anchored_block_refuses_atomically():
+    from .contract import assert_refusal_atomic
+
     prs = _open(BRANDED)
     anchor = _body_anchor(prs)
-    with pytest.raises(TargetNotFoundError, match="does not occur"):
-        replace_text_at(prs, anchor, "no such text", "x")
+    raised = assert_refusal_atomic(
+        prs,
+        lambda p: replace_text_at(p, anchor, "no such text", "x"),
+        TargetNotFoundError,
+    )
+    assert "does not occur" in str(raised)
 
 
-def test_unknown_part_and_out_of_range_index_refuse():
+def test_unknown_part_and_out_of_range_index_refuse_atomically():
+    from .contract import assert_refusal_atomic
+
     prs = _open(BRANDED)
-    with pytest.raises(TargetNotFoundError, match="no slide or notes part"):
-        replace_text_at(prs, BlockAnchor("/ppt/slides/slide99.xml", 0, "00000000"), "a", "b")
-    with pytest.raises(TargetNotFoundError, match="beyond"):
-        replace_text_at(prs, BlockAnchor("/ppt/slides/slide1.xml", 99, "00000000"), "a", "b")
+    raised = assert_refusal_atomic(
+        prs,
+        lambda p: replace_text_at(
+            p, BlockAnchor("/ppt/slides/slide99.xml", 0, "00000000"), "a", "b"
+        ),
+        TargetNotFoundError,
+    )
+    assert "no slide or notes part" in str(raised)
+    raised = assert_refusal_atomic(
+        prs,
+        lambda p: replace_text_at(
+            p, BlockAnchor("/ppt/slides/slide1.xml", 99, "00000000"), "a", "b"
+        ),
+        TargetNotFoundError,
+    )
+    assert "beyond" in str(raised)
 
 
 def test_refind_recovers_a_moved_block():

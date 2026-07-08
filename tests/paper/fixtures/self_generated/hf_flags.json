@@ -1,0 +1,36 @@
+{
+  "fixture": "hf_flags.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py for PLAN-v0.1 hardening. p:hf flags injected into master and layout by zip surgery so the corpus exercises authored-elsewhere header/footer flags. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "header_footer_flags"
+  ],
+  "ground_truth": {
+    "slide_count": 1,
+    "master_hf": {
+      "sldNum": "0",
+      "ftr": "0",
+      "dt": "1"
+    },
+    "layout1_hf": {
+      "sldNum": "1"
+    },
+    "expected_reads": {
+      "master": {
+        "slide_number_visible": false,
+        "footer_visible": false,
+        "date_visible": true
+      },
+      "layout1": {
+        "slide_number_visible": true,
+        "footer_visible": null,
+        "date_visible": null
+      }
+    }
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

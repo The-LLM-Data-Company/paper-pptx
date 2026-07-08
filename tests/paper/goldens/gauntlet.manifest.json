@@ -10,6 +10,7 @@
       "slide_id": 256,
       "layout_name": "Title and Content",
       "has_notes": false,
+      "alternate_content_count": 0,
       "shapes": [
         {
           "shape_id": 2,
@@ -54,6 +55,7 @@
       "slide_id": 257,
       "layout_name": "Title Only",
       "has_notes": true,
+      "alternate_content_count": 0,
       "shapes": [
         {
           "shape_id": 2,
@@ -131,6 +133,7 @@
       "slide_id": 258,
       "layout_name": "Blank",
       "has_notes": false,
+      "alternate_content_count": 0,
       "shapes": [
         {
           "shape_id": 2,
@@ -276,6 +279,7 @@
       "slide_id": 259,
       "layout_name": "Title and Content",
       "has_notes": false,
+      "alternate_content_count": 0,
       "shapes": [
         {
           "shape_id": 2,

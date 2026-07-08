@@ -73,7 +73,7 @@ def test_manifest_reports_placeholder_geometry_via_upstream_inheritance():
 
 
 @pytest.mark.parametrize(
-    "golden_name, fixture_relpath",
+    ("golden_name", "fixture_relpath"),
     [
         ("gauntlet.manifest.json", GAUNTLET),
         ("tables_in_group.manifest.json", "self_generated/tables_in_group.pptx"),

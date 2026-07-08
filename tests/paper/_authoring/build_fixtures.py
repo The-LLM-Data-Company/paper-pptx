@@ -598,6 +598,52 @@ def build_autofit_inherited() -> Path:
     return _save(prs, "autofit_inherited.pptx")
 
 
+def build_hf_flags() -> Path:
+    """Master and first layout carrying explicit p:hf visibility flags.
+
+    Injected by zip surgery (v0 python-pptx could not author p:hf), so the corpus
+    round-trip and the HeaderFooters read path exercise authored-elsewhere flags — not just
+    flags this package wrote itself. Real-PowerPoint version tracked in FIXTURE-REQUESTS.md.
+    """
+    buf = io.BytesIO()
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    slide.shapes.title.text_frame.paragraphs[0].add_run().text = "Header/footer flags"
+    prs.save(buf)
+
+    source = zipfile.ZipFile(buf)
+
+    def with_hf(member_name, attrs, successors_first):
+        root = etree.fromstring(source.read(member_name))
+        hf = root.makeelement(qn("p:hf"), attrs)
+        anchor = None
+        for tag in successors_first:
+            anchor = root.find(qn(tag))
+            if anchor is not None:
+                break
+        if anchor is not None:
+            anchor.addprevious(hf)
+        else:
+            root.append(hf)
+        return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+    rewrites = {
+        "ppt/slideMasters/slideMaster1.xml": with_hf(
+            "ppt/slideMasters/slideMaster1.xml",
+            {"sldNum": "0", "ftr": "0", "dt": "1"},
+            ("p:txStyles", "p:extLst"),
+        ),
+        "ppt/slideLayouts/slideLayout1.xml": with_hf(
+            "ppt/slideLayouts/slideLayout1.xml", {"sldNum": "1"}, ("p:extLst",)
+        ),
+    }
+    path = OUT_DIR / "hf_flags.pptx"
+    with zipfile.ZipFile(str(path), "w", zipfile.ZIP_DEFLATED) as out:
+        for info in source.infolist():
+            out.writestr(info, rewrites.get(info.filename, source.read(info.filename)))
+    return path
+
+
 def build_large_smoke() -> Path:
     """Large deck for perf smoke: 120 text slides, a picture every 10th slide."""
     prs = Presentation()

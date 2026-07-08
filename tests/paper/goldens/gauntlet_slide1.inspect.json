@@ -161,7 +161,7 @@
               ]
             },
             "bold": {
-              "value": 0,
+              "value": false,
               "value_pt": null,
               "resolved": true,
               "provenance": [
@@ -210,7 +210,7 @@
               ]
             },
             "italic": {
-              "value": 0,
+              "value": false,
               "value_pt": null,
               "resolved": true,
               "provenance": [
@@ -474,7 +474,7 @@
               ]
             },
             "bold": {
-              "value": 0,
+              "value": false,
               "value_pt": null,
               "resolved": true,
               "provenance": [
@@ -523,7 +523,7 @@
               ]
             },
             "italic": {
-              "value": 0,
+              "value": false,
               "value_pt": null,
               "resolved": true,
               "provenance": [
@@ -793,7 +793,7 @@
               ]
             },
             "bold": {
-              "value": 0,
+              "value": false,
               "value_pt": null,
               "resolved": true,
               "provenance": [
@@ -842,7 +842,7 @@
               ]
             },
             "italic": {
-              "value": 0,
+              "value": false,
               "value_pt": null,
               "resolved": true,
               "provenance": [

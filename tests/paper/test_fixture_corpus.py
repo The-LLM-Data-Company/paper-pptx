@@ -559,6 +559,28 @@ def test_autofit_inherited_ground_truth():
     assert int(body_l1.get("sz")) == ground_truth["master_body_lvl1_sz_centipoints"]
 
 
+def test_hf_flags_ground_truth():
+    relpath = "self_generated/hf_flags.pptx"
+    ground_truth = _ground_truth(relpath)
+    master = _member_xml(relpath, "ppt/slideMasters/slideMaster1.xml")
+    master_hf = master.find("{%s}hf" % _P)
+    assert dict(master_hf.attrib) == ground_truth["master_hf"]
+    layout = _member_xml(relpath, "ppt/slideLayouts/slideLayout1.xml")
+    layout_hf = layout.find("{%s}hf" % _P)
+    assert dict(layout_hf.attrib) == ground_truth["layout1_hf"]
+
+    # -- the HeaderFooters proxy reads authored-elsewhere flags per the sidecar
+    prs = Presentation(str(corpus.fixture_path(relpath)))
+    expected = ground_truth["expected_reads"]
+    master_hf_proxy = prs.slide_masters[0].header_footers
+    assert master_hf_proxy.slide_number_visible == expected["master"]["slide_number_visible"]
+    assert master_hf_proxy.footer_visible == expected["master"]["footer_visible"]
+    assert master_hf_proxy.date_visible == expected["master"]["date_visible"]
+    layout_hf_proxy = prs.slides[0].slide_layout.header_footers
+    assert layout_hf_proxy.slide_number_visible == expected["layout1"]["slide_number_visible"]
+    assert layout_hf_proxy.footer_visible is None
+
+
 # ------------------------------------------------------------------- independent loader smoke
 
 
