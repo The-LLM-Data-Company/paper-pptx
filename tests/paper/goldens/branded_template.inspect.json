@@ -16,6 +16,7 @@
       "container": "shape",
       "container_detail": null,
       "blind": false,
+      "fields": [],
       "level": 0,
       "text": "Branded Title",
       "runs": [
@@ -175,6 +176,7 @@
       "container": "shape",
       "container_detail": null,
       "blind": false,
+      "fields": [],
       "level": 0,
       "text": "Body level one",
       "runs": [
@@ -340,6 +342,7 @@
       "container": "shape",
       "container_detail": null,
       "blind": false,
+      "fields": [],
       "level": 1,
       "text": "Body level two",
       "runs": [

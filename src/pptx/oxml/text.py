@@ -357,6 +357,12 @@ class CT_TextField(BaseOxmlElement):
     t: BaseOxmlElement | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
         "a:t", successors=()
     )
+    id: str = RequiredAttribute(  # pyright: ignore[reportAssignmentType]
+        "id", XsdString
+    )
+    type: str | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "type", XsdString
+    )
 
     @property
     def text(self) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]

@@ -176,6 +176,7 @@ class TextBlock:
     container: str = "shape"
     container_detail: Optional[str] = None
     blind: bool = False
+    fields: Tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -186,6 +187,7 @@ class TextBlock:
             "container": self.container,
             "container_detail": self.container_detail,
             "blind": self.blind,
+            "fields": list(self.fields),
             "level": self.level,
             "text": self.text,
             "runs": [run.to_dict() for run in self.runs],
@@ -337,6 +339,9 @@ def _append_block(
     pPr = p.find(qn("a:pPr"))
     level = int(pPr.get("lvl", "0")) if pPr is not None else 0
     cNvPr = shape_elm.find(".//%s" % qn("p:cNvPr"))
+    # -- fields (a:fld) are recognized by type but excluded from text/hash: their display
+    # -- text is volatile (PowerPoint re-renders it), so hashing it would rot anchors
+    fields = tuple(fld.get("type") or "" for fld in p.findall(qn("a:fld")))
     blocks.append(
         TextBlock(
             anchor=BlockAnchor(partname, len(blocks), content_hash(text)),
@@ -349,6 +354,7 @@ def _append_block(
             container=container,
             container_detail=container_detail,
             blind=blind,
+            fields=fields,
         )
     )
 

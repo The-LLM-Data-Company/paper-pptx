@@ -641,6 +641,47 @@ class _Paragraph(Subshape):
         """Add line break at end of this paragraph."""
         self._p.add_br()
 
+    def add_datetime_field(self, format_code: str = "datetime") -> None:
+        """Append a real date/time field (`a:fld type="datetime…"`) to this paragraph.
+
+        paper-pptx addition (v0.1). `format_code` is "datetime" or "datetime1" through
+        "datetime13" (the ECMA-376 date/time field formats); anything else raises
+        |ValueError|. The field's cached text is left empty; PowerPoint renders the live
+        value. Recognized by `pptx.inspect.inspect_text` via `TextBlock.fields`.
+        """
+        valid = {"datetime"} | {"datetime%d" % n for n in range(1, 14)}
+        if format_code not in valid:
+            raise ValueError(
+                "format_code must be 'datetime' or 'datetime1'..'datetime13', got %r"
+                % (format_code,)
+            )
+        self._add_field(format_code, "")
+
+    def add_slide_number_field(self) -> None:
+        """Append a real slide-number field (`a:fld type="slidenum"`) to this paragraph.
+
+        paper-pptx addition (v0.1). This is the honest version of typing a literal page
+        number into a footer: PowerPoint renders the actual slide number and keeps it right
+        across reordering. The cached text is "1". Recognized by
+        `pptx.inspect.inspect_text` via `TextBlock.fields`.
+        """
+        self._add_field("slidenum", "1")
+
+    def _add_field(self, field_type: str, cached_text: str) -> None:
+        import uuid
+
+        fld = self._p.makeelement(qn("a:fld"), {})
+        fld.set("id", "{%s}" % str(uuid.uuid4()).upper())
+        fld.set("type", field_type)
+        t = fld.makeelement(qn("a:t"), {})
+        t.text = cached_text
+        fld.append(t)
+        endParaRPr = self._p.find(qn("a:endParaRPr"))
+        if endParaRPr is not None:
+            endParaRPr.addprevious(fld)
+        else:
+            self._p.append(fld)
+
     def add_run(self) -> _Run:
         """Return a new run appended to the runs in this paragraph."""
         r = self._p.add_r()

@@ -98,11 +98,14 @@ def _build_qbr_deck(tmp_path):
         tf.normalize_autofit(resolve=True, min_font_size=Pt(11))
         assert tf.auto_size == MSO_AUTO_SIZE.NONE
 
-    # -- footer pass: static text today; real slide-number fields are Phase 2.5 (xfail below)
+    # -- footer pass (Phase 2.5): real slide-number fields, right across reordering
     for index, slide in enumerate(prs.slides):
         footer = slide.shapes.add_textbox(Pt(20), Pt(520), Pt(200), Pt(20))
         footer.name = "meta_footer_%d" % (index + 1)
-        footer.text_frame.paragraphs[0].add_run().text = "Q4 QBR - page %d" % (index + 1)
+        paragraph = footer.text_frame.paragraphs[0]
+        paragraph.add_run().text = "Q4 QBR - page "
+        paragraph.add_slide_number_field()
+    prs.slide_masters[0].header_footers.slide_number_visible = True
 
     # -- narrow save: only genuinely-changed parts differ from the template
     out_path = tmp_path / "qbr.pptx"
@@ -174,8 +177,3 @@ def _bytes_of(prs):
     return buf.getvalue()
 
 
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 2.5: real slide-number fields")
-def test_step_add_real_page_number_fields():
-    from pptx.text.text import _Paragraph
-
-    assert callable(_Paragraph.add_slide_number_field)

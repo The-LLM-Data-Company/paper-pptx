@@ -509,6 +509,60 @@ class Slides(ParentedElementProxy):
         raise ValueError("%s is not in slide collection" % slide)
 
 
+
+class HeaderFooters(object):
+    """Header/footer placeholder visibility flags of a layout or master (paper-pptx v0.1).
+
+    Wraps the `p:hf` element. Each property is tri-state: |True|/|False| when the attribute
+    is explicit, |None| when it is absent — meaning "inherit" (a layout inherits from its
+    master; the schema default is visible). Assigning |None| removes the attribute.
+    """
+
+    def __init__(self, slide_elm):
+        super(HeaderFooters, self).__init__()
+        self._element = slide_elm
+
+    @property
+    def slide_number_visible(self) -> bool | None:
+        """Visibility of the slide-number placeholder (`p:hf/@sldNum`)."""
+        hf = self._element.hf
+        return hf.sldNum if hf is not None else None
+
+    @slide_number_visible.setter
+    def slide_number_visible(self, value: bool | None):
+        self._set_flag("sldNum", value)
+
+    @property
+    def footer_visible(self) -> bool | None:
+        """Visibility of the footer placeholder (`p:hf/@ftr`)."""
+        hf = self._element.hf
+        return hf.ftr if hf is not None else None
+
+    @footer_visible.setter
+    def footer_visible(self, value: bool | None):
+        self._set_flag("ftr", value)
+
+    @property
+    def date_visible(self) -> bool | None:
+        """Visibility of the date placeholder (`p:hf/@dt`)."""
+        hf = self._element.hf
+        return hf.dt if hf is not None else None
+
+    @date_visible.setter
+    def date_visible(self, value: bool | None):
+        self._set_flag("dt", value)
+
+    def _set_flag(self, attr_name: str, value: "bool | None") -> None:
+        if value is None:
+            hf = self._element.hf
+            if hf is not None:
+                setattr(hf, attr_name, None)
+            return
+        if not isinstance(value, bool):
+            raise ValueError("visibility must be True, False, or None, got %r" % (value,))
+        setattr(self._element.get_or_add_hf(), attr_name, value)
+
+
 class SlideLayout(_BaseSlide):
     """Slide layout object.
 
@@ -516,6 +570,11 @@ class SlideLayout(_BaseSlide):
     """
 
     part: SlideLayoutPart  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    @property
+    def header_footers(self) -> HeaderFooters:
+        """|HeaderFooters| flags for this layout (paper-pptx addition, v0.1)."""
+        return HeaderFooters(self._element)
 
     def iter_cloneable_placeholders(self) -> Iterator[LayoutPlaceholder]:
         """Generate layout-placeholders on this slide-layout that should be cloned to a new slide.
@@ -635,6 +694,11 @@ class SlideMaster(_BaseMaster):
     """
 
     _element: CT_SlideMaster  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def header_footers(self) -> HeaderFooters:
+        """|HeaderFooters| flags for this master (paper-pptx addition, v0.1)."""
+        return HeaderFooters(self._element)
 
     @lazyproperty
     def slide_layouts(self) -> SlideLayouts:

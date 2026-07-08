@@ -16,6 +16,7 @@
       "container": "shape",
       "container_detail": null,
       "blind": false,
+      "fields": [],
       "level": 0,
       "text": "Gauntlet: branded",
       "runs": [
@@ -175,6 +176,7 @@
       "container": "shape",
       "container_detail": null,
       "blind": false,
+      "fields": [],
       "level": 0,
       "text": "Inherited body level one",
       "runs": [
@@ -340,6 +342,7 @@
       "container": "shape",
       "container_detail": null,
       "blind": false,
+      "fields": [],
       "level": 1,
       "text": "Inherited body level two",
       "runs": [
