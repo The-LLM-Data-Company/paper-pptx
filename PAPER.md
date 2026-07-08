@@ -73,6 +73,24 @@ The paper test suite lives in `tests/paper/`, cleanly separate from the upstream
   `tests/paper/conftest.py` repairs the registry to its import-time state before every paper
   test. Candidate for an upstream contribution at the next merge window.
 
+## Organ: Bullets (Phase 2)
+
+`paragraph.bullet` → `BulletFormat` (`src/pptx/text/bullet.py`), with `pptx.errors` (the
+pinned `PaperRefusal` hierarchy) shipping in the same change. Reference mined:
+`reference/office-transfer/skill/scripts/bullet_xml.py` (margin/hanging-indent defaults,
+choice-replacement semantics). All additive:
+
+- oxml: `a:buChar`/`a:buAutoNum` choice group + `a:buFont`/`a:buSzPct` descriptors and
+  `marL`/`indent` attributes on `CT_TextParagraphProperties`; new element classes + simpletypes
+  (`ST_TextAutonumberScheme` with the full ECMA token set, `ST_TextBulletSizePercent` reading
+  both wire forms and writing the schema-blessed percent-string, `ST_TextBulletStartAtNum`,
+  `ST_TextMargin`, `ST_TextIndent`). Child order via `successors=`, never hand-assembled.
+- Setters validate fully before mutating (through the same simpletype validators that guard
+  the writes); bad arguments are `ValueError` and provably leave the tree untouched.
+- The §4 fragment-schema oracle landed here: `tests/paper/fragval.py` validates emitted
+  `a:pPr` fragments against `spec/ISO-IEC-29500-4/xsd/dml-main.xsd` via a generated wrapper
+  schema (transitional edition — its namespaces match real-world files).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

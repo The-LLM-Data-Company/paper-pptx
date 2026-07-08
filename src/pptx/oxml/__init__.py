@@ -445,9 +445,12 @@ register_element_cls("a:tr", CT_TableRow)
 
 from pptx.oxml.text import (  # noqa: E402
     CT_RegularTextRun,
+    CT_TextAutonumberBullet,
     CT_TextBody,
     CT_TextBodyProperties,
+    CT_TextBulletSizePercent,
     CT_TextCharacterProperties,
+    CT_TextCharBullet,
     CT_TextField,
     CT_TextFont,
     CT_TextLineBreak,
@@ -461,6 +464,10 @@ from pptx.oxml.text import (  # noqa: E402
 
 register_element_cls("a:bodyPr", CT_TextBodyProperties)
 register_element_cls("a:br", CT_TextLineBreak)
+register_element_cls("a:buAutoNum", CT_TextAutonumberBullet)
+register_element_cls("a:buChar", CT_TextCharBullet)
+register_element_cls("a:buFont", CT_TextFont)
+register_element_cls("a:buSzPct", CT_TextBulletSizePercent)
 register_element_cls("a:defRPr", CT_TextCharacterProperties)
 register_element_cls("a:endParaRPr", CT_TextCharacterProperties)
 register_element_cls("a:fld", CT_TextField)

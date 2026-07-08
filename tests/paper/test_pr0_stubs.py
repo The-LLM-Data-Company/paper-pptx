@@ -10,30 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-from pptx import Presentation
-
-
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 2 (bullets + errors)")
-def test_pr0_errors_and_bullets_api():
-    from pptx.enum.text import PP_BULLET_TYPE  # noqa: F401
-    from pptx.errors import (  # noqa: F401
-        AmbiguousTargetError,
-        BoundaryViolationError,
-        PaperRefusal,
-        RelationshipPolicyError,
-        TargetNotFoundError,
-        UnsupportedStructureError,
-    )
-    from pptx.text.bullet import BulletFormat
-
-    slide = Presentation().slides.add_slide(Presentation().slide_layouts[6])
-    paragraph = slide.shapes.add_textbox(0, 0, 100, 100).text_frame.paragraphs[0]
-    assert isinstance(paragraph.bullet, BulletFormat)
-    for name in ("type", "char", "number_scheme", "start_at", "font_name", "size_percent"):
-        assert hasattr(BulletFormat, name)
-    for name in ("set_character", "set_numbered", "set_none"):
-        assert callable(getattr(BulletFormat, name))
-
 
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 3 (autofit)")
 def test_pr0_autofit_api():

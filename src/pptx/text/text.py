@@ -11,6 +11,7 @@ from pptx.enum.text import MSO_AUTO_SIZE, MSO_UNDERLINE, MSO_VERTICAL_ANCHOR
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.simpletypes import ST_TextWrappingType
 from pptx.shapes import Subshape
+from pptx.text.bullet import BulletFormat
 from pptx.text.fonts import FontFiles
 from pptx.text.layout import TextFitter
 from pptx.util import Centipoints, Emu, Length, Pt, lazyproperty
@@ -493,6 +494,16 @@ class _Paragraph(Subshape):
     @alignment.setter
     def alignment(self, value: PP_PARAGRAPH_ALIGNMENT | None):
         self._pPr.algn = value
+
+    @lazyproperty
+    def bullet(self) -> BulletFormat:
+        """|BulletFormat| object providing bullet and numbering control for this paragraph.
+
+        paper-pptx addition. Read properties report this paragraph's local `a:pPr` state only
+        (|None| means inherited); setters write real `a:buChar`/`a:buAutoNum`/`a:buNone`
+        bullets with hanging-indent geometry.
+        """
+        return BulletFormat(self._p)
 
     def clear(self):
         """Remove all content from this paragraph.
