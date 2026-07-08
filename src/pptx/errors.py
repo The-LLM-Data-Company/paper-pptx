@@ -17,6 +17,7 @@ __all__ = [
     "BoundaryViolationError",
     "PaperRefusal",
     "RelationshipPolicyError",
+    "StaleAnchorError",
     "TargetNotFoundError",
     "UnsupportedStructureError",
 ]
@@ -32,6 +33,15 @@ class AmbiguousTargetError(PaperRefusal):
 
 class TargetNotFoundError(PaperRefusal):
     """The addressing given matches nothing in this document."""
+
+
+class StaleAnchorError(TargetNotFoundError):
+    """The block at an anchor's position no longer matches the anchor's content hash.
+
+    The document changed since the anchor was produced. Refusing beats guessing: use
+    `pptx.edit.refind()` to recover a fresh anchor explicitly. (Subclass of
+    |TargetNotFoundError| so existing handlers keep working.)
+    """
 
 
 class UnsupportedStructureError(PaperRefusal):

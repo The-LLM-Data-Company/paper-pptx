@@ -209,7 +209,6 @@ def test_normalize_autofit_resolve_freezes_inherited_placeholder_sizes():
 def test_normalize_autofit_resolve_still_refuses_unresolvable_spacing():
     """resolve covers sizes only: line-spacing reduction with no explicit spacing refuses."""
     prs = _open(NORMAL)  # -- fixture carries lnSpcReduction=20000
-    tf = _autofit_frame(prs)
     raised = assert_refusal_atomic(
         prs, lambda p: _autofit_frame(p).normalize_autofit(resolve=True),
         UnsupportedStructureError,

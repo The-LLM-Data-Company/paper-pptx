@@ -285,6 +285,19 @@ Per `agent_docs/PLAN-v0.1.md`, all fixture-first, all additive:
 - New frozen fixtures: `sections`, `tables_in_group`, `nested_groups`, `autofit_inherited`
   (+ FIXTURE-REQUESTS.md R8 for the real-PowerPoint sectioned deck).
 
+## v0.1 Phase 1.1: anchored text replacement (`pptx.edit`)
+
+The write half of the anchor loop: `replace_text` (deck-wide, visibility-complete via the
+same traversal as `inspect_text` — groups, table cells, optionally notes),
+`replace_text_at` (single block, hash-checked; stale → `StaleAnchorError`, an additive
+`TargetNotFoundError` subclass), and `refind` (the explicit recovery path; ambiguous or gone
+→ typed refusals). Run-preservation semantics pinned in the API-PROPOSAL v0.1 amendment;
+untouched runs stay byte-identical; the §4 replace-inverse invariant is tested exact for
+identically-formatted spans, and its documented limit (a match spanning differently-formatted
+runs collapses to the start run's formatting; text always restores) was found in
+implementation and amended per §8, not silently. Walkthrough retitle step flipped from xfail
+to anchored replace.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

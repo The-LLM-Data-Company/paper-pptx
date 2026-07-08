@@ -262,8 +262,19 @@ def inspect_text(slide: "Slide") -> TextInspection:
     return TextInspection(part=partname, blocks=tuple(blocks))
 
 
-def _walk_container(container_elm, group_path, partname, resolver, blocks) -> None:
-    """Append TextBlocks for `container_elm`'s children, depth-first in document order."""
+def iter_text_bodies(spTree):
+    """Yield `(kind, owner_elm, txBody, group_path, cell_detail)` depth-first, document order.
+
+    The single source of traversal truth shared by `inspect_text` and `pptx.edit`
+    (visibility-complete: top-level `p:sp`, grouped `p:sp` recursively to `MAX_GROUP_DEPTH`,
+    table cells row-major). `kind` is "shape" | "group" | "table-cell"; `owner_elm` is the
+    `p:sp` or `p:graphicFrame`; `cell_detail` is `"<frame-name>!r{row}c{col}"` for table
+    cells, None otherwise.
+    """
+    return _iter_container(spTree, ())
+
+
+def _iter_container(container_elm, group_path):
     if len(group_path) > MAX_GROUP_DEPTH:
         raise UnsupportedStructureError(
             "group shapes nested more than %d deep; refusing to traverse what no real deck"
@@ -271,53 +282,51 @@ def _walk_container(container_elm, group_path, partname, resolver, blocks) -> No
         )
     for child in container_elm:
         if child.tag == qn("p:sp"):
-            _append_sp_blocks(child, group_path, partname, resolver, blocks)
+            txBody = child.find(qn("p:txBody"))
+            if txBody is not None:
+                yield ("group" if group_path else "shape"), child, txBody, group_path, None
         elif child.tag == qn("p:grpSp"):
-            _walk_container(
-                child, group_path + (_cNvPr_name(child),), partname, resolver, blocks
-            )
+            for item in _iter_container(child, group_path + (_cNvPr_name(child),)):
+                yield item
         elif child.tag == qn("p:graphicFrame"):
-            _append_table_blocks(child, partname, blocks)
-
-
-def _append_sp_blocks(sp, group_path, partname, resolver, blocks) -> None:
-    txBody = sp.find(qn("p:txBody"))
-    if txBody is None:
-        return
-    placeholder_type = None
-    if not group_path and sp.has_ph_elm:
-        ph_type = sp.ph_type
-        placeholder_type = ph_type.name if ph_type is not None else None
-    container = "group" if group_path else "shape"
-    container_detail = "/".join(group_path) if group_path else None
-    for p in txBody.findall(qn("a:p")):
-        runs = tuple(
-            InspectedRun(_run_text(r), resolver.effective_font(r, sp))
-            for r in p.findall(qn("a:r"))
-        )
-        _append_block(
-            blocks, partname, sp, p, runs, placeholder_type, container, container_detail, False
-        )
-
-
-def _append_table_blocks(graphicFrame, partname, blocks) -> None:
-    tbl = graphicFrame.find(".//%s" % qn("a:tbl"))
-    if tbl is None:
-        return
-    frame_name = _cNvPr_name(graphicFrame)
-    for row_index, tr in enumerate(tbl.findall(qn("a:tr"))):
-        for col_index, tc in enumerate(tr.findall(qn("a:tc"))):
-            txBody = tc.find(qn("a:txBody"))
-            if txBody is None:
+            tbl = child.find(".//%s" % qn("a:tbl"))
+            if tbl is None:
                 continue
-            detail = "%s!r%dc%d" % (frame_name, row_index, col_index)
+            frame_name = _cNvPr_name(child)
+            for row_index, tr in enumerate(tbl.findall(qn("a:tr"))):
+                for col_index, tc in enumerate(tr.findall(qn("a:tc"))):
+                    txBody = tc.find(qn("a:txBody"))
+                    if txBody is not None:
+                        detail = "%s!r%dc%d" % (frame_name, row_index, col_index)
+                        yield "table-cell", child, txBody, group_path, detail
+
+
+def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
+    """Append TextBlocks for every text body under `spTree` (see iter_text_bodies)."""
+    for kind, owner, txBody, path, cell_detail in iter_text_bodies(spTree):
+        if kind == "table-cell":
             for p in txBody.findall(qn("a:p")):
                 runs = tuple(
                     InspectedRun(_run_text(r), _blind_font("table-cell"))
                     for r in p.findall(qn("a:r"))
                 )
                 _append_block(
-                    blocks, partname, graphicFrame, p, runs, None, "table-cell", detail, True
+                    blocks, partname, owner, p, runs, None, "table-cell", cell_detail, True
+                )
+        else:
+            placeholder_type = None
+            if kind == "shape" and owner.has_ph_elm:
+                ph_type = owner.ph_type
+                placeholder_type = ph_type.name if ph_type is not None else None
+            container_detail = "/".join(path) if path else None
+            for p in txBody.findall(qn("a:p")):
+                runs = tuple(
+                    InspectedRun(_run_text(r), resolver.effective_font(r, owner))
+                    for r in p.findall(qn("a:r"))
+                )
+                _append_block(
+                    blocks, partname, owner, p, runs, placeholder_type, kind,
+                    container_detail, False,
                 )
 
 

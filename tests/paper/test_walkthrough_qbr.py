@@ -21,7 +21,7 @@ from pptx.package import patch_save
 from pptx.util import Pt
 
 from . import corpus
-from .contract import save_to_bytes, zip_member_map
+from .contract import zip_member_map
 from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
 from .lo import lo_load_smoke
 from .relint import dangling_relationship_targets, missing_relationship_references
@@ -44,13 +44,25 @@ def _build_qbr_deck(tmp_path):
     ))))
     assert len(prs.slides) == 5  # -- 3 branded + chart + closing
 
-    # -- content pass: retitle each clone. Whole-run text assignment preserves that run's
-    # -- rPr; PARTIAL/format-spanning replacement needs the Phase 1.1 organ (xfail below).
-    titles = ["Q4 Business Review", "Wins", "Risks", "Gauntlet: chart and notes", "Next steps"]
-    for slide, title in zip(prs.slides, titles):
-        title_shape = slide.shapes.title
-        if title_shape is not None and title_shape.text_frame.paragraphs[0].runs:
-            title_shape.text_frame.paragraphs[0].runs[0].text = title
+    # -- content pass (Phase 1.1): anchored retitles — each branded clone gets its own title
+    # -- via a hash-checked anchor; then one deck-wide format-preserving language pass
+    from pptx.edit import replace_text, replace_text_at
+    from pptx.inspect import inspect_text
+
+    section_titles = ["Q4 Business Review", "Wins", "Risks"]
+    branded = [s for s in prs.slides if s.shapes.title is not None
+               and s.shapes.title.text == "Gauntlet: branded"]
+    assert len(branded) == 3
+    for slide, title in zip(branded, section_titles):
+        anchor = next(
+            b.anchor for b in inspect_text(slide).blocks if b.text == "Gauntlet: branded"
+        )
+        result = replace_text_at(prs, anchor, "Gauntlet: branded", title)
+        assert result.replacements == 1
+    language_pass = replace_text(prs, "Inherited body level", "Section content line")
+    assert language_pass.replacements == 6  # -- two lines on each of the three sections
+    closing_title = prs.slides[-1].shapes.title
+    closing_title.text_frame.paragraphs[0].runs[0].text = "Next steps"
 
     # -- chart data update, by name, validated
     chart_slide = next(s for s in prs.slides if any(sh.has_chart for sh in s.shapes))
@@ -128,11 +140,6 @@ def test_walkthrough_output_loads_in_libreoffice(tmp_path):
 # ---------------------------------------------------------------- unshipped steps (strict)
 # Each xfail names its PLAN-v0.1 item and FAILS the suite when the organ lands without the
 # walkthrough growing the real step.
-
-
-@pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 1.1: anchored text replace")
-def test_step_retitle_preserving_formatting_via_replace_text():
-    from pptx.edit import replace_text  # noqa: F401
 
 
 @pytest.mark.xfail(strict=True, reason="PLAN-v0.1 Phase 1.2: shape surgery")

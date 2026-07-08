@@ -452,8 +452,51 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
   `resolve=True` resolves locally-unresolvable font sizes through the effective-style walk
   before freezing; spacing resolution remains a refusal. Default behavior byte-identical to
   v0.
-- **Phase 1 amendment placeholder** — the anchor-consuming write pattern (call shape,
-  staleness semantics, refind) is pinned here before Phase 1 implementation begins.
+- **Phase 1 amendment — the anchor-consuming write pattern** (pinned before implementation;
+  all three Phase 1 organs follow it):
+  - **Where writes live:** new module `pptx.edit` at the import root. Anchors are cross-part
+    addresses that no single proxy owns; their producers live in `pptx.inspect`, their
+    consumers in `pptx.edit`.
+  - **Staleness = refuse.** New `pptx.errors.StaleAnchorError(TargetNotFoundError)`
+    (additive subclass — existing `except TargetNotFoundError` still catches it), raised when
+    the block at `anchor.block_index` no longer hashes to `anchor.content_hash`. Never
+    silently re-find. Explicit recovery: `pptx.edit.refind(prs, anchor) -> BlockAnchor` —
+    the unique block in the anchor's part with the same content hash (none →
+    `TargetNotFoundError`, several → `AmbiguousTargetError`).
+  - **Text replacement** (Phase 1.1), literal and case-sensitive, matches never crossing
+    paragraph / line-break / field boundaries:
+    - `pptx.edit.replace_text(prs, find, replace, *, include_notes=False) -> ReplaceResult`
+      — deck-wide, visibility-complete (same traversal as `inspect_text`: groups and table
+      cells included).
+    - `pptx.edit.replace_text_at(prs, anchor, find, replace) -> ReplaceResult` — one block,
+      hash-checked first.
+    - `ReplaceResult(replacements: int, blocks: tuple[BlockAnchor, ...])` — post-edit anchors
+      of every touched block; `.to_dict()` schema `"paper-replace-result"` version 1.
+    - Pinned run-preservation semantics: runs are split at match boundaries; boundary
+      fragments keep their source run's `rPr` verbatim; replacement text inherits the rPr of
+      the run where the match STARTS (a match beginning exactly at a run boundary belongs to
+      the later run); untouched runs stay byte-identical; runs consumed whole are removed.
+      Zero matches is a normal result (0), not a refusal.
+    - **Documented limit of the replace-inverse invariant** (found during implementation,
+      amended per §8): the §4 invariant — replace(x→y) then replace(y→x) restores text and
+      formatting — is exact when every match lies within identically-formatted runs. A match
+      spanning differently-formatted runs necessarily collapses the replaced span to the
+      start run's formatting: the consumed runs' formatting is unrecoverable by design, and
+      guessing it back would violate §1.5. Text always restores exactly.
+  - **Shape surgery** (Phase 1.2), on `SlideShapes`:
+    - `delete(shape) -> None` — removes the shape element; relationships referenced by the
+      removed subtree are dropped unless still referenced elsewhere in the part.
+      `TargetNotFoundError` for a shape not in this collection.
+    - `move(shape, to_index) -> None` — z-order reposition within this collection
+      (`ValueError` for an out-of-range index, mirroring `Slides.move`).
+    - `add_copy(shape) -> shape` — copy a shape from this or another slide of the same
+      presentation; fresh shape id; images shared, external hyperlinks copied, charts
+      deep-copied with their workbooks, any other relationship type →
+      `RelationshipPolicyError`.
+  - **By-name addressing** (Phase 1.3), on `SlideShapes`, all group-aware (recursive) and
+    all with `chart_by_name`'s contract: `shape_by_name(name)`, `picture_by_name(name)`,
+    `table_by_name(name)` — `TargetNotFoundError` (with found-kind detail on type mismatch)
+    / `AmbiguousTargetError`, never first-match.
 
 ## Stub tests
 
