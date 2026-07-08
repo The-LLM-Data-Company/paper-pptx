@@ -174,6 +174,52 @@ def test_normalize_with_bare_normautofit_drops_element_without_touching_text():
     assert [run.font.size for run in reopened_tf.paragraphs[0].runs] == sizes_before
 
 
+def test_fields_are_scaled_and_validated_like_runs():
+    """Regression: a:fld (slide number/date fields) render text exactly like runs; their
+    explicit sizes must be frozen too, and an unsized field must refuse, not silently render
+    at full size after normalization."""
+    from lxml import etree
+
+    _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+
+    def add_field(tf, with_size):
+        p = tf.paragraphs[0]._p
+        fld = etree.SubElement(p, "{%s}fld" % _A)
+        fld.set("id", "{11111111-2222-3333-4444-555555555555}")
+        fld.set("type", "slidenum")
+        if with_size:
+            rPr = etree.SubElement(fld, "{%s}rPr" % _A)
+            rPr.set("sz", "2000")
+        t = etree.SubElement(fld, "{%s}t" % _A)
+        t.text = "1"
+
+    # -- unsized field refuses atomically --
+    prs = _open(NORMAL)
+    tf = _autofit_frame(prs)
+    tf.paragraphs[0].runs[0].font.size = Pt(24)
+    tf.paragraphs[0].line_spacing = 1.0
+    add_field(tf, with_size=False)
+
+    raised = assert_refusal_atomic(
+        prs, lambda p: _autofit_frame(p).normalize_autofit(), UnsupportedStructureError
+    )
+    assert "field" in str(raised)
+
+    # -- sized field is frozen along with the runs --
+    prs = _open(NORMAL)
+    tf = _autofit_frame(prs)
+    tf.paragraphs[0].runs[0].font.size = Pt(24)
+    tf.paragraphs[0].line_spacing = 1.0
+    add_field(tf, with_size=True)
+    tf.normalize_autofit()
+
+    reopened_tf = _autofit_frame(save_reopen(prs))
+    fld_rPr = reopened_tf.paragraphs[0]._p.find(
+        "{%s}fld/{%s}rPr" % (_A, _A)
+    )
+    assert int(fld_rPr.get("sz")) == 1250  # -- 20pt × 62.5%
+
+
 def test_upstream_auto_size_setter_behavior_is_unchanged():
     """§1.1 spot check: the existing property still round-trips all three modes + None."""
     prs = _open(NONE)

@@ -391,16 +391,19 @@ def diff_package(path_a: str, path_b: str) -> PackageDiff:
     report as "added" (only in `path_b`) or "removed" (only in `path_a`). Deltas are sorted
     by partname.
     """
-    map_a = _read_zip_map(path_a)
-    map_b = _read_zip_map(path_b)
+    return _diff_maps(_read_zip_map(path_a), _read_zip_map(path_b), str(path_a), str(path_b))
+
+
+def _diff_maps(map_a: dict, map_b: dict, label_a: str, label_b: str) -> PackageDiff:
+    """Return the |PackageDiff| between two in-memory member maps."""
     deltas = []
     for name in sorted(set(map_a) | set(map_b)):
         partname = "/" + name
         kind = "xml" if _is_xml_member(name) else "binary"
         if name not in map_b:
-            deltas.append(PartDelta(partname, kind, "removed", "only in %s" % path_a))
+            deltas.append(PartDelta(partname, kind, "removed", "only in %s" % label_a))
         elif name not in map_a:
-            deltas.append(PartDelta(partname, kind, "added", "only in %s" % path_b))
+            deltas.append(PartDelta(partname, kind, "added", "only in %s" % label_b))
         elif map_a[name] == map_b[name]:
             continue
         elif _members_semantically_equal(name, map_a[name], map_b[name]):
@@ -456,6 +459,10 @@ def patch_save(original_path: str, document, out_path: str) -> PackageDiff:
             data = original
         out_map[name] = data
 
+    # -- the residual diff is computed BEFORE writing: out_path may equal original_path
+    # -- (in-place narrow save), in which case a post-write diff would always be empty
+    residual = _diff_maps(original_map, out_map, str(original_path), str(out_path))
+
     unchanged = set(out_map) == set(original_map) and all(
         out_map[name] == original_map[name] for name in out_map
     )
@@ -464,7 +471,7 @@ def patch_save(original_path: str, document, out_path: str) -> PackageDiff:
         return PackageDiff(())
 
     _atomic_write_zip(out_map, out_path)
-    return diff_package(original_path, out_path)
+    return residual
 
 
 def _member_write_order(names: "Sequence[str]") -> "Sequence[str]":

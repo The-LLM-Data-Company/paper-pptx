@@ -16,7 +16,7 @@ from pptx.errors import PaperRefusal, UnsupportedStructureError
 from pptx.package import PackageDiff, diff_package, patch_save, xml_equivalent
 
 from . import corpus
-from .contract import snapshot_parts, zip_member_map
+from .contract import assert_file_bytes_unchanged, snapshot_parts, zip_member_map
 from .lo import lo_load_smoke
 
 MINIMAL = "self_generated/minimal_clean.pptx"
@@ -221,11 +221,31 @@ def test_patch_save_refuses_a_non_zip_original_before_touching_anything(tmp_path
     prs = Presentation(_fixture(MINIMAL))
     before = snapshot_parts(prs)
 
-    with pytest.raises(UnsupportedStructureError) as exc_info:
-        patch_save(str(bogus), prs, str(out))
+    with assert_file_bytes_unchanged(bogus):
+        with pytest.raises(UnsupportedStructureError) as exc_info:
+            patch_save(str(bogus), prs, str(out))
     assert isinstance(exc_info.value, PaperRefusal)
     assert not out.exists()
     assert snapshot_parts(prs) == before
+
+
+def test_patch_save_in_place_reports_the_true_residual_diff(tmp_path):
+    """Regression: with out_path == original_path (in-place narrow save), the residual diff
+    used to be computed AFTER the overwrite and always came back empty."""
+    working = tmp_path / "deck.pptx"
+    working.write_bytes(corpus.fixture_path(MINIMAL).read_bytes())
+
+    prs = Presentation(str(working))
+    prs.slides[0].shapes.title.text_frame.paragraphs[0].runs[0].text = "In-place edit"
+    diff = patch_save(str(working), prs, str(working))
+    assert [d.partname for d in diff.deltas] == ["/ppt/slides/slide1.xml"]
+    assert Presentation(str(working)).slides[0].shapes.title.text == "In-place edit"
+
+    # -- and an in-place no-op stays byte-identical with an empty diff
+    before_bytes = working.read_bytes()
+    noop_diff = patch_save(str(working), Presentation(str(working)), str(working))
+    assert noop_diff.is_empty
+    assert working.read_bytes() == before_bytes
 
 
 def test_patch_save_rejects_a_document_that_cannot_save(tmp_path):

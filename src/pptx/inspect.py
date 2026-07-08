@@ -121,6 +121,8 @@ class EffectiveFont:
 
     def to_dict(self) -> dict:
         return {
+            "schema": "paper-effective-font",
+            "version": 1,
             "size": self.size.to_dict(),
             "name": self.name.to_dict(),
             "color_rgb": self.color_rgb.to_dict(),
@@ -281,6 +283,11 @@ class _FontResolver(object):
         p = r.getparent()
         pPr = p.find(qn("a:pPr"))
         level = int(pPr.get("lvl", "0")) if pPr is not None else 0
+        if not 0 <= level <= 8:
+            raise UnsupportedStructureError(
+                "paragraph carries out-of-schema indent level lvl=%d (valid range 0..8);"
+                " refusing to resolve styles for malformed structure" % level
+            )
         chain = list(self._chain(r, p, sp, level))
         return EffectiveFont(
             size=self._resolve_size(chain),

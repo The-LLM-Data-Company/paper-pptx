@@ -30,6 +30,18 @@ DEFAULT_BULLET_LEFT_MARGIN = Emu(342900)
 DEFAULT_BULLET_HANGING_INDENT = Emu(171450)
 
 
+def _require_xml_encodable(value: str, name: str) -> None:
+    """Raise |ValueError| when `value` cannot be written into XML (e.g. lone surrogates).
+
+    Part of validate-fully-then-mutate: a string that passes isinstance checks but explodes
+    at serialization time would otherwise leave a half-mutated tree behind.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("%s contains characters not encodable in XML: %r" % (name, value))
+
+
 class BulletFormat(object):
     """Bullet and numbering state of a single paragraph.
 
@@ -111,8 +123,10 @@ class BulletFormat(object):
         """
         if not isinstance(char, str) or len(char) == 0:
             raise ValueError("char must be a non-empty str, got %r" % (char,))
+        _require_xml_encodable(char, "char")
         self._validate_common(font_name, size_percent, left_margin, hanging_indent)
         pPr = self._p.get_or_add_pPr()
+        self._remove_buBlip(pPr)
         pPr.get_or_change_to_buChar().char = char
         self._apply_common(pPr, font_name, size_percent, left_margin, hanging_indent)
 
@@ -137,6 +151,7 @@ class BulletFormat(object):
         ST_TextBulletStartAtNum.validate(start_at)
         self._validate_common(font_name, size_percent, left_margin, hanging_indent)
         pPr = self._p.get_or_add_pPr()
+        self._remove_buBlip(pPr)
         buAutoNum = pPr.get_or_change_to_buAutoNum()
         buAutoNum.type = scheme
         buAutoNum.startAt = start_at
@@ -147,7 +162,21 @@ class BulletFormat(object):
 
         Margins, bullet font, and bullet size attributes are left untouched.
         """
-        self._p.get_or_add_pPr().get_or_change_to_buNone()
+        pPr = self._p.get_or_add_pPr()
+        self._remove_buBlip(pPr)
+        pPr.get_or_change_to_buNone()
+
+    @staticmethod
+    def _remove_buBlip(pPr) -> None:
+        """Remove any `a:buBlip` picture bullet from `pPr`.
+
+        The bullet vocabulary is a 4-way schema choice including `a:buBlip`; the descriptor
+        choice group covers only the three writable kinds, so an existing picture bullet
+        must be cleared here or the written pPr would carry two bullet-type elements
+        (schema-invalid).
+        """
+        for buBlip in pPr.findall(qn("a:buBlip")):
+            pPr.remove(buBlip)
 
     @staticmethod
     def _validate_common(font_name, size_percent, left_margin, hanging_indent) -> None:
@@ -158,6 +187,8 @@ class BulletFormat(object):
         """
         if font_name is not None and not isinstance(font_name, str):
             raise ValueError("font_name must be a str or None, got %r" % (font_name,))
+        if font_name is not None:
+            _require_xml_encodable(font_name, "font_name")
         if size_percent is not None:
             ST_TextBulletSizePercent.validate(size_percent)
         for name, value in (("left_margin", left_margin), ("hanging_indent", hanging_indent)):

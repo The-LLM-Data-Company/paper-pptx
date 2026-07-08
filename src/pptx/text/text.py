@@ -203,26 +203,34 @@ class TextFrame(Subshape):
         # -- validation pass: complete before any mutation (refusal atomicity). Raw-XML reads
         # -- only: the font/paragraph proxy accessors are get-or-add and would themselves
         # -- dirty the tree with empty rPr/pPr elements.
+        shape_name = getattr(self._parent, "name", "<unknown shape>")
         for para_idx, p in enumerate(self._txBody.p_lst):
             pPr = p.find(qn("a:pPr"))
             if scale != 100.0:
                 defRPr = pPr.find(qn("a:defRPr")) if pPr is not None else None
                 para_has_size = defRPr is not None and defRPr.get("sz") is not None
-                for r in p.findall(qn("a:r")):
+                # -- a:fld (fields) render text exactly like runs and must be sizable too
+                for r in p.findall(qn("a:r")) + p.findall(qn("a:fld")):
                     rPr = r.find(qn("a:rPr"))
                     run_has_size = rPr is not None and rPr.get("sz") is not None
                     if not run_has_size and not para_has_size:
                         raise UnsupportedStructureError(
-                            "cannot freeze font scale %.1f%%: run in paragraph %d has no"
-                            " locally resolvable font size (set explicit sizes first, or"
-                            " resolve effective values before normalizing)" % (scale, para_idx)
+                            "cannot freeze font scale %.1f%%: %s in paragraph %d of shape %r"
+                            " has no locally resolvable font size (set explicit sizes first,"
+                            " or resolve effective values before normalizing)"
+                            % (
+                                scale,
+                                "field" if r.tag == qn("a:fld") else "run",
+                                para_idx,
+                                shape_name,
+                            )
                         )
             if reduction != 0.0:
                 lnSpc = pPr.find(qn("a:lnSpc")) if pPr is not None else None
                 if lnSpc is None:
                     raise UnsupportedStructureError(
-                        "cannot freeze line-spacing reduction %.1f%%: paragraph %d has no"
-                        " explicit line spacing" % (reduction, para_idx)
+                        "cannot freeze line-spacing reduction %.1f%%: paragraph %d of shape"
+                        " %r has no explicit line spacing" % (reduction, para_idx, shape_name)
                     )
 
         # -- mutation pass --
@@ -249,12 +257,15 @@ class TextFrame(Subshape):
     def _iter_explicitly_sized_rPrs(self):
         """Generate every rPr-family element in this frame carrying an explicit `sz`.
 
-        Covers run properties, paragraph default run properties, and end-paragraph run
-        properties. `sz` values are centipoints ints.
+        Covers run, field (`a:fld`), and line-break (`a:br`) properties, paragraph default
+        run properties, and end-paragraph run properties. `sz` values are centipoints ints.
         """
         for p in self._txBody.p_lst:
             candidates = [p.find(qn("a:pPr")), p.find(qn("a:endParaRPr"))]
-            candidates.extend(r.find(qn("a:rPr")) for r in p.findall(qn("a:r")))
+            for content_tag in ("a:r", "a:fld", "a:br"):
+                candidates.extend(
+                    child.find(qn("a:rPr")) for child in p.findall(qn(content_tag))
+                )
             for element in candidates:
                 if element is None:
                     continue

@@ -154,6 +154,49 @@ def test_refuses_unsupported_chart_types_atomically():
     assert "not supported" in str(raised)
 
 
+def test_refuses_multi_plot_combo_charts_atomically():
+    """A combo chart (two plots in one plotArea) refuses rather than desyncing one plot."""
+    import copy
+
+    from pptx.oxml.ns import qn
+
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    plotArea = chart._chartSpace.chart.plotArea
+    barChart = plotArea.find(qn("c:barChart"))
+    barChart.addnext(copy.deepcopy(barChart))  # -- now a two-plot chart
+    assert len(chart.plots) == 2
+
+    def operation(p):
+        p.slides[0].shapes.chart_by_name(CHART_NAME).replace_data_safe(["x"], [("a", (1,))])
+
+    raised = assert_refusal_atomic(prs, operation, UnsupportedStructureError)
+    assert "multi-plot" in str(raised)
+
+
+def test_lone_surrogate_strings_are_rejected_before_any_mutation():
+    """Regression: a str containing a lone surrogate passed isinstance validation, then
+    exploded during serialization AFTER the chart XML had already been rewritten."""
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    before = save_to_bytes(prs)
+    with pytest.raises(ValueError, match="not encodable"):
+        chart.replace_data_safe(["ok"], [("bad\udc80name", (1,))])
+    with pytest.raises(ValueError, match="not encodable"):
+        chart.replace_data_safe(["bad\udc80cat"], [("name", (1,))])
+    assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
+
+
+def test_default_number_format_path_round_trips():
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    chart.replace_data_safe(["One", "Two"], [("Only", (4.5, 6.5))])
+    reopened_chart = (
+        Presentation(io.BytesIO(save_to_bytes(prs))).slides[0].shapes.chart_by_name(CHART_NAME)
+    )
+    assert [(s.name, tuple(s.values)) for s in reopened_chart.series] == [("Only", (4.5, 6.5))]
+
+
 # --------------------------------------------------------------------------------- lo_smoke
 
 

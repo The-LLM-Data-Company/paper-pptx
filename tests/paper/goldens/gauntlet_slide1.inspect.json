@@ -18,6 +18,8 @@
         {
           "text": "Gauntlet: branded",
           "font": {
+            "schema": "paper-effective-font",
+            "version": 1,
             "size": {
               "value": 457200,
               "value_pt": 36.0,
@@ -172,6 +174,8 @@
         {
           "text": "Inherited body level one",
           "font": {
+            "schema": "paper-effective-font",
+            "version": 1,
             "size": {
               "value": 330200,
               "value_pt": 26.0,
@@ -332,6 +336,8 @@
         {
           "text": "Inherited body level two",
           "font": {
+            "schema": "paper-effective-font",
+            "version": 1,
             "size": {
               "value": 279400,
               "value_pt": 22.0,

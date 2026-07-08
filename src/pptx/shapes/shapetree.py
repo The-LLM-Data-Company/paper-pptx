@@ -535,6 +535,19 @@ class GroupShapes(_BaseGroupShapes):
         self._grpSp.recalculate_extents()
 
 
+def _shape_kind(shape) -> str:
+    """Return a human-readable kind for `shape`, robust to exotic shapes (paper-pptx).
+
+    `shape_type` can be |None| or raise for shapes upstream does not classify (e.g. SmartArt
+    graphic frames); error messages must never crash while being built.
+    """
+    try:
+        shape_type = shape.shape_type
+    except Exception:
+        return type(shape).__name__
+    return shape_type.name if shape_type is not None else type(shape).__name__
+
+
 class SlideShapes(_BaseGroupShapes):
     """Sequence of shapes appearing on a slide.
 
@@ -617,7 +630,7 @@ class SlideShapes(_BaseGroupShapes):
                 raise TargetNotFoundError("no shape named %r on this slide" % name)
             raise TargetNotFoundError(
                 "shape named %r holds no chart (found: %s)"
-                % (name, ", ".join(shape.shape_type.name for shape in named_shapes))
+                % (name, ", ".join(_shape_kind(shape) for shape in named_shapes))
             )
         if len(chart_shapes) > 1:
             raise AmbiguousTargetError(

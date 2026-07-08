@@ -302,8 +302,10 @@ def replace_notes_text(self, text: str) -> None: ...
   (`\n`-separated); surplus old paragraphs in the body placeholder are removed. Validation
   (notes part exists, body placeholder found) completes before any mutation; a notes slide
   with no body placeholder refuses (`UnsupportedStructureError`).
-- `read_notes_text` returns the body placeholder's text (`""` if the placeholder is empty);
-  refuses only when the notes *part* is absent.
+- `read_notes_text` returns the body placeholder's text (`""` if the placeholder is empty).
+  **Amended during implementation (§8):** it refuses not only when the notes part is absent
+  but also when an existing notes slide has no body placeholder — there is no text to read
+  and guessing another placeholder would be wrong.
 
 ```python
 if slide.has_notes_slide:
@@ -351,7 +353,9 @@ def move(self, slide: Slide | int, to_index: int) -> None: ...   # single-slide 
 - **Reorder** validates `new_order` is an exact permutation of `range(len(slides))`
   (`ValueError` otherwise), then permutes `sldIdLst` in one pass.
 - Addressing: `Slide | int` (0-based index); a `Slide` not in this presentation →
-  `TargetNotFoundError`.
+  `TargetNotFoundError`. **Amended during implementation (§8):** an int out of range raises
+  `IndexError` with normal indexed-access semantics (same as `slides[i]`), which is the
+  documented programmer-error contract for indices.
 
 Required tests (pinned by plan): cross-contamination (mutate clone's chart data → original
 chart XML byte-identical), global dangling-id scan after delete, notes neither dropped nor
@@ -384,7 +388,7 @@ def replace_image(self, image_file: str | IO[bytes]) -> None: ...
 - The reference's low-res / natural-size math becomes test assertions only, not public API.
 
 ```python
-pic = slide.shapes["product_photo"]      # (existing addressing)
+pic = next(s for s in slide.shapes if s.name == "product_photo")
 pic.replace_image("new_photo.png")       # same box, same crop, new pixels
 ```
 

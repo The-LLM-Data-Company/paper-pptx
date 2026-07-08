@@ -241,6 +241,10 @@ class Slide(_BaseSlide):
         """
         if not isinstance(text, str):
             raise ValueError("text must be a str, got %r" % type(text).__name__)
+        try:
+            text.encode("utf-8")  # -- lone surrogates would explode mid-mutation otherwise
+        except UnicodeEncodeError:
+            raise ValueError("text contains characters not encodable in XML: %r" % (text,))
         text_frame = self._existing_notes_text_frame()  # -- full validation before mutation
 
         txBody = text_frame._txBody

@@ -143,15 +143,62 @@ def test_extension_mismatch_refuses_atomically():
     assert isinstance(raised, PaperRefusal)
 
 
-def test_linked_only_picture_refuses():
+def test_linked_only_picture_refuses_atomically():
     prs = _open(GAUNTLET)
     picture = _cropped_picture(prs)
     blip = picture._pic.blipFill.blip
     del blip.attrib[
         "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
     ]
-    with pytest.raises(UnsupportedStructureError, match="no embedded image"):
-        picture.replace_image(io.BytesIO(_png_bytes()))
+
+    def operation(p):
+        _cropped_picture(p).replace_image(io.BytesIO(_png_bytes()))
+
+    raised = assert_refusal_atomic(prs, operation, UnsupportedStructureError)
+    assert "no embedded image" in str(raised)
+
+
+def test_dangling_image_relationship_refuses_atomically():
+    prs = _open(GAUNTLET)
+    picture = _cropped_picture(prs)
+    picture._pic.blipFill.blip.rEmbed = "rId99"
+
+    def operation(p):
+        _cropped_picture(p).replace_image(io.BytesIO(_png_bytes()))
+
+    raised = assert_refusal_atomic(prs, operation, UnsupportedStructureError)
+    assert "does not exist" in str(raised)
+
+
+def test_unrecognizable_image_bytes_raise_valueerror_atomically():
+    prs = _open(GAUNTLET)
+    before = save_to_bytes(prs)
+    with pytest.raises(ValueError, match="not a recognizable image"):
+        _cropped_picture(prs).replace_image(io.BytesIO(b"this is not an image at all"))
+    assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
+
+
+def test_replace_keeps_relationship_alive_for_sibling_picture_sharing_it():
+    """Regression: two pictures added from identical bytes share ONE relationship; replacing
+    one used to drop the rel and leave the sibling's r:embed dangling (unloadable deck)."""
+    prs = _open("self_generated/minimal_clean.pptx")
+    slide = prs.slides[0]
+    same_bytes = _png_bytes((40, 80, 120))
+    pic_a = slide.shapes.add_picture(io.BytesIO(same_bytes), 0, 0, 914400)
+    pic_b = slide.shapes.add_picture(io.BytesIO(same_bytes), 914400, 0, 914400)
+    assert pic_a._pic.blip_rId == pic_b._pic.blip_rId  # -- the shared-rel precondition
+
+    replacement = _png_bytes((200, 10, 10))
+    pic_a.replace_image(io.BytesIO(replacement))
+    saved = save_to_bytes(prs)
+    zip_map = zip_member_map(saved)
+    assert dangling_relationship_targets(zip_map) == []
+    assert missing_relationship_references(zip_map) == []
+
+    reopened = Presentation(io.BytesIO(saved))
+    pictures = [s for s in reopened.slides[0].shapes if s.shape_type.name == "PICTURE"]
+    blobs = sorted(p.image.blob for p in pictures)
+    assert blobs == sorted([same_bytes, replacement])  # -- sibling still loads its image
 
 
 # -------------------------------------------- reference low-res math, as assertions only

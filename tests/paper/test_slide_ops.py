@@ -15,8 +15,10 @@ from lxml import etree
 
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.errors import PaperRefusal, RelationshipPolicyError, TargetNotFoundError
 from pptx.slide import SlideClonePolicy
+from pptx.util import Inches
 
 from . import corpus
 from .contract import (
@@ -165,20 +167,150 @@ def test_clone_copies_external_hyperlink_relationships():
 def test_clone_of_a_libreoffice_chart_without_workbook_copies_style_parts():
     """LO charts carry colors/style parts and no embedded workbook; clone must cope."""
     prs = _open(LO_CHART_NOTES)
+    before = save_to_bytes(prs)
     prs.slides.clone(0)
     saved = save_to_bytes(prs)
-    zip_map = zip_member_map(saved)
-    assert "ppt/charts/chart2.xml" in zip_map
-    assert "ppt/charts/colors2.xml" in zip_map
-    assert "ppt/charts/style2.xml" in zip_map
-    assert not any(n.startswith("ppt/embeddings/") for n in zip_map)
+    assert_changed_parts(
+        before,
+        saved,
+        expect_changed=[
+            "[Content_Types].xml",
+            "ppt/_rels/presentation.xml.rels",
+            "ppt/presentation.xml",
+        ],
+        expect_added=[
+            "ppt/charts/_rels/chart2.xml.rels",
+            "ppt/charts/chart2.xml",
+            "ppt/charts/colors2.xml",
+            "ppt/charts/style2.xml",
+            "ppt/notesSlides/_rels/notesSlide2.xml.rels",
+            "ppt/notesSlides/notesSlide2.xml",
+            "ppt/slides/_rels/slide2.xml.rels",
+            "ppt/slides/slide2.xml",
+        ],
+    )
+    assert not any(n.startswith("ppt/embeddings/") for n in zip_member_map(saved))
     _assert_relationship_integrity(saved)
 
 
 def test_clone_after_parameter_positions_the_copy():
     prs = _open(GAUNTLET)
     clone = prs.slides.clone(0, after=2)
-    assert prs.slides.index(clone) == 3
+    clone_id = clone.slide_id
+    reopened = _reopen(save_to_bytes(prs))
+    assert reopened.slides[3].slide_id == clone_id
+
+    prs = _open(GAUNTLET)
+    clone = prs.slides.clone(0, after=prs.slides[1])  # -- Slide-typed after
+    assert prs.slides.index(clone) == 2
+
+
+def test_clone_with_two_charts_allocates_distinct_partnames():
+    """Regression: parts created mid-clone are invisible to package partname allocation, so
+    two deep-copied charts used to receive the SAME partname — duplicate zip members and one
+    chart's data silently clobbered."""
+    prs = _open(CHART_NOTES)
+    chart_data = CategoryChartData()
+    chart_data.categories = ["a", "b"]
+    chart_data.add_series("Second", (7.0, 8.0))
+    frame = prs.slides[0].shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1), Inches(3), Inches(2), chart_data
+    )
+    frame.name = "second_chart"
+
+    prs.slides.clone(0)
+    saved = save_to_bytes(prs)
+    zip_map = zip_member_map(saved)  # -- asserts no duplicate member names by itself
+    charts = sorted(
+        n for n in zip_map if n.startswith("ppt/charts/chart") and n.endswith(".xml")
+    )
+    workbooks = sorted(n for n in zip_map if n.startswith("ppt/embeddings/"))
+    assert len(charts) == 4
+    assert len(workbooks) == 4
+    _assert_relationship_integrity(saved)
+
+    reopened = _reopen(saved)
+    clone_series = sorted(
+        series.name
+        for shape in reopened.slides[1].shapes
+        if shape.has_chart
+        for series in shape.chart.series
+    )
+    assert clone_series == ["Q1", "Q2", "Second"]  # -- neither chart clobbered the other
+
+
+def test_clone_with_two_unshared_images_allocates_distinct_partnames():
+    import io as io_module
+
+    from PIL import Image as PILImage
+
+    def png(color):
+        buf = io_module.BytesIO()
+        PILImage.new("RGB", (16, 16), color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    prs = _open(MINIMAL)
+    slide = prs.slides[0]
+    slide.shapes.add_picture(io_module.BytesIO(png((250, 0, 0))), 0, 0, 914400)
+    slide.shapes.add_picture(io_module.BytesIO(png((0, 250, 0))), 914400, 0, 914400)
+
+    prs.slides.clone(0, policy=SlideClonePolicy(share_media=False))
+    saved = save_to_bytes(prs)
+    zip_map = zip_member_map(saved)
+    media = sorted(n for n in zip_map if n.startswith("ppt/media/"))
+    assert len(media) == 4
+    assert len({zip_map[n] for n in media}) == 2  # -- two distinct images, each twice
+    _assert_relationship_integrity(saved)
+
+    reopened = _reopen(saved)
+    clone_blobs = {
+        s.image.blob
+        for s in reopened.slides[1].shapes
+        if s.shape_type.name == "PICTURE"
+    }
+    assert clone_blobs == {png((250, 0, 0)), png((0, 250, 0))}
+
+
+def test_cloning_a_clone_and_repeated_clones_stay_consistent():
+    prs = _open(CHART_NOTES)
+    first_clone = prs.slides.clone(0)
+    prs.slides.clone(prs.slides.index(first_clone))  # -- clone the clone
+    prs.slides.clone(0)
+    saved = save_to_bytes(prs)
+    zip_map = zip_member_map(saved)
+    assert len([n for n in zip_map if n.startswith("ppt/charts/chart")]) >= 4
+    _assert_relationship_integrity(saved)
+    assert len(_reopen(saved).slides) == 4
+
+
+def test_clone_refuses_chart_with_unsupported_child_relationship():
+    """A chart part related to something outside the allowed child set refuses atomically."""
+    prs = _open(CHART_NOTES)
+    chart_part = next(s for s in prs.slides[0].shapes if s.has_chart).chart.part
+    image_part = prs.slides[0].part.package.get_or_add_image_part(
+        io.BytesIO(
+            Presentation(str(corpus.fixture_path(SHARED_MEDIA)))
+            .slides[0]
+            .shapes[0]
+            .image.blob
+        )
+    )
+    chart_part.relate_to(image_part, "http://example.com/relationships/bogus")
+
+    raised = assert_refusal_atomic(prs, lambda p: p.slides.clone(0), RelationshipPolicyError)
+    assert "chart part" in str(raised)
+
+
+def test_clone_refuses_notes_with_unsupported_child_relationship():
+    prs = _open(CHART_NOTES)
+    notes_part = prs.slides[0].part.part_related_by(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide"
+    )
+    other_slide_part = prs.slides[0].part
+    notes_part.relate_to(other_slide_part, "http://example.com/relationships/bogus")
+
+    raised = assert_refusal_atomic(prs, lambda p: p.slides.clone(0), RelationshipPolicyError)
+    assert "notes slide" in str(raised)
 
 
 def test_clone_refuses_to_share_charts():
@@ -291,12 +423,27 @@ def test_reorder_rejects_non_permutations_atomically(bad_order):
 def test_move_repositions_a_single_slide():
     prs = _open(GAUNTLET)
     last = prs.slides[3]
+    moved_id = last.slide_id
+    before = save_to_bytes(prs)
     prs.slides.move(last, 0)
-    assert prs.slides.index(last) == 0
+    after = save_to_bytes(prs)
+    assert_changed_parts(before, after, expect_changed=["ppt/presentation.xml"])
+    assert _reopen(after).slides[0].slide_id == moved_id
     with pytest.raises(ValueError):
         prs.slides.move(0, 99)
     with pytest.raises(ValueError):
         prs.slides.move(0, -1)
+
+
+def test_delete_error_paths_leave_the_deck_untouched():
+    prs = _open(GAUNTLET)
+    before = save_to_bytes(prs)
+    with pytest.raises(IndexError):
+        prs.slides.delete(99)
+    other = _open(MINIMAL)
+    with pytest.raises(TargetNotFoundError):
+        prs.slides.delete(other.slides[0])
+    assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
 
 
 # --------------------------------------------------------------------------------- lo_smoke

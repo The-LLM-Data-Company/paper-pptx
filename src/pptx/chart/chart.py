@@ -15,6 +15,19 @@ from pptx.shared import ElementProxy, PartElementProxy
 from pptx.text.text import Font, TextFrame
 from pptx.util import lazyproperty
 
+
+def _require_xml_encodable(value, name):
+    """Raise |ValueError| when `value` cannot be serialized into XML (e.g. lone surrogates).
+
+    Part of validate-fully-then-mutate (paper-pptx): a str that passes isinstance checks but
+    explodes during serialization would otherwise corrupt the chart mid-replacement.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("%s contains characters not encodable in XML: %r" % (name, value))
+
+
 #: chart types `Chart.replace_data_safe` supports: the category-chart families the
 #: production reference exercised (paper-pptx addition)
 _SAFE_REPLACE_CHART_TYPES = frozenset(
@@ -218,6 +231,7 @@ class Chart(PartElementProxy):
         for category in categories:
             if not isinstance(category, str):
                 raise ValueError("categories must all be str, got %r" % (category,))
+            _require_xml_encodable(category, "category")
         series = list(series)
         if not series:
             raise ValueError("series must be a non-empty sequence of (name, values) pairs")
@@ -230,6 +244,7 @@ class Chart(PartElementProxy):
                 raise ValueError("each series must be a (name, values) pair, got %r" % (item,))
             if not isinstance(name, str) or not name:
                 raise ValueError("series name must be a non-empty str, got %r" % (name,))
+            _require_xml_encodable(name, "series name")
             if name in seen_names:
                 raise ValueError("duplicate series name %r" % (name,))
             seen_names.add(name)
@@ -249,6 +264,8 @@ class Chart(PartElementProxy):
             normalized_series.append((name, values))
         if number_format is not None and not isinstance(number_format, str):
             raise ValueError("number_format must be a str or None, got %r" % (number_format,))
+        if number_format is not None:
+            _require_xml_encodable(number_format, "number_format")
 
         # -- structural validation --
         chart_type = self.chart_type

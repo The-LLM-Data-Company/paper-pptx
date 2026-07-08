@@ -227,8 +227,8 @@ def test_inspection_matches_frozen_golden(golden_name, fixture_relpath, slide_in
     """Byte-identical to the reviewed golden; update ONLY via update_goldens.py + PR review."""
     golden_path = corpus.FIXTURES_DIR.parent / "goldens" / golden_name
     payload = inspect_text(_open(fixture_relpath).slides[slide_index]).to_dict()
-    actual = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
-    assert actual == golden_path.read_text(encoding="utf-8")
+    actual = (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    assert actual == golden_path.read_bytes()  # -- byte-exact, no newline translation
 
 
 def test_libreoffice_independently_confirms_branded_effective_sizes():
@@ -256,6 +256,35 @@ def test_content_hash_is_pinned_sha256_nfc_prefix():
     assert content_hash("Branded Title") == (
         hashlib.sha256("Branded Title".encode("utf-8")).hexdigest()[:8]
     )
+
+
+def test_content_hash_applies_nfc_normalization():
+    composed = "café"  # -- é as one code point
+    decomposed = "café"  # -- e + combining acute
+    assert composed != decomposed
+    assert content_hash(composed) == content_hash(decomposed)
+
+
+def test_out_of_schema_indent_level_refuses_instead_of_crashing():
+    prs = _open(BRANDED)
+    run = prs.slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
+    pPr = run._r.getparent().find("{%s}pPr" % _A)
+    if pPr is None:
+        pPr = etree.SubElement(run._r.getparent(), "{%s}pPr" % _A)
+        run._r.getparent().insert(0, pPr)
+    pPr.set("lvl", "9")  # -- outside ST_TextIndentLevelType's 0..8
+    with pytest.raises(UnsupportedStructureError, match="lvl=9"):
+        run.effective_font()
+
+
+def test_effective_font_payload_carries_pinned_schema_keys():
+    payload = (
+        _open(BRANDED).slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
+        .effective_font()
+        .to_dict()
+    )
+    assert payload["schema"] == "paper-effective-font"
+    assert payload["version"] == 1
 
 
 def test_content_hash_treats_whitespace_as_content():

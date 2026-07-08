@@ -230,6 +230,37 @@ replacing would desync chart XML from the missing workbook). Data-shape problems
 `ValueError` and provably leave the chart untouched. Chart *authoring* patterns (waterfall
 bridge, styling presets) remain example-only per CONVENTIONS §5.
 
+## v0 hardening pass (post-Phase-9 adversarial review)
+
+A five-dimension adversarial review of the complete v0 (additivity, organ bug-hunt,
+CONVENTIONS compliance, test quality, consumer experience) ran after Phase 9; every confirmed
+finding was fixed with a regression test:
+
+- **Critical — clone partname collisions:** parts created mid-clone are invisible to
+  `package.next_partname` (unreachable until the slide is related), so one clone deep-copying
+  two charts (or two unshared images) assigned the same partname twice — duplicate zip
+  members, silently clobbered content. Fixed with an in-flight allocation set in
+  `pptx.slideops`.
+- **Critical — `replace_image` dangling sibling reference:** two pictures added from
+  identical bytes share one relationship; `XmlPart.drop_rel`'s guard counts only `@r:id`
+  (never `@r:embed`), so replacing one picture dropped the rel out from under the other,
+  producing an unloadable deck. Fixed with a full r-namespace reference scan before dropping.
+- Majors: in-place `patch_save` (out == original) returned an always-empty diff (residual
+  now computed before writing); `normalize_autofit` neither validated nor scaled `a:fld`/
+  `a:br` run properties (fields now treated exactly like runs); lone-surrogate strings passed
+  `isinstance(str)` validation then exploded mid-mutation in bullets/notes/chart routing
+  (XML-encodability now validated up front); bullet setters left an existing `a:buBlip`
+  beside the new bullet element (schema-invalid; now cleared); `ST_TextBulletSizePercent`
+  emitted fractional percents the schema pattern forbids (whole percents enforced);
+  `chart_by_name`'s not-a-chart message crashed on shapes with unclassifiable `shape_type`.
+- The §1.1 additivity audit itself found **no violations**: byte-identical plain-save
+  round-trips and mutation exercises versus the pre-change tree across the whole corpus, and
+  a class-namespace diff showing pure additions only.
+- Minors: out-of-schema `lvl="9"` now refuses instead of crashing; `EffectiveFont.to_dict`
+  carries `schema`/`version` (goldens regenerated via the update command); golden comparison
+  is byte-exact; API-PROPOSAL.md amendments ledgered (notes body-placeholder refusal, slide
+  int-addressing IndexError semantics, Phase 8 example fixed).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

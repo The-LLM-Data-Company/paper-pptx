@@ -24,6 +24,18 @@ def _canonical_image_ext(ext: str) -> str:
     return "jpg" if lowered == "jpeg" else lowered
 
 
+_R_NS_PREFIX = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def _part_xml_references_rId(root, rId: str) -> bool:
+    """True when any r-namespace attribute anywhere in `root` still carries `rId`."""
+    for element in root.iter():
+        for attr_name, attr_value in element.attrib.items():
+            if attr_value == rId and attr_name.startswith(_R_NS_PREFIX):
+                return True
+    return False
+
+
 class _BasePicture(BaseShape):
     """Base class for shapes based on a `p:pic` element."""
 
@@ -184,9 +196,13 @@ class Picture(_BasePicture):
                 "picture %r references image relationship %s which does not exist"
                 % (self.name, old_rId)
             )
-        new_image = Image.from_file(image_file)
+        try:
+            # -- image parsing is lazy: .ext is what forces PIL to sniff the bytes --
+            new_image = Image.from_file(image_file)
+            new_ext = _canonical_image_ext(new_image.ext)
+        except OSError as e:
+            raise ValueError("image_file is not a recognizable image: %s" % e)
         old_ext = _canonical_image_ext(old_part.partname.ext)
-        new_ext = _canonical_image_ext(new_image.ext)
         if old_ext != new_ext:
             raise UnsupportedStructureError(
                 "replacement image format %r does not match existing image part format %r;"
@@ -199,7 +215,11 @@ class Picture(_BasePicture):
         if new_rId == old_rId:
             return  # -- identical image bytes: already in place
         self._pic.blipFill.blip.rEmbed = new_rId
-        self.part.drop_rel(old_rId)
+        # -- another shape on this slide may still reference old_rId (pictures added from
+        # -- identical bytes share one relationship); XmlPart.drop_rel only counts @r:id
+        # -- references, so guard with a scan over ALL r-namespace attributes.
+        if not _part_xml_references_rId(self.part._element, old_rId):
+            self.part.drop_rel(old_rId)
 
     @property
     def auto_shape_type(self) -> MSO_SHAPE | None:

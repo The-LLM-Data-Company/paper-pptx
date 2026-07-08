@@ -140,30 +140,65 @@ def test_set_none_overrides_inherited_bullet_on_body_placeholder():
 
 
 def test_transitions_keep_exactly_one_bullet_choice_element():
-    paragraph = _add_box_with_text(_open_minimal()).text_frame.paragraphs[0]
+    prs = _open_minimal()
+    box = _add_box_with_text(prs)
+    paragraph = box.text_frame.paragraphs[0]
     paragraph.bullet.set_character()
     paragraph.bullet.set_numbered()
     paragraph.bullet.set_none()
     paragraph.bullet.set_character("→")
-    assert len(_bullet_choice_children(paragraph)) == 1
-    assert paragraph.bullet.type == PP_BULLET_TYPE.CHARACTER
-    assert paragraph.bullet.char == "→"
     assert_pPr_fragment_valid(paragraph)
+
+    reopened = save_reopen(prs)
+    shape = next(s for s in reopened.slides[0].shapes if s.shape_id == box.shape_id)
+    reopened_paragraph = shape.text_frame.paragraphs[0]
+    assert len(_bullet_choice_children(reopened_paragraph)) == 1
+    assert reopened_paragraph.bullet.type == PP_BULLET_TYPE.CHARACTER
+    assert reopened_paragraph.bullet.char == "→"
+
+
+def test_setters_replace_an_existing_picture_bullet():
+    """Regression: buBlip is the fourth member of the schema's bullet choice; setters used to
+    install a second bullet element beside it, producing schema-invalid XML."""
+    prs = _open_minimal()
+    box = _add_box_with_text(prs)
+    paragraph = box.text_frame.paragraphs[0]
+    pPr = paragraph._p.get_or_add_pPr()
+    etree.SubElement(pPr, "{%s}buBlip" % _A)
+    assert paragraph.bullet.type == PP_BULLET_TYPE.PICTURE
+
+    paragraph.bullet.set_character()
+    assert_pPr_fragment_valid(paragraph)
+
+    reopened = save_reopen(prs)
+    shape = next(s for s in reopened.slides[0].shapes if s.shape_id == box.shape_id)
+    bullet = shape.text_frame.paragraphs[0].bullet
+    assert bullet.type == PP_BULLET_TYPE.CHARACTER
+    assert len(_bullet_choice_children(shape.text_frame.paragraphs[0])) == 1
 
 
 def test_none_margins_leave_existing_attributes_untouched():
-    paragraph = _add_box_with_text(_open_minimal()).text_frame.paragraphs[0]
+    prs = _open_minimal()
+    box = _add_box_with_text(prs)
+    paragraph = box.text_frame.paragraphs[0]
     paragraph.bullet.set_character(left_margin=Emu(500000), hanging_indent=Emu(250000))
     paragraph.bullet.set_numbered(left_margin=None, hanging_indent=None)
-    pPr = paragraph._p.pPr
+
+    reopened = save_reopen(prs)
+    shape = next(s for s in reopened.slides[0].shapes if s.shape_id == box.shape_id)
+    pPr = shape.text_frame.paragraphs[0]._p.pPr
     assert pPr.marL == 500000
     assert pPr.indent == -250000
 
 
 def test_set_none_touches_no_margins():
-    paragraph = _add_box_with_text(_open_minimal()).text_frame.paragraphs[0]
-    paragraph.bullet.set_none()
-    pPr = paragraph._p.pPr
+    prs = _open_minimal()
+    box = _add_box_with_text(prs)
+    box.text_frame.paragraphs[0].bullet.set_none()
+
+    reopened = save_reopen(prs)
+    shape = next(s for s in reopened.slides[0].shapes if s.shape_id == box.shape_id)
+    pPr = shape.text_frame.paragraphs[0]._p.pPr
     assert pPr.marL is None
     assert pPr.indent is None
 
@@ -184,6 +219,9 @@ def test_set_none_touches_no_margins():
         lambda b: b.set_numbered(start_at=True),
         lambda b: b.set_character(left_margin=Emu(99999999999)),
         lambda b: b.set_numbered(font_name=42),
+        lambda b: b.set_character(size_percent=0.755),  # -- schema admits whole percents only
+        lambda b: b.set_character("bad\udc80char"),  # -- lone surrogate: unserializable
+        lambda b: b.set_numbered(font_name="bad\udc80font"),
     ],
 )
 def test_bad_arguments_raise_valueerror_and_leave_the_tree_untouched(bad_call):

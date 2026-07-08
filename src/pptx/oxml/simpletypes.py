@@ -681,7 +681,8 @@ class ST_TextBulletSizePercent(BaseFloatType):
 
     Reads both wire forms found in real files: thousandths-of-a-percent integers ("75000",
     ECMA-376:2006 form) and percent strings ("75%"). Writes the percent-string form, which
-    both current schema editions bless.
+    both current schema editions bless — their pattern admits WHOLE percents only (25%–400%),
+    so fractional percents like 0.755 are rejected at validation.
     """
 
     @classmethod
@@ -692,14 +693,19 @@ class ST_TextBulletSizePercent(BaseFloatType):
 
     @classmethod
     def convert_to_xml(cls, value):
-        percent_str = ("%f" % (value * 100.0)).rstrip("0").rstrip(".")
-        return "%s%%" % percent_str
+        return "%d%%" % int(round(value * 100.0))
 
     @classmethod
     def validate(cls, value):
         BaseFloatType.validate(value)
         if value < 0.25 or value > 4.0:
             raise ValueError("bullet size fraction must be in range 0.25..4.0, got %s" % value)
+        percent = value * 100.0
+        if abs(percent - round(percent)) > 1e-9:
+            raise ValueError(
+                "bullet size must be a whole percent (the ECMA-376 schema admits integer"
+                " percents only), got %s%%" % percent
+            )
 
 
 class ST_TextBulletStartAtNum(BaseIntType):

@@ -31,6 +31,8 @@
         {
           "text": "Mapped text color",
           "font": {
+            "schema": "paper-effective-font",
+            "version": 1,
             "size": {
               "value": 228600,
               "value_pt": 18.0,

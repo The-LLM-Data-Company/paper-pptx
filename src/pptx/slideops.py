@@ -21,6 +21,7 @@ from pptx.errors import RelationshipPolicyError
 from pptx.opc.constants import CONTENT_TYPE as CT
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.opc.package import XmlPart
+from pptx.opc.packuri import PackURI
 
 if TYPE_CHECKING:
     from pptx.parts.slide import SlidePart
@@ -49,8 +50,13 @@ def clone_slide_part(source_part: "SlidePart", policy) -> "SlidePart":
     package = source_part.package
     plan = _validated_plan(source_part, policy)
 
+    # -- Parts created here are unreachable from the package rels graph until the caller
+    # -- relates the new slide, so `package.next_partname` cannot see them. `allocated`
+    # -- tracks every partname assigned during THIS clone so two deep copies sharing a
+    # -- template (e.g. two charts) can never collide.
+    allocated: "set" = set()
     new_part = SlidePart(
-        package.next_partname("/ppt/slides/slide%d.xml"),
+        _allocate_partname(package, "/ppt/slides/slide%d.xml", allocated),
         CT.PML_SLIDE,
         package,
         copy.deepcopy(source_part._element),
@@ -64,20 +70,35 @@ def clone_slide_part(source_part: "SlidePart", policy) -> "SlidePart":
             rId_mapping[old_rId] = new_part.relate_to(rel.target_part, rel.reltype)
         elif action == "copy":
             rId_mapping[old_rId] = new_part.relate_to(
-                _copy_leaf_part(rel.target_part), rel.reltype
+                _copy_leaf_part(rel.target_part, allocated), rel.reltype
             )
         elif action == "chart":
             rId_mapping[old_rId] = new_part.relate_to(
-                _copy_chart_part(rel.target_part), rel.reltype
+                _copy_chart_part(rel.target_part, allocated), rel.reltype
             )
         elif action == "notes":
             rId_mapping[old_rId] = new_part.relate_to(
-                _copy_notes_part(rel.target_part, new_part), rel.reltype
+                _copy_notes_part(rel.target_part, new_part, allocated), rel.reltype
             )
         # -- action == "drop": no relationship on the clone (notes policy) --
 
     _rewrite_r_references(new_part._element, rId_mapping)
     return new_part
+
+
+def _allocate_partname(package, template: str, allocated: "set") -> PackURI:
+    """Return the lowest-numbered partname from `template` unused in `package` OR `allocated`.
+
+    Records the returned name in `allocated` so subsequent allocations within the same
+    (not-yet-related) clone operation cannot reuse it.
+    """
+    used = {str(part.partname) for part in package.iter_parts()} | allocated
+    index = 1
+    while template % index in used:
+        index += 1
+    partname = template % index
+    allocated.add(partname)
+    return PackURI(partname)
 
 
 def _validated_plan(source_part, policy) -> "List[Tuple[str, str, object]]":
@@ -148,23 +169,25 @@ def _validate_notes_rels(notes_part) -> None:
             )
 
 
-def _copy_chart_part(chart_part):
+def _copy_chart_part(chart_part, allocated):
     """Return a deep copy of `chart_part` including its embedded workbook and style parts."""
-    new_chart = _copy_leaf_part(chart_part)
+    new_chart = _copy_leaf_part(chart_part, allocated)
     rId_mapping = {}
     for rId in sorted(chart_part.rels, key=_rId_sort_key):
         rel = chart_part.rels[rId]
         if rel.is_external:
             rId_mapping[rId] = new_chart.rels.get_or_add_ext_rel(rel.reltype, rel.target_ref)
         else:
-            rId_mapping[rId] = new_chart.relate_to(_copy_leaf_part(rel.target_part), rel.reltype)
+            rId_mapping[rId] = new_chart.relate_to(
+                _copy_leaf_part(rel.target_part, allocated), rel.reltype
+            )
     _rewrite_r_references(new_chart._element, rId_mapping)
     return new_chart
 
 
-def _copy_notes_part(notes_part, new_slide_part):
+def _copy_notes_part(notes_part, new_slide_part, allocated):
     """Return a deep copy of `notes_part`, related to the notes master and the CLONE slide."""
-    new_notes = _copy_leaf_part(notes_part)
+    new_notes = _copy_leaf_part(notes_part, allocated)
     rId_mapping = {}
     for rId in sorted(notes_part.rels, key=_rId_sort_key):
         rel = notes_part.rels[rId]
@@ -178,10 +201,10 @@ def _copy_notes_part(notes_part, new_slide_part):
     return new_notes
 
 
-def _copy_leaf_part(part):
+def _copy_leaf_part(part, allocated):
     """Return a new part of `part`'s class with copied content and a fresh partname."""
     package = part.package
-    partname = package.next_partname(_partname_template(str(part.partname)))
+    partname = _allocate_partname(package, _partname_template(str(part.partname)), allocated)
     if isinstance(part, XmlPart):
         return type(part)(partname, part.content_type, package, copy.deepcopy(part._element))
     return type(part)(partname, part.content_type, package, part.blob)

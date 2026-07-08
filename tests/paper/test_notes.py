@@ -127,6 +127,17 @@ def test_replace_rejects_non_string_before_touching_anything():
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
 
 
+def test_replace_rejects_unencodable_text_without_destroying_existing_notes():
+    """Regression: a lone-surrogate str passed the isinstance check, the old paragraphs were
+    removed, and the write then exploded — leaving the notes destroyed."""
+    prs = _open(CHART_NOTES)
+    before = save_to_bytes(prs)
+    with pytest.raises(ValueError, match="not encodable"):
+        prs.slides[0].replace_notes_text("bad \udc80 text")
+    assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
+    assert prs.slides[0].read_notes_text() == "Speaker notes for the clone fixture."
+
+
 # -------------------------------------------------------------------------------- lo_smoke
 
 
