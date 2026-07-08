@@ -10,9 +10,36 @@ from pptx.chart.plot import PlotFactory, PlotTypeInspector
 from pptx.chart.series import SeriesCollection
 from pptx.chart.xmlwriter import SeriesXmlRewriterFactory
 from pptx.dml.chtfmt import ChartFormat
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.shared import ElementProxy, PartElementProxy
 from pptx.text.text import Font, TextFrame
 from pptx.util import lazyproperty
+
+#: chart types `Chart.replace_data_safe` supports: the category-chart families the
+#: production reference exercised (paper-pptx addition)
+_SAFE_REPLACE_CHART_TYPES = frozenset(
+    [
+        XL_CHART_TYPE.AREA,
+        XL_CHART_TYPE.AREA_STACKED,
+        XL_CHART_TYPE.AREA_STACKED_100,
+        XL_CHART_TYPE.BAR_CLUSTERED,
+        XL_CHART_TYPE.BAR_STACKED,
+        XL_CHART_TYPE.BAR_STACKED_100,
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        XL_CHART_TYPE.COLUMN_STACKED,
+        XL_CHART_TYPE.COLUMN_STACKED_100,
+        XL_CHART_TYPE.DOUGHNUT,
+        XL_CHART_TYPE.DOUGHNUT_EXPLODED,
+        XL_CHART_TYPE.LINE,
+        XL_CHART_TYPE.LINE_MARKERS,
+        XL_CHART_TYPE.LINE_MARKERS_STACKED,
+        XL_CHART_TYPE.LINE_MARKERS_STACKED_100,
+        XL_CHART_TYPE.LINE_STACKED,
+        XL_CHART_TYPE.LINE_STACKED_100,
+        XL_CHART_TYPE.PIE,
+        XL_CHART_TYPE.PIE_EXPLODED,
+    ]
+)
 
 
 class Chart(PartElementProxy):
@@ -165,6 +192,91 @@ class Chart(PartElementProxy):
         rewriter = SeriesXmlRewriterFactory(self.chart_type, chart_data)
         rewriter.replace_series_data(self._chartSpace)
         self._workbook.update_from_xlsx_blob(chart_data.xlsx_blob)
+
+    def replace_data_safe(self, categories, series, *, number_format=None):
+        """Validate `categories`/`series` fully, then route to :meth:`replace_data`.
+
+        paper-pptx addition: the safety-and-addressing wrapper over the existing replacement
+        mechanism. `categories` is a sequence of str; `series` is a sequence of
+        `(name, values)` pairs where each `values` is a sequence of numbers (or None for a
+        missing point) exactly as long as `categories`.
+
+        Data-shape problems raise |ValueError| (programmer error). Structural refusals
+        (|UnsupportedStructureError|, document untouched): a chart type outside the
+        supported category-chart families (XY/bubble/stock/surface/radar and 3-D variants
+        are out of v0 scope), a multi-plot (combo) chart, or a chart with no embedded
+        workbook (e.g. LibreOffice-written charts) — the replacement mechanism must update
+        the workbook and there is nothing to update.
+        """
+        from pptx.chart.data import CategoryChartData
+        from pptx.errors import UnsupportedStructureError
+
+        # -- data validation, complete before any structural probing or mutation --
+        categories = list(categories)
+        if not categories:
+            raise ValueError("categories must be a non-empty sequence of str")
+        for category in categories:
+            if not isinstance(category, str):
+                raise ValueError("categories must all be str, got %r" % (category,))
+        series = list(series)
+        if not series:
+            raise ValueError("series must be a non-empty sequence of (name, values) pairs")
+        normalized_series = []
+        seen_names = set()
+        for item in series:
+            try:
+                name, values = item
+            except (TypeError, ValueError):
+                raise ValueError("each series must be a (name, values) pair, got %r" % (item,))
+            if not isinstance(name, str) or not name:
+                raise ValueError("series name must be a non-empty str, got %r" % (name,))
+            if name in seen_names:
+                raise ValueError("duplicate series name %r" % (name,))
+            seen_names.add(name)
+            values = tuple(values)
+            if len(values) != len(categories):
+                raise ValueError(
+                    "series %r has %d values for %d categories"
+                    % (name, len(values), len(categories))
+                )
+            for value in values:
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, (int, float))
+                ):
+                    raise ValueError(
+                        "series %r values must be numbers or None, got %r" % (name, value)
+                    )
+            normalized_series.append((name, values))
+        if number_format is not None and not isinstance(number_format, str):
+            raise ValueError("number_format must be a str or None, got %r" % (number_format,))
+
+        # -- structural validation --
+        chart_type = self.chart_type
+        if chart_type not in _SAFE_REPLACE_CHART_TYPES:
+            raise UnsupportedStructureError(
+                "chart type %s is not supported by replace_data_safe in v0 (category charts"
+                " only: bar/column/line/area families, pie, doughnut)" % chart_type
+            )
+        if len(self.plots) != 1:
+            raise UnsupportedStructureError(
+                "multi-plot (combo) charts are not supported by replace_data_safe in v0"
+            )
+        if self._workbook.xlsx_part is None:
+            raise UnsupportedStructureError(
+                "this chart has no embedded workbook (no c:externalData); replacing its"
+                " data would leave chart XML and workbook inconsistent"
+            )
+
+        # -- route to the existing public mechanism --
+        chart_data = (
+            CategoryChartData(number_format=number_format)
+            if number_format is not None
+            else CategoryChartData()
+        )
+        chart_data.categories = categories
+        for name, values in normalized_series:
+            chart_data.add_series(name, values)
+        self.replace_data(chart_data)
 
     @lazyproperty
     def series(self):

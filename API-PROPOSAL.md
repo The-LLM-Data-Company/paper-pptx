@@ -252,10 +252,16 @@ class PackageDiff:            # schema "paper-package-diff", version 1
     def to_dict(self) -> dict
 ```
 
-- `xml_equivalent`: lxml-parsed recursive comparison — tag, attributes (order-insensitive),
-  text and tail **byte-for-byte** (meaningful-whitespace preservation is the §7 trap test:
-  two files differing only by a trailing space inside `a:t` are NOT equivalent). Namespace
-  *prefix* spelling differences are equivalent; declaration-only differences are equivalent.
+- `xml_equivalent`: C14N 2.0 comparison with rewritten prefixes — attribute order, prefix
+  spelling, and declaration differences are equivalent. **Amended during implementation
+  (§8):** whitespace-only text nodes are ignored ONLY where the parent element has element
+  children (structural pretty-print indentation; OOXML defines no mixed content, so such
+  whitespace can never render) — without this, every part of a pretty-printing producer's
+  file (LibreOffice) counts as changed after any load-save and narrow save is useless on
+  real-world decks. Text of element-childless elements (`a:t` …) is never normalized: the
+  trailing-space trap pair still compares NOT equivalent. `[Content_Types].xml` additionally
+  compares order-insensitively inside `diff_package`/`patch_save` (OPC entry order carries
+  no significance).
 - `diff_package`: XML parts compared with `xml_equivalent`, all other parts by bytes.
 - `patch_save`: compare-based (no opc-internals changes): save `document` to a temp buffer,
   then write `out_path` where every part semantically identical to `original_path`'s is
@@ -313,9 +319,14 @@ unpack/clean/pack workflow is *not* ported):
 ```python
 @dataclass(frozen=True)
 class SlideClonePolicy:
-    deep_copy_charts: bool = True      # chart parts + their embedded workbooks
+    deep_copy_charts: bool = True      # False REFUSES (amended in implementation, see below)
     deep_copy_notes: bool = True       # notes-slide part (False = clone has no notes)
     share_media: bool = True           # image/media parts shared (False = deep-copy media)
+
+# Amended during implementation (§8): `deep_copy_charts=False` raises
+# RelationshipPolicyError instead of sharing the chart part — sharing an editable chart
+# between slides is exactly the silent-corruption class named in the mission statement,
+# so v0 offers no share option for charts.
 
 def clone(self, source: Slide | int, *,
           after: Slide | int | None = None,          # default: directly after source

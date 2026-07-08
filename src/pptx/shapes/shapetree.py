@@ -599,6 +599,33 @@ class SlideShapes(_BaseGroupShapes):
         graphicFrame = self._add_graphicFrame_containing_table(rows, cols, left, top, width, height)
         return cast(GraphicFrame, self._shape_factory(graphicFrame))
 
+    def chart_by_name(self, name: str):
+        """Return the |Chart| held by the shape on this slide named `name`.
+
+        paper-pptx addition, the chart-addressing half of safe chart-data replacement.
+        Raises |TargetNotFoundError| when no shape has that name, or when shapes with the
+        name exist but none holds a chart (the message says what was found instead).
+        Raises |AmbiguousTargetError| when more than one chart-bearing shape has the name —
+        this API never guesses between them.
+        """
+        from pptx.errors import AmbiguousTargetError, TargetNotFoundError
+
+        named_shapes = [shape for shape in self if shape.name == name]
+        chart_shapes = [shape for shape in named_shapes if shape.has_chart]
+        if not chart_shapes:
+            if not named_shapes:
+                raise TargetNotFoundError("no shape named %r on this slide" % name)
+            raise TargetNotFoundError(
+                "shape named %r holds no chart (found: %s)"
+                % (name, ", ".join(shape.shape_type.name for shape in named_shapes))
+            )
+        if len(chart_shapes) > 1:
+            raise AmbiguousTargetError(
+                "%d chart shapes on this slide are named %r; refusing to pick one"
+                % (len(chart_shapes), name)
+            )
+        return chart_shapes[0].chart
+
     def clone_layout_placeholders(self, slide_layout: SlideLayout) -> None:
         """Add placeholder shapes based on those in `slide_layout`.
 

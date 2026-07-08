@@ -216,6 +216,20 @@ identical-bytes replacement is a proven no-op; an old part orphans only when the
 reference goes (shared images on other slides keep it alive). The reference's low-res /
 natural-size math lives on as test assertions only (`test_image_replace.py`), not API.
 
+## Organ: Chart data routing (Phase 9)
+
+`SlideShapes.chart_by_name(name)` + `Chart.replace_data_safe(categories, series, *,
+number_format=None)`. Reference mined: `pptx_helpers/chart_ops.py` (by-slide/by-name
+addressing, exercised chart types). The organ is addressing and safety only — it routes to
+upstream's public `Chart.replace_data`; the quarantined string-template XML writer gains no
+code. Addressing refusals: `TargetNotFoundError` (missing, or named shape holds no chart —
+message says what it found), `AmbiguousTargetError` (duplicate chart names). Structural
+refusals, atomic: chart types outside the category families (XY/bubble/stock/radar/3-D…),
+multi-plot combos, and charts with no embedded workbook (LibreOffice-written charts —
+replacing would desync chart XML from the missing workbook). Data-shape problems are
+`ValueError` and provably leave the chart untouched. Chart *authoring* patterns (waterfall
+bridge, styling presets) remain example-only per CONVENTIONS §5.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
