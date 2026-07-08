@@ -220,3 +220,308 @@ class _MediaParts(object):
             if media_part.sha1 == sha1:
                 return media_part
         return None
+
+
+# ===========================================================================================
+# paper-pptx package kernel (CONVENTIONS §7) — additive module-level utilities.
+#
+# `pptx.package` already held the opc `Package` class when the kernel's pinned module name
+# was chosen, so the kernel extends this module additively rather than shadowing anything
+# (deviation ledgered in PAPER.md). Everything below is new API: semantic XML comparison,
+# part-level package diffing, and compare-based narrow save.
+# ===========================================================================================
+
+import io as _io  # noqa: E402
+import os as _os  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import zipfile as _zipfile  # noqa: E402
+from dataclasses import dataclass as _dataclass  # noqa: E402
+from typing import Sequence, Tuple, Union  # noqa: E402
+
+from pptx.errors import UnsupportedStructureError  # noqa: E402
+
+#: Pinned deterministic zip entry timestamp (the zip epoch).
+_ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+_CONTENT_TYPES = "[Content_Types].xml"
+
+
+def xml_equivalent(a: Union[bytes, str], b: Union[bytes, str]) -> bool:
+    """Return True when `a` and `b` are semantically equivalent XML documents.
+
+    Comparison is Canonical XML (C14N 2.0) with prefixes rewritten, so differences in
+    attribute order, namespace-prefix spelling, XML declaration, self-closing-tag style, and
+    pretty-print indentation are equivalent — while element order, attribute values, and all
+    potentially meaningful text compare exactly.
+
+    Whitespace handling is deliberately asymmetric (CONVENTIONS §3): a whitespace-only text
+    node is ignored ONLY where its parent element has element children (structural
+    indentation; OOXML defines no mixed content, so such whitespace can never render). Text
+    of element-childless elements — `a:t` and friends — is never normalized in any way: two
+    documents differing only by a trailing space inside a text node are NOT equivalent.
+
+    Raises |ValueError| when either argument is not well-formed XML.
+    """
+    return _c14n_bytes(a) == _c14n_bytes(b)
+
+
+def _c14n_bytes(data: Union[bytes, str]) -> bytes:
+    from xml.etree import ElementTree as _ElementTree
+
+    out = _io.StringIO()
+    try:
+        _ElementTree.canonicalize(
+            _drop_structural_whitespace(data),
+            out=out,
+            strip_text=False,
+            rewrite_prefixes=True,
+        )
+    except _ElementTree.ParseError as e:
+        raise ValueError("not well-formed XML: %s" % e)
+    return out.getvalue().encode("utf-8")
+
+
+def _drop_structural_whitespace(data: Union[bytes, str]) -> str:
+    """Return `data` re-serialized with structural-indentation whitespace removed.
+
+    Drops (a) whitespace-only `.text` of elements that have element children and (b)
+    whitespace-only `.tail` of any element (a tail always sits inside a parent that has
+    element children — this element). The text of element-childless elements is untouchable
+    here by construction, so preserved-space content like `a:t` can never be altered.
+
+    Raises |ValueError| on malformed XML.
+    """
+    from lxml import etree as _etree
+
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    try:
+        root = _etree.fromstring(data)
+    except _etree.XMLSyntaxError as e:
+        raise ValueError("not well-formed XML: %s" % e)
+    for element in root.iter():
+        if len(element) and element.text is not None and not element.text.strip():
+            element.text = None
+        if element.tail is not None and not element.tail.strip():
+            element.tail = None
+    return _etree.tostring(root, encoding="unicode")
+
+
+def _is_xml_member(name: str) -> bool:
+    return name.endswith(".xml") or name.endswith(".rels")
+
+
+def _members_semantically_equal(name: str, a: bytes, b: bytes) -> bool:
+    """True when zip member `name` carries semantically identical content in `a` and `b`.
+
+    XML members compare via `xml_equivalent`; `[Content_Types].xml` additionally compares
+    with its children sorted first, because OPC defines no significance for their order and
+    every writer orders them differently. Binary members compare byte-for-byte (`a == b` is
+    checked by callers first).
+    """
+    if not _is_xml_member(name):
+        return a == b
+    if name == _CONTENT_TYPES:
+        return _c14n_bytes(_sorted_content_types(a)) == _c14n_bytes(_sorted_content_types(b))
+    return xml_equivalent(a, b)
+
+
+def _sorted_content_types(data: bytes) -> bytes:
+    """Return `data` with the `[Content_Types].xml` children in a canonical sort order."""
+    from lxml import etree as _etree
+
+    root = _etree.fromstring(data)
+    children = sorted(
+        root,
+        key=lambda e: (
+            e.tag,
+            e.get("Extension") or "",
+            e.get("PartName") or "",
+            e.get("ContentType") or "",
+        ),
+    )
+    for child in children:
+        root.append(child)  # -- re-appending moves each to the end, in sorted order
+    return _etree.tostring(root)
+
+
+@_dataclass(frozen=True)
+class PartDelta:
+    """One differing package member."""
+
+    partname: str  #: partname-style, e.g. "/ppt/slides/slide1.xml"
+    kind: str  #: "xml" | "binary"
+    change: str  #: "added" | "removed" | "changed"
+    detail: str
+
+    def to_dict(self) -> dict:
+        return {
+            "partname": self.partname,
+            "kind": self.kind,
+            "change": self.change,
+            "detail": self.detail,
+        }
+
+
+@_dataclass(frozen=True)
+class PackageDiff:
+    """Part-by-part semantic diff between two packages. Schema "paper-package-diff" v1."""
+
+    deltas: Tuple[PartDelta, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.deltas
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper-package-diff",
+            "version": 1,
+            "deltas": [delta.to_dict() for delta in self.deltas],
+        }
+
+    def __repr__(self) -> str:
+        return "PackageDiff(%d deltas)" % len(self.deltas)
+
+
+def diff_package(path_a: str, path_b: str) -> PackageDiff:
+    """Return the |PackageDiff| between the packages at `path_a` and `path_b`.
+
+    XML members are compared semantically (`xml_equivalent`; `[Content_Types].xml`
+    order-insensitively), binary members by bytes. Members appearing in only one package
+    report as "added" (only in `path_b`) or "removed" (only in `path_a`). Deltas are sorted
+    by partname.
+    """
+    map_a = _read_zip_map(path_a)
+    map_b = _read_zip_map(path_b)
+    deltas = []
+    for name in sorted(set(map_a) | set(map_b)):
+        partname = "/" + name
+        kind = "xml" if _is_xml_member(name) else "binary"
+        if name not in map_b:
+            deltas.append(PartDelta(partname, kind, "removed", "only in %s" % path_a))
+        elif name not in map_a:
+            deltas.append(PartDelta(partname, kind, "added", "only in %s" % path_b))
+        elif map_a[name] == map_b[name]:
+            continue
+        elif _members_semantically_equal(name, map_a[name], map_b[name]):
+            continue  # -- byte-different but semantically identical: not a delta
+        elif kind == "xml":
+            deltas.append(PartDelta(partname, kind, "changed", "semantic XML change"))
+        else:
+            deltas.append(
+                PartDelta(
+                    partname,
+                    kind,
+                    "changed",
+                    "binary change (%d -> %d bytes)" % (len(map_a[name]), len(map_b[name])),
+                )
+            )
+    return PackageDiff(tuple(deltas))
+
+
+def patch_save(original_path: str, document, out_path: str) -> PackageDiff:
+    """Save `document` to `out_path`, restoring original bytes for unchanged XML parts.
+
+    Compare-based narrow save (CONVENTIONS §7): `document` (a |Presentation|) is serialized
+    normally, then every XML member that is semantically identical to its counterpart in
+    `original_path` is written with the ORIGINAL bytes, so unrelated parts never churn.
+    Returns the residual |PackageDiff| between `original_path` and `out_path`.
+
+    Writes are deterministic — entry order is `[Content_Types].xml`, `_rels/.rels`, then all
+    remaining members sorted; every entry timestamp is fixed to 1980-01-01 — and atomic: the
+    package is built in a temp file in `out_path`'s directory and moved into place with
+    `os.replace`, so a mid-write failure leaves any existing `out_path` untouched. When
+    nothing changed at all, `out_path` is written as an exact byte copy of `original_path`
+    (the no-op round trip is byte-identical).
+
+    Raises |UnsupportedStructureError| when `original_path` is not a readable zip package
+    (before anything is written) and |ValueError| when `document` cannot save itself.
+    """
+    if not hasattr(document, "save"):
+        raise ValueError(
+            "document must be a Presentation (or provide .save(stream)), got %r"
+            % type(document).__name__
+        )
+    original_map = _read_zip_map(original_path)
+
+    buffer = _io.BytesIO()
+    document.save(buffer)
+    candidate_map = _read_zip_map_from_bytes(buffer.getvalue(), "in-memory save output")
+
+    out_map = {}
+    for name, data in candidate_map.items():
+        original = original_map.get(name)
+        byte_differs = original is not None and data != original
+        if byte_differs and _members_semantically_equal(name, original, data):
+            data = original
+        out_map[name] = data
+
+    unchanged = set(out_map) == set(original_map) and all(
+        out_map[name] == original_map[name] for name in out_map
+    )
+    if unchanged:
+        _atomic_write_bytes(_read_file_bytes(original_path), out_path)
+        return PackageDiff(())
+
+    _atomic_write_zip(out_map, out_path)
+    return diff_package(original_path, out_path)
+
+
+def _member_write_order(names: "Sequence[str]") -> "Sequence[str]":
+    head = [n for n in (_CONTENT_TYPES, "_rels/.rels") if n in names]
+    return head + sorted(n for n in names if n not in head)
+
+
+def _atomic_write_zip(member_map: dict, out_path: str) -> None:
+    def write(handle):
+        with _zipfile.ZipFile(handle, "w") as zipf:
+            for name in _member_write_order(list(member_map)):
+                info = _zipfile.ZipInfo(name, date_time=_ZIP_EPOCH)
+                info.compress_type = _zipfile.ZIP_DEFLATED
+                zipf.writestr(info, member_map[name], compresslevel=6)
+
+    _atomic_write(write, out_path)
+
+
+def _atomic_write_bytes(data: bytes, out_path: str) -> None:
+    _atomic_write(lambda handle: handle.write(data), out_path)
+
+
+def _atomic_write(write, out_path: str) -> None:
+    """Run `write(file_handle)` against a temp file, then move it into place atomically."""
+    out_dir = _os.path.dirname(_os.path.abspath(str(out_path)))
+    fd, temp_path = _tempfile.mkstemp(suffix=".pptx.partial", dir=out_dir)
+    try:
+        with _os.fdopen(fd, "wb") as handle:
+            write(handle)
+        _os.replace(temp_path, str(out_path))
+    except BaseException:
+        if _os.path.exists(temp_path):
+            _os.unlink(temp_path)
+        raise
+
+
+def _read_file_bytes(path: str) -> bytes:
+    with open(str(path), "rb") as handle:
+        return handle.read()
+
+
+def _read_zip_map(path: str) -> dict:
+    try:
+        data = _read_file_bytes(path)
+    except OSError as e:
+        raise UnsupportedStructureError("cannot read package %s: %s" % (path, e))
+    return _read_zip_map_from_bytes(data, str(path))
+
+
+def _read_zip_map_from_bytes(data: bytes, label: str) -> dict:
+    try:
+        with _zipfile.ZipFile(_io.BytesIO(data)) as zipf:
+            names = zipf.namelist()
+            if len(names) != len(set(names)):
+                raise UnsupportedStructureError(
+                    "package %s contains duplicate member names" % label
+                )
+            return {name: zipf.read(name) for name in names}
+    except _zipfile.BadZipFile:
+        raise UnsupportedStructureError("%s is not a zip package" % label)

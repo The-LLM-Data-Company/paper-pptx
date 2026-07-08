@@ -136,6 +136,33 @@ walk the reference approximated with "common fallbacks". All additive:
 - Independent cross-check: LibreOffice's re-export of the branded fixture baked exactly the
   sizes this walk resolves (36/26/22pt).
 
+## Organ: Package kernel (Phase 5)
+
+`pptx.package` gains module-level `xml_equivalent`, `diff_package` → `PackageDiff`, and
+`patch_save` (CONVENTIONS §7). Reference mined: `office_helpers/ooxml_util.py` (C14N
+strip_text=False comparison) and `office_helpers/package.py` (compare-based patch_save).
+**Pinned-shape note (§8):** `pptx.package` already existed upstream (the opc `Package`
+class), so the kernel extends the module additively — pinned import path honored, nothing
+shadowed.
+
+- `xml_equivalent`: C14N 2.0 with rewritten prefixes over a tree whose *structural*
+  whitespace-only text nodes are dropped — only where the parent has element children (OOXML
+  has no mixed content, so such whitespace can never render). Text of element-childless
+  elements (`a:t` …) is never normalized: the frozen trailing-space fixture pair compares
+  NOT equivalent, and a trailing-space *edit* is provably never "restored" away. The
+  structural rule is a deliberate improvement over the reference's strict c14n: without it,
+  every part of a pretty-printing producer's file (LibreOffice) counts as changed after any
+  load-save, making narrow save useless on real-world decks.
+- `_members_semantically_equal` compares `[Content_Types].xml` order-insensitively (OPC
+  assigns no significance to entry order; every producer orders differently).
+- `patch_save`: compare-based; deterministic zip (entry order `[Content_Types].xml`,
+  `_rels/.rels`, then sorted; all timestamps 1980-01-01; deflate level 6); temp-file +
+  `os.replace` atomicity with a crash-injection test; no-op round trip byte-identical (when
+  nothing changed the original bytes are copied verbatim). Measured on a LibreOffice file:
+  a load-save round trip restores every part except `[Content_Types].xml`, whose one
+  residual delta is genuine (LO declares Default entries for extensions with no parts;
+  regeneration from live parts drops them).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

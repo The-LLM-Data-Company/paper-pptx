@@ -11,17 +11,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 5 (package kernel)")
-def test_pr0_package_kernel_api():
-    from pptx.package import (  # noqa: F401
-        PackageDiff,
-        PartDelta,
-        diff_package,
-        patch_save,
-        xml_equivalent,
-    )
-
-
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 6 (speaker notes)")
 def test_pr0_notes_api():
     from pptx.slide import Slide
