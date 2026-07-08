@@ -8,9 +8,12 @@ from pptx.dml.fill import FillFormat
 from pptx.enum.dml import MSO_FILL
 from pptx.enum.lang import MSO_LANGUAGE_ID
 from pptx.enum.text import MSO_AUTO_SIZE, MSO_UNDERLINE, MSO_VERTICAL_ANCHOR
+from pptx.errors import UnsupportedStructureError
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.oxml.ns import qn
 from pptx.oxml.simpletypes import ST_TextWrappingType
 from pptx.shapes import Subshape
+from pptx.text.bullet import BulletFormat
 from pptx.text.fonts import FontFiles
 from pptx.text.layout import TextFitter
 from pptx.util import Centipoints, Emu, Length, Pt, lazyproperty
@@ -102,6 +105,28 @@ class TextFrame(Subshape):
         self._apply_fit(font_family, font_size, bold, italic)
 
     @property
+    def font_scale(self) -> float | None:
+        """Font scale percent of this frame's `a:normAutofit`, e.g. 62.5 (paper-pptx addition).
+
+        100.0 when the frame has `a:normAutofit` with no explicit scale; |None| when the
+        frame's autofit setting is anything other than `a:normAutofit`. Read-only: PowerPoint
+        owns this value (it records the shrink-to-fit reduction last applied); use
+        :meth:`normalize_autofit` to freeze it into explicit sizes.
+        """
+        normAutofit = self._bodyPr.normAutofit
+        return normAutofit.fontScale if normAutofit is not None else None
+
+    @property
+    def line_space_reduction(self) -> float | None:
+        """Line-spacing reduction percent of `a:normAutofit`, e.g. 20.0 (paper-pptx addition).
+
+        0.0 when the frame has `a:normAutofit` with no explicit reduction; |None| when the
+        frame's autofit setting is anything other than `a:normAutofit`. Read-only.
+        """
+        normAutofit = self._bodyPr.normAutofit
+        return normAutofit.lnSpcReduction if normAutofit is not None else None
+
+    @property
     def margin_bottom(self) -> Length:
         """|Length| value representing the inset of text from the bottom text frame border.
 
@@ -140,6 +165,114 @@ class TextFrame(Subshape):
     @margin_top.setter
     def margin_top(self, emu: Length):
         self._bodyPr.tIns = emu
+
+    def normalize_autofit(self, *, min_font_size: Length | None = None) -> None:
+        """Freeze this frame's rendered text metrics and set explicit no-autofit.
+
+        paper-pptx addition. What the reader currently sees is made explicit, then the frame's
+        autofit is set to `a:noAutofit`:
+
+        - `a:normAutofit` with a font scale: every explicit font size in the frame (run,
+          paragraph-default, and end-paragraph properties) is multiplied by the scale. If any
+          run's size is not locally resolvable (neither its own `sz` nor its paragraph's
+          default), |UnsupportedStructureError| is raised — this API never guesses inherited
+          sizes.
+        - `a:normAutofit` with a line-spacing reduction: every paragraph's explicit line
+          spacing is reduced accordingly; any paragraph without explicit line spacing raises
+          |UnsupportedStructureError|.
+        - `a:spAutoFit`, `a:noAutofit`, or no autofit element: no text metrics change.
+
+        `min_font_size` (a |Length|, e.g. `Pt(11)`) is applied after freezing: explicit sizes
+        below the floor are raised to it. Validation completes fully before the first write
+        (a refusal leaves the frame byte-identical).
+        """
+        scale = self.font_scale
+        reduction = self.line_space_reduction
+        scale = 100.0 if scale is None else scale
+        reduction = 0.0 if reduction is None else reduction
+        if min_font_size is not None and (
+            isinstance(min_font_size, bool)
+            or not isinstance(min_font_size, int)
+            or min_font_size <= 0
+        ):
+            raise ValueError(
+                "min_font_size must be a positive Length (EMU int) or None, got %r"
+                % (min_font_size,)
+            )
+
+        # -- validation pass: complete before any mutation (refusal atomicity). Raw-XML reads
+        # -- only: the font/paragraph proxy accessors are get-or-add and would themselves
+        # -- dirty the tree with empty rPr/pPr elements.
+        shape_name = getattr(self._parent, "name", "<unknown shape>")
+        for para_idx, p in enumerate(self._txBody.p_lst):
+            pPr = p.find(qn("a:pPr"))
+            if scale != 100.0:
+                defRPr = pPr.find(qn("a:defRPr")) if pPr is not None else None
+                para_has_size = defRPr is not None and defRPr.get("sz") is not None
+                # -- a:fld (fields) render text exactly like runs and must be sizable too
+                for r in p.findall(qn("a:r")) + p.findall(qn("a:fld")):
+                    rPr = r.find(qn("a:rPr"))
+                    run_has_size = rPr is not None and rPr.get("sz") is not None
+                    if not run_has_size and not para_has_size:
+                        raise UnsupportedStructureError(
+                            "cannot freeze font scale %.1f%%: %s in paragraph %d of shape %r"
+                            " has no locally resolvable font size (set explicit sizes first,"
+                            " or resolve effective values before normalizing)"
+                            % (
+                                scale,
+                                "field" if r.tag == qn("a:fld") else "run",
+                                para_idx,
+                                shape_name,
+                            )
+                        )
+            if reduction != 0.0:
+                lnSpc = pPr.find(qn("a:lnSpc")) if pPr is not None else None
+                if lnSpc is None:
+                    raise UnsupportedStructureError(
+                        "cannot freeze line-spacing reduction %.1f%%: paragraph %d of shape"
+                        " %r has no explicit line spacing" % (reduction, para_idx, shape_name)
+                    )
+
+        # -- mutation pass --
+        if scale != 100.0:
+            for rPr in self._iter_explicitly_sized_rPrs():
+                rPr.sz = max(100, int(round(rPr.sz * scale / 100.0)))
+        if reduction != 0.0:
+            for paragraph in self.paragraphs:
+                spacing = paragraph.line_spacing
+                factor = (100.0 - reduction) / 100.0
+                if isinstance(spacing, Length):
+                    paragraph.line_spacing = Centipoints(
+                        int(round(spacing.centipoints * factor))
+                    )
+                else:
+                    paragraph.line_spacing = spacing * factor
+        if min_font_size is not None:
+            floor_centipoints = Emu(min_font_size).centipoints
+            for rPr in self._iter_explicitly_sized_rPrs():
+                if rPr.sz < floor_centipoints:
+                    rPr.sz = floor_centipoints
+        self.auto_size = MSO_AUTO_SIZE.NONE
+
+    def _iter_explicitly_sized_rPrs(self):
+        """Generate every rPr-family element in this frame carrying an explicit `sz`.
+
+        Covers run, field (`a:fld`), and line-break (`a:br`) properties, paragraph default
+        run properties, and end-paragraph run properties. `sz` values are centipoints ints.
+        """
+        for p in self._txBody.p_lst:
+            candidates = [p.find(qn("a:pPr")), p.find(qn("a:endParaRPr"))]
+            for content_tag in ("a:r", "a:fld", "a:br"):
+                candidates.extend(
+                    child.find(qn("a:rPr")) for child in p.findall(qn(content_tag))
+                )
+            for element in candidates:
+                if element is None:
+                    continue
+                if element.tag == qn("a:pPr"):
+                    element = element.find(qn("a:defRPr"))
+                if element is not None and element.get("sz") is not None:
+                    yield element
 
     @property
     def paragraphs(self) -> tuple[_Paragraph, ...]:
@@ -494,6 +627,16 @@ class _Paragraph(Subshape):
     def alignment(self, value: PP_PARAGRAPH_ALIGNMENT | None):
         self._pPr.algn = value
 
+    @lazyproperty
+    def bullet(self) -> BulletFormat:
+        """|BulletFormat| object providing bullet and numbering control for this paragraph.
+
+        paper-pptx addition. Read properties report this paragraph's local `a:pPr` state only
+        (|None| means inherited); setters write real `a:buChar`/`a:buAutoNum`/`a:buNone`
+        bullets with hanging-indent geometry.
+        """
+        return BulletFormat(self._p)
+
     def clear(self):
         """Remove all content from this paragraph.
 
@@ -638,6 +781,18 @@ class _Run(Subshape):
     def __init__(self, r: CT_RegularTextRun, parent: ProvidesPart):
         super(_Run, self).__init__(parent)
         self._r = r
+
+    def effective_font(self):
+        """Return an |EffectiveFont| with this run's resolved size, name, and color.
+
+        paper-pptx addition: executes the documented inheritance walk (run -> paragraph ->
+        shape list style -> placeholder/layout/master styles -> presentation defaults ->
+        theme) and reports the provenance chain for each value. Read-only. See
+        `pptx.inspect.effective_font`.
+        """
+        from pptx.inspect import effective_font
+
+        return effective_font(self)
 
     @property
     def font(self):

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import io
+from typing import IO, TYPE_CHECKING
 
 from pptx.dml.line import LineFormat
 from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE, PP_MEDIA_TYPE
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.shapes.base import BaseShape
 from pptx.shared import ParentedElementProxy
 from pptx.util import lazyproperty
@@ -14,6 +16,24 @@ if TYPE_CHECKING:
     from pptx.oxml.shapes.picture import CT_Picture
     from pptx.oxml.shapes.shared import CT_LineProperties
     from pptx.types import ProvidesPart
+
+
+def _canonical_image_ext(ext: str) -> str:
+    """Return lowercase canonical form of image extension `ext` (jpg == jpeg)."""
+    lowered = ext.lower()
+    return "jpg" if lowered == "jpeg" else lowered
+
+
+_R_NS_PREFIX = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+
+
+def _part_xml_references_rId(root, rId: str) -> bool:
+    """True when any r-namespace attribute anywhere in `root` still carries `rId`."""
+    for element in root.iter():
+        for attr_name, attr_value in element.attrib.items():
+            if attr_value == rId and attr_name.startswith(_R_NS_PREFIX):
+                return True
+    return False
 
 
 class _BasePicture(BaseShape):
@@ -144,6 +164,62 @@ class Picture(_BasePicture):
 
     Based on the `p:pic` element.
     """
+
+    def replace_image(self, image_file: str | IO[bytes]) -> None:
+        """Replace the image behind this picture, preserving its geometry exactly.
+
+        paper-pptx addition. Position, size, rotation, masking geometry, and crop
+        (`a:srcRect`) are not touched — only the `a:blip/@r:embed` target changes. The new
+        image's canonical format must match the existing image part's extension
+        (jpg == jpeg); a mismatch refuses with |UnsupportedStructureError|, because
+        rewriting part content types is out of v0 scope. A picture with no embedded image
+        relationship (e.g. linked-only) also refuses.
+
+        The new image part is deduplicated package-wide by content hash; the old image part
+        simply becomes unreferenced when this picture held its last reference (an
+        unreachable part is never serialized).
+        """
+        from pptx.errors import UnsupportedStructureError
+        from pptx.parts.image import Image
+
+        # -- validation pass, complete before any mutation --
+        old_rId = self._pic.blip_rId
+        if old_rId is None:
+            raise UnsupportedStructureError(
+                "picture %r has no embedded image relationship (r:embed); a linked-only"
+                " image cannot be replaced" % self.name
+            )
+        try:
+            old_part = self.part.related_part(old_rId)
+        except KeyError:
+            raise UnsupportedStructureError(
+                "picture %r references image relationship %s which does not exist"
+                % (self.name, old_rId)
+            )
+        try:
+            # -- image parsing is lazy: .ext is what forces PIL to sniff the bytes --
+            new_image = Image.from_file(image_file)
+            new_ext = _canonical_image_ext(new_image.ext)
+        except OSError as e:
+            raise ValueError("image_file is not a recognizable image: %s" % e)
+        old_ext = _canonical_image_ext(old_part.partname.ext)
+        if old_ext != new_ext:
+            raise UnsupportedStructureError(
+                "replacement image format %r does not match existing image part format %r;"
+                " content-type rewriting is out of scope for this API" % (new_ext, old_ext)
+            )
+
+        # -- mutation --
+        image_part = self.part.package.get_or_add_image_part(io.BytesIO(new_image.blob))
+        new_rId = self.part.relate_to(image_part, RT.IMAGE)
+        if new_rId == old_rId:
+            return  # -- identical image bytes: already in place
+        self._pic.blipFill.blip.rEmbed = new_rId
+        # -- another shape on this slide may still reference old_rId (pictures added from
+        # -- identical bytes share one relationship); XmlPart.drop_rel only counts @r:id
+        # -- references, so guard with a scan over ALL r-namespace attributes.
+        if not _part_xml_references_rId(self.part._element, old_rId):
+            self.part.drop_rel(old_rId)
 
     @property
     def auto_shape_type(self) -> MSO_SHAPE | None:

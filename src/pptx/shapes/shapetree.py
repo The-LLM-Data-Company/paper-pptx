@@ -535,6 +535,19 @@ class GroupShapes(_BaseGroupShapes):
         self._grpSp.recalculate_extents()
 
 
+def _shape_kind(shape) -> str:
+    """Return a human-readable kind for `shape`, robust to exotic shapes (paper-pptx).
+
+    `shape_type` can be |None| or raise for shapes upstream does not classify (e.g. SmartArt
+    graphic frames); error messages must never crash while being built.
+    """
+    try:
+        shape_type = shape.shape_type
+    except Exception:
+        return type(shape).__name__
+    return shape_type.name if shape_type is not None else type(shape).__name__
+
+
 class SlideShapes(_BaseGroupShapes):
     """Sequence of shapes appearing on a slide.
 
@@ -598,6 +611,33 @@ class SlideShapes(_BaseGroupShapes):
         """
         graphicFrame = self._add_graphicFrame_containing_table(rows, cols, left, top, width, height)
         return cast(GraphicFrame, self._shape_factory(graphicFrame))
+
+    def chart_by_name(self, name: str):
+        """Return the |Chart| held by the shape on this slide named `name`.
+
+        paper-pptx addition, the chart-addressing half of safe chart-data replacement.
+        Raises |TargetNotFoundError| when no shape has that name, or when shapes with the
+        name exist but none holds a chart (the message says what was found instead).
+        Raises |AmbiguousTargetError| when more than one chart-bearing shape has the name —
+        this API never guesses between them.
+        """
+        from pptx.errors import AmbiguousTargetError, TargetNotFoundError
+
+        named_shapes = [shape for shape in self if shape.name == name]
+        chart_shapes = [shape for shape in named_shapes if shape.has_chart]
+        if not chart_shapes:
+            if not named_shapes:
+                raise TargetNotFoundError("no shape named %r on this slide" % name)
+            raise TargetNotFoundError(
+                "shape named %r holds no chart (found: %s)"
+                % (name, ", ".join(_shape_kind(shape) for shape in named_shapes))
+            )
+        if len(chart_shapes) > 1:
+            raise AmbiguousTargetError(
+                "%d chart shapes on this slide are named %r; refusing to pick one"
+                % (len(chart_shapes), name)
+            )
+        return chart_shapes[0].chart
 
     def clone_layout_placeholders(self, slide_layout: SlideLayout) -> None:
         """Add placeholder shapes based on those in `slide_layout`.

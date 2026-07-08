@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterator, cast
+import copy
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Iterator, Sequence, cast
 
 from pptx.dml.fill import FillFormat
 from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.errors import TargetNotFoundError, UnsupportedStructureError
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.oxml.ns import qn
 from pptx.shapes.shapetree import (
     LayoutPlaceholders,
     LayoutShapes,
@@ -215,6 +220,85 @@ class Slide(_BaseSlide):
         """Sequence of placeholder shapes in this slide."""
         return SlidePlaceholders(self._element.spTree, self)
 
+    def read_notes_text(self) -> str:
+        """Return the text of this slide's existing speaker notes.
+
+        paper-pptx addition. Unlike :attr:`notes_slide`, this NEVER creates a notes slide:
+        a slide with no notes part raises |UnsupportedStructureError| (as does a notes slide
+        with no body placeholder). Returns "" for an empty existing notes body.
+        """
+        return self._existing_notes_text_frame().text
+
+    def replace_notes_text(self, text: str) -> None:
+        """Replace the text of this slide's existing speaker notes with `text`.
+
+        paper-pptx addition. Only the notes *body* placeholder is touched — slide-number and
+        other notes placeholders are preserved untouched. The first paragraph's properties
+        and its first run's character formatting are kept and applied to the replacement
+        text; `"\\n"` in `text` starts a new paragraph. Never creates a notes slide: a slide
+        with no notes part raises |UnsupportedStructureError| before anything changes
+        (creating the notes part graph is out of v0 scope; see PAPER.md).
+        """
+        if not isinstance(text, str):
+            raise ValueError("text must be a str, got %r" % type(text).__name__)
+        try:
+            text.encode("utf-8")  # -- lone surrogates would explode mid-mutation otherwise
+        except UnicodeEncodeError:
+            raise ValueError("text contains characters not encodable in XML: %r" % (text,))
+        text_frame = self._existing_notes_text_frame()  # -- full validation before mutation
+
+        txBody = text_frame._txBody
+        paragraphs = txBody.p_lst
+        first_p = paragraphs[0]
+        first_r = first_p.find(qn("a:r"))
+        rPr_template = None
+        if first_r is not None:
+            rPr = first_r.find(qn("a:rPr"))
+            if rPr is not None:
+                rPr_template = copy.deepcopy(rPr)
+
+        # -- keep the first a:p element (preserving its a:pPr); drop the rest --
+        for surplus_p in paragraphs[1:]:
+            txBody.remove(surplus_p)
+        for content in first_p.content_children:
+            first_p.remove(content)
+        pPr_template = first_p.find(qn("a:pPr"))
+
+        lines = text.split("\n")
+        for index, line in enumerate(lines):
+            if index == 0:
+                p = first_p
+            else:
+                p = txBody.add_p()
+                if pPr_template is not None:
+                    p.insert(0, copy.deepcopy(pPr_template))
+            if line == "":
+                continue  # -- an empty line is an empty paragraph
+            r = p.add_r()
+            if rPr_template is not None:
+                r.insert(0, copy.deepcopy(rPr_template))
+            r.text = line
+
+    def _existing_notes_text_frame(self) -> TextFrame:
+        """Return the body-placeholder text frame of this slide's EXISTING notes slide.
+
+        Raises |UnsupportedStructureError| (never creates anything) when the slide has no
+        notes part or its notes slide has no body placeholder.
+        """
+        if not self.has_notes_slide:
+            raise UnsupportedStructureError(
+                "slide %d has no notes slide; creating one is out of scope for this API"
+                " (use notes_slide if you explicitly want creation)" % self.slide_id
+            )
+        notes_slide = self.part.part_related_by(RT.NOTES_SLIDE).notes_slide
+        text_frame = notes_slide.notes_text_frame
+        if text_frame is None:
+            raise UnsupportedStructureError(
+                "notes slide of slide %d has no body placeholder to hold notes text"
+                % self.slide_id
+            )
+        return text_frame
+
     @lazyproperty
     def shapes(self) -> SlideShapes:
         """Sequence of shape objects appearing on this slide."""
@@ -233,6 +317,25 @@ class Slide(_BaseSlide):
     def slide_layout(self) -> SlideLayout:
         """|SlideLayout| object this slide inherits appearance from."""
         return self.part.slide_layout
+
+
+@dataclass(frozen=True)
+class SlideClonePolicy:
+    """Relationship policy for `Slides.clone` (paper-pptx addition).
+
+    Defaults encode the production-proven policy: charts (with their embedded workbooks and
+    style parts) and speaker notes are deep-copied so clone and original can never
+    cross-contaminate; image/media parts are shared deliberately.
+
+    - `deep_copy_charts`: must be True to clone a slide bearing charts; False refuses
+      (`RelationshipPolicyError`) rather than share an editable chart part between slides.
+    - `deep_copy_notes`: False drops the notes slide from the clone (original unaffected).
+    - `share_media`: False deep-copies image/media parts instead of sharing them.
+    """
+
+    deep_copy_charts: bool = True
+    deep_copy_notes: bool = True
+    share_media: bool = True
 
 
 class Slides(ParentedElementProxy):
@@ -271,6 +374,110 @@ class Slides(ParentedElementProxy):
         slide.shapes.clone_layout_placeholders(slide_layout)
         self._sldIdLst.add_sldId(rId)
         return slide
+
+    def clone(
+        self,
+        source: Slide | int,
+        *,
+        after: Slide | int | None = None,
+        policy: SlideClonePolicy | None = None,
+    ) -> Slide:
+        """Return a new slide that is a policy-governed deep copy of `source`.
+
+        paper-pptx addition. The clone's relationship graph follows `policy` (default
+        |SlideClonePolicy|): layout shared; charts deep-copied WITH their embedded workbooks
+        and style parts; notes deep-copied and re-linked to the clone; image/media shared;
+        external (hyperlink) relationships copied. A slide bearing any other relationship
+        type (OLE objects, controls, SmartArt, comments, …) refuses with
+        |RelationshipPolicyError| before anything changes.
+
+        The clone is inserted directly after `source`, or after the slide given by `after`.
+        `source`/`after` accept a |Slide| or a 0-based index; a |Slide| from another
+        presentation raises |TargetNotFoundError|.
+        """
+        from pptx.slideops import clone_slide_part
+
+        if policy is None:
+            policy = SlideClonePolicy()
+        if not isinstance(policy, SlideClonePolicy):
+            raise ValueError("policy must be a SlideClonePolicy, got %r" % (policy,))
+        source_slide = self._resolve_slide(source)
+        anchor_slide = source_slide if after is None else self._resolve_slide(after)
+        anchor_index = self.index(anchor_slide)
+
+        new_part = clone_slide_part(source_slide.part, policy)
+        rId = self.part.relate_to(new_part, RT.SLIDE)
+        self._sldIdLst.add_sldId(rId)
+        sldId = self._sldIdLst[-1]
+        self._sldIdLst.remove(sldId)
+        self._sldIdLst.insert(anchor_index + 1, sldId)
+        return new_part.slide
+
+    def delete(self, slide: Slide | int) -> None:
+        """Remove `slide` from this presentation.
+
+        paper-pptx addition. Removes the slide's `p:sldId` entry and the presentation's
+        relationship to the slide part; parts then unreachable through the relationship
+        graph (the slide, and e.g. its charts and notes if unshared) are never serialized
+        again — orphans structurally cannot reach disk. Deleting the last slide is allowed.
+        """
+        target = self._resolve_slide(slide)
+        for sldId in self._sldIdLst.sldId_lst:
+            if sldId.id == target.slide_id:
+                rId = sldId.rId
+                self._sldIdLst.remove(sldId)
+                self.part.drop_rel(rId)
+                return
+
+    def move(self, slide: Slide | int, to_index: int) -> None:
+        """Move `slide` so it sits at 0-based `to_index` in the slide sequence.
+
+        paper-pptx addition. `to_index` outside `range(len(slides))` raises |ValueError|.
+        """
+        target = self._resolve_slide(slide)
+        if not isinstance(to_index, int) or isinstance(to_index, bool) or not (
+            0 <= to_index < len(self)
+        ):
+            raise ValueError(
+                "to_index must be an int in range 0..%d, got %r" % (len(self) - 1, to_index)
+            )
+        current_index = self.index(target)
+        sldId = self._sldIdLst.sldId_lst[current_index]
+        self._sldIdLst.remove(sldId)
+        self._sldIdLst.insert(to_index, sldId)
+
+    def reorder(self, new_order: Sequence[int]) -> None:
+        """Permute the slide sequence: new position i shows the slide now at `new_order[i]`.
+
+        paper-pptx addition. `new_order` must be an exact permutation of
+        `range(len(slides))`; anything else raises |ValueError| before any change.
+        """
+        if sorted(new_order) != list(range(len(self))):
+            raise ValueError(
+                "new_order must be a permutation of range(%d), got %r"
+                % (len(self), list(new_order))
+            )
+        current = list(self._sldIdLst.sldId_lst)
+        for index in new_order:
+            self._sldIdLst.append(current[index])  # -- re-appending moves the element
+
+    def _resolve_slide(self, value: Slide | int) -> Slide:
+        """Return the |Slide| in this collection for `value` (a Slide or 0-based index).
+
+        An int resolves with normal indexed-access semantics (|IndexError| when out of
+        range); a |Slide| not belonging to this presentation raises |TargetNotFoundError|.
+        """
+        if isinstance(value, int) and not isinstance(value, bool):
+            return self[value]
+        if isinstance(value, Slide):
+            for slide in self:
+                if slide == value:
+                    return slide
+            raise TargetNotFoundError(
+                "slide with id %d is not in this presentation's slide collection"
+                % value.slide_id
+            )
+        raise ValueError("expected a Slide or int index, got %r" % (value,))
 
     def get(self, slide_id: int, default: Slide | None = None) -> Slide | None:
         """Return the slide identified by int `slide_id` in this presentation.
