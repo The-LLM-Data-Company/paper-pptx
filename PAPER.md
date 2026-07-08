@@ -424,6 +424,26 @@ test proves `replace_text`/`replace_text_at` reach table cells including merge o
 Producer diversity: the same guards and surgery run against LibreOffice-authored merged
 tables (`lo_merged_tables`).
 
+## v0.11 Phase 2: real fields and footer machinery
+
+`Presentation.apply_footers` / `Slide.apply_footers` (machinery in new `pptx.hf`) — the
+author-and-delegate footer trio, persisting exactly what the dialog persists per the Phase 0
+findings: minimal placeholder shapes materialized per slide (via upstream's own
+`clone_placeholder`, so idx/sz/orient bind to the layout furniture), `slidenum`/`datetime*`
+content as real `a:fld` elements, footer text and fixed dates as literal runs, unchecked
+elements *removed* (with the v0.1 relationship-hygiene delete), `p:hf` never written. The
+package authors fields and never computes their values: `a:fld` cached text is seeded (slide
+position honoring `firstSlideNum`; an injectable `now` for dates) as the consumer-refreshed
+hint the format defines, proven by the LibreOffice renumbering probe. Field ids persist per
+ISO 29500 §21.1.2.2.4, making identical re-application a byte-level no-op. Refusals, atomic
+and validated deck-wide before the first write: layout lacking the furniture to inherit
+from; explicit `p:hf` flags disabling a wanted element (nearest declaration wins,
+layout-over-master; the API never flips flags silently). `inspect_text` reports the applied
+fields as fields with display text excluded from anchors (v0.1 semantics). The static-text
+page-number anti-pattern from the reference's `deck_furniture.py` is dead: renumbering after
+slide moves belongs to consumers, tested structurally. Real-PowerPoint verification is
+RELEASE-CHECKLIST item 11 + FIXTURE-REQUESTS R9.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

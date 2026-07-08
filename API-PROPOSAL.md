@@ -556,6 +556,24 @@ Signatures added or changed by the v0.1 wave; each lands here before its impleme
   - Programmer errors are `ValueError`: non-int/bool/out-of-range indices, non-positive
     `width`, deleting the last remaining row or column.
 
+- **Phase 2 — real fields and footer machinery** (machinery in new `pptx.hf`):
+  - `Presentation.apply_footers(*, footer: str | None = None, slide_number: bool = False,
+    date_format: str | None = None, fixed_date: str | None = None,
+    skip_title_slides: bool = False, now: datetime | None = None) -> None` — the dialog's
+    "Apply to All": sets the complete three-element state on every slide (unchecked =
+    placeholder removed). `date_format` takes the ISO 29500 `datetime`..`datetime13`
+    tokens (automatic field); `fixed_date` is the dialog's literal mode; both together is
+    `ValueError`. `now` is the injectable clock seeding datetime cached text.
+  - `Slide.apply_footers(*, footer=..., slide_number=..., date_format=..., fixed_date=...,
+    now=...) -> None` — the per-slide "Apply" (override path).
+  - Persistence contract (per the Phase 0 mechanism findings): minimal placeholder `p:sp`
+    bound to layout furniture by idx; `a:fld` for slide number / automatic date with
+    consumer-refreshed cached text; field ids persist across re-application (identical
+    re-apply is a byte-level no-op); `p:hf` flags never written or flipped.
+  - Refusals (`UnsupportedStructureError`, deck-wide validation before the first write):
+    layout without the needed furniture placeholder; explicit `p:hf` flags disabling a
+    wanted element (nearest declaration wins, layout over master).
+
 ## Stub tests
 
 `tests/paper/test_pr0_stubs.py` asserts each organ's names import and match this document,

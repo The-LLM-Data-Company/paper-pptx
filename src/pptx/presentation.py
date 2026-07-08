@@ -9,6 +9,8 @@ from pptx.slide import SlideMasters, Slides
 from pptx.util import lazyproperty
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from pptx.oxml.presentation import CT_Presentation, CT_SlideId
     from pptx.parts.presentation import PresentationPart
     from pptx.slide import NotesMaster, SlideLayouts
@@ -24,6 +26,52 @@ class Presentation(PartElementProxy):
 
     _element: CT_Presentation
     part: PresentationPart  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    def apply_footers(
+        self,
+        *,
+        footer: str | None = None,
+        slide_number: bool = False,
+        date_format: str | None = None,
+        fixed_date: str | None = None,
+        skip_title_slides: bool = False,
+        now: "datetime | None" = None,
+    ) -> None:
+        """Apply the complete footer state to every slide ("Apply to All").
+
+        paper-pptx addition (v0.11 Phase 2). Persists exactly what PowerPoint's
+        Insert > Header & Footer dialog does: materializes minimal `dt`/`ftr`/`sldNum`
+        placeholder shapes per slide (binding to the layout furniture by `idx`), writes
+        slide numbers and automatic dates as real `a:fld` elements whose cached text
+        consumers refresh on open, and *removes* the placeholders for unchecked elements —
+        each call sets the full three-element state, like the dialog.
+
+        `footer`: literal footer text, or None to remove the footer placeholder.
+        `slide_number`: True writes a `slidenum` field cached with the current position
+        (honoring `firstSlideNum`); consumers renumber live after any reorder.
+        `date_format`: a `datetime`..`datetime13` token for an automatically-updating date
+        field; `fixed_date`: literal date text (the dialog's "Fixed" mode); passing both
+        raises |ValueError|. `now` seeds the date field's cached text (None = wall clock);
+        the package never vouches for cached values — they are consumer-refreshed hints.
+        `skip_title_slides`: the dialog's "Don't show on title slide" — slides on a
+        `type="title"` layout get the all-removed state.
+
+        Refuses atomically (|UnsupportedStructureError|, validated deck-wide before the
+        first write) when a wanted element has no layout furniture to inherit from, or
+        when explicit `p:hf` flags on a layout/master disable it (clear those via
+        `header_footers` first — this API never flips them silently).
+        """
+        from pptx.hf import apply_presentation_footers
+
+        apply_presentation_footers(
+            self,
+            footer=footer,
+            slide_number=slide_number,
+            date_format=date_format,
+            fixed_date=fixed_date,
+            skip_title_slides=skip_title_slides,
+            now=now,
+        )
 
     @property
     def core_properties(self):

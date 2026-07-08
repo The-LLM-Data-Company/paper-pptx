@@ -25,6 +25,8 @@ from pptx.shared import ElementProxy, ParentedElementProxy, PartElementProxy
 from pptx.util import lazyproperty
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from pptx.oxml.presentation import CT_SlideIdList, CT_SlideMasterIdList
     from pptx.oxml.slide import (
         CT_CommonSlideData,
@@ -182,6 +184,33 @@ class Slide(_BaseSlide):
     """Slide object. Provides access to shapes and slide-level properties."""
 
     part: SlidePart  # pyright: ignore[reportIncompatibleMethodOverride]
+
+    def apply_footers(
+        self,
+        *,
+        footer: str | None = None,
+        slide_number: bool = False,
+        date_format: str | None = None,
+        fixed_date: str | None = None,
+        now: "datetime | None" = None,
+    ) -> None:
+        """Apply the complete footer state to this slide only (the dialog's "Apply").
+
+        paper-pptx addition (v0.11 Phase 2). Same parameters, mechanism, and refusals as
+        :meth:`.Presentation.apply_footers`, restricted to this slide — the per-slide
+        override path (e.g. removing just this slide's footer while the rest of the deck
+        keeps it). Each call sets this slide's full three-element state.
+        """
+        from pptx.hf import apply_slide_footers
+
+        apply_slide_footers(
+            self,
+            footer=footer,
+            slide_number=slide_number,
+            date_format=date_format,
+            fixed_date=fixed_date,
+            now=now,
+        )
 
     @property
     def follow_master_background(self):
