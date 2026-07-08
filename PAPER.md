@@ -91,6 +91,24 @@ choice-replacement semantics). All additive:
   `a:pPr` fragments against `spec/ISO-IEC-29500-4/xsd/dml-main.xsd` via a generated wrapper
   schema (transitional edition — its namespaces match real-world files).
 
+## Organ: Autofit (Phase 3)
+
+Extends the existing `TextFrame.auto_size` surface — no parallel API. Reference mined:
+`pptx_helpers/autofit.py` / `autofit_ops.py` (detection semantics, normalize-to-explicit,
+min-font-size floor). All additive:
+
+- oxml: `lnSpcReduction` attribute added to `CT_TextNormalAutofit` (new percent simpletype
+  reading both wire forms, mirroring the existing `fontScale` handling).
+- `TextFrame.font_scale` / `TextFrame.line_space_reduction` (read-only detail of
+  `a:normAutofit`); `TextFrame.normalize_autofit(*, min_font_size=None)` freezes rendered
+  metrics (scales explicit run/paragraph/endParaRPr sizes, reduces explicit line spacing),
+  then sets `a:noAutofit`.
+- Deliberate improvement over the reference: where the reference helper *floors* runs whose
+  size it cannot resolve (which can silently shrink inherited-large text), this API refuses
+  with `UnsupportedStructureError`. Validation runs on raw XML reads (the upstream `font`
+  proxy accessors are get-or-add and would dirty the tree during validation — caught by the
+  Phase 1 refusal-atomicity harness during development).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

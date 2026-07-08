@@ -25,6 +25,7 @@ from pptx.oxml.simpletypes import (
     ST_TextFontSize,
     ST_TextIndent,
     ST_TextIndentLevelType,
+    ST_TextLineSpaceReductionPercentOrPercentString,
     ST_TextMargin,
     ST_TextSpacingPercentOrPercentString,
     ST_TextSpacingPoint,
@@ -423,6 +424,9 @@ class CT_TextNormalAutofit(BaseOxmlElement):
 
     fontScale = OptionalAttribute(
         "fontScale", ST_TextFontScalePercentOrPercentString, default=100.0
+    )
+    lnSpcReduction = OptionalAttribute(
+        "lnSpcReduction", ST_TextLineSpaceReductionPercentOrPercentString, default=0.0
     )
 
 

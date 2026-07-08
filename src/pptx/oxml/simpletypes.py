@@ -739,6 +739,30 @@ class ST_TextFontSize(BaseIntType):
         cls.validate_int_in_range(value, 100, 400000)
 
 
+class ST_TextLineSpaceReductionPercentOrPercentString(BaseFloatType):
+    """Valid values for `a:normAutofit/@lnSpcReduction`, as a percent float (20.0 = 20%).
+
+    Reads both wire forms ("20000" thousandths and "20%"), mirroring the `fontScale`
+    attribute's simpletype, and writes the thousandths form PowerPoint writes.
+    """
+
+    @classmethod
+    def convert_from_xml(cls, str_value):
+        if str_value.endswith("%"):
+            return float(str_value[:-1])
+        return int(str_value) / 1000.0
+
+    @classmethod
+    def convert_to_xml(cls, value):
+        return str(int(value * 1000.0))
+
+    @classmethod
+    def validate(cls, value):
+        BaseFloatType.validate(value)
+        if value < 0.0 or value > 100.0:
+            raise ValueError("value must be in range 0.0..100.0 (percent), got %s" % value)
+
+
 class ST_TextIndent(ST_Coordinate32Unqualified):
     """Valid values for `a:pPr/@indent`, an EMU |Length| (negative = hanging indent)."""
 

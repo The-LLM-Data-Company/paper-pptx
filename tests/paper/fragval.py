@@ -62,3 +62,11 @@ def assert_pPr_fragment_valid(paragraph) -> None:
         return
     errors = _validation_errors(pPr, "pPr", "CT_TextParagraphProperties")
     assert not errors, "emitted a:pPr fragment fails schema validation:\n%s" % "\n".join(errors)
+
+
+def assert_bodyPr_fragment_valid(text_frame) -> None:
+    """Assert the `a:bodyPr` fragment of a text frame validates against ECMA-376."""
+    errors = _validation_errors(text_frame._bodyPr, "bodyPr", "CT_TextBodyProperties")
+    assert not errors, (
+        "emitted a:bodyPr fragment fails schema validation:\n%s" % "\n".join(errors)
+    )

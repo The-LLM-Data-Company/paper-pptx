@@ -11,15 +11,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 3 (autofit)")
-def test_pr0_autofit_api():
-    from pptx.text.text import TextFrame
-
-    for name in ("font_scale", "line_space_reduction"):
-        assert isinstance(getattr(TextFrame, name), property)
-    assert callable(TextFrame.normalize_autofit)
-
-
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 4 (effective inspection)")
 def test_pr0_inspect_api():
     from pptx.inspect import (  # noqa: F401
