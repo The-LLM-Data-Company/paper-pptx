@@ -205,6 +205,17 @@ step vanishes too.
   the original chart XML byte-identical; notes neither dropped nor cross-linked; global
   dangling-reference scans on every output; LibreOffice smoke per operation class.
 
+## Organ: Image replacement (Phase 8)
+
+`Picture.replace_image(image_file)` — geometry-preserving media swap. Reference mined:
+`pptx_helpers/image_ops.py` (preserve-box/crop semantics, extension-mismatch refusal, low-res
+math). Position, size, rotation, and `a:srcRect` crop are untouched; only `a:blip/@r:embed`
+changes. Format mismatch (canonical, jpg==jpeg) refuses atomically — content-type rewriting
+stays out of v0 per the reference's rule. New parts deduplicate package-wide by hash;
+identical-bytes replacement is a proven no-op; an old part orphans only when the last
+reference goes (shared images on other slides keep it alive). The reference's low-res /
+natural-size math lives on as test assertions only (`test_image_replace.py`), not API.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

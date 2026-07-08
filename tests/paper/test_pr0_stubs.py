@@ -11,13 +11,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 8 (image replacement)")
-def test_pr0_image_replacement_api():
-    from pptx.shapes.picture import Picture
-
-    assert callable(Picture.replace_image)
-
-
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 9 (chart data routing)")
 def test_pr0_chart_routing_api():
     from pptx.chart.chart import Chart
