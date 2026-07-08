@@ -11,14 +11,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 7 (slide operations)")
-def test_pr0_slide_ops_api():
-    from pptx.slide import SlideClonePolicy, Slides  # noqa: F401
-
-    for name in ("clone", "delete", "reorder", "move"):
-        assert callable(getattr(Slides, name))
-
-
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 8 (image replacement)")
 def test_pr0_image_replacement_api():
     from pptx.shapes.picture import Picture

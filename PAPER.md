@@ -177,6 +177,34 @@ paragraph's properties and first run's character formatting across the replaceme
   dependencies included) for slides without notes is out of v0; if it lands it must be a
   new explicit API, never a change to these.
 
+## Organ: Slide operations (Phase 7)
+
+`Slides.clone/delete/reorder/move` + `SlideClonePolicy` (`pptx.slide`), machinery in
+`pptx.slideops`. **Rewritten in-memory, not ported**: the reference's
+unpack→operate→clean→pack workflow (`slide_ops.py`, `duplicate_slide.py`, `clean_pptx.py`)
+contributed its relationship *policy* only. The in-memory design makes the cleanup script
+structurally unnecessary — a part unreachable through the rels graph is never serialized, and
+`[Content_Types].xml` regenerates from live parts, so the reference's content-type-override
+step vanishes too.
+
+- Clone: validate-fully-then-mutate over the source slide's relationship graph (and the
+  graphs of every part to be deep-copied) BEFORE any part is created. Policy: layout shared;
+  charts deep-copied WITH embedded workbooks and Microsoft chart color/style parts
+  (LibreOffice-style charts without workbooks handled); notes deep-copied and re-linked to
+  the clone (or dropped by policy); media shared (or copied by policy); external rels
+  copied; anything else (`RelationshipPolicyError`) — OLE objects, controls, SmartArt —
+  refused atomically. rId integrity via old→new mapping rewrite of the copied XML's
+  r-namespace attributes.
+- **Amendment to the PR-0 proposal (§8):** `deep_copy_charts=False` REFUSES rather than
+  shares — sharing an editable chart part between slides is exactly the silent-corruption
+  class the mission names; v0 offers no share option.
+- Delete: removes the `p:sldId` and the presentation→slide rel; orphaned subtrees never
+  reach disk. Zero-slide decks are valid. Reorder validates an exact permutation; both it
+  and move budget to exactly `ppt/presentation.xml`.
+- Proven: exact changed-part budgets for clone and delete; mutate-the-clone's-chart leaves
+  the original chart XML byte-identical; notes neither dropped nor cross-linked; global
+  dangling-reference scans on every output; LibreOffice smoke per operation class.
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is
