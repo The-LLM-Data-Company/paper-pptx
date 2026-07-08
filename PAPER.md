@@ -109,6 +109,33 @@ min-font-size floor). All additive:
   proxy accessors are get-or-add and would dirty the tree during validation — caught by the
   Phase 1 refusal-atomicity harness during development).
 
+## Organ: Effective-style inspection (Phase 4)
+
+`pptx.inspect` (new module) + `_Run.effective_font()`. Read-only, provenance-bearing
+resolution of font size, name, and color through the full documented inheritance walk
+(run → paragraph defRPr → shape lstStyle → layout/master placeholder lstStyle → master
+txStyles family → presentation defaultTextStyle → theme; scheme colors through slide
+clrMapOvr / master clrMap / theme clrScheme). Reference mined:
+`pptx_helpers/effective.py` — treated as the floor per the plan; this implements the full
+walk the reference approximated with "common fallbacks". All additive:
+
+- oxml: `CT_TextListStyle` (registered for `a:lstStyle`, master `p:titleStyle`/`p:bodyStyle`/
+  `p:otherStyle`, and `p:defaultTextStyle`), `a:lvl1pPr`–`a:lvl9pPr`/`a:defPPr` registered to
+  the existing `CT_TextParagraphProperties`, `CT_SlideMaster.txStyles` +
+  `CT_SlideMasterTextStyles`, `CT_TextBody.lstStyle`. The theme part deliberately stays an
+  unregistered blob part (re-registering would re-serialize theme XML on save — §1.1 risk);
+  the resolver parses `theme.blob` read-only.
+- Pinned anchors land here: `BlockAnchor` = partname + block index + first-8-hex SHA-256 of
+  NFC text (whitespace never trimmed). `inspect_text(slide)` emits the
+  `paper-text-inspection` v1 payload; goldens under `tests/paper/goldens/` update ONLY via
+  `tests/paper/_authoring/update_goldens.py` + PR review.
+- Unresolvable values report `resolved=false` honestly (gradient fills, `phClr`, missing
+  theme). Out of v0 scope, refused not guessed: table-cell/chart text runs. Read-only-ness is
+  proven by part-snapshot equality tests (which caught upstream's get-or-add `paragraph.level`
+  accessor during development — inspection uses raw XML reads throughout).
+- Independent cross-check: LibreOffice's re-export of the branded fixture baked exactly the
+  sizes this walk resolves (36/26/22pt).
+
 ## Publishing Safety
 
 Publishing is intentionally disabled by default while this repository is

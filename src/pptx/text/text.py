@@ -771,6 +771,18 @@ class _Run(Subshape):
         super(_Run, self).__init__(parent)
         self._r = r
 
+    def effective_font(self):
+        """Return an |EffectiveFont| with this run's resolved size, name, and color.
+
+        paper-pptx addition: executes the documented inheritance walk (run -> paragraph ->
+        shape list style -> placeholder/layout/master styles -> presentation defaults ->
+        theme) and reports the provenance chain for each value. Read-only. See
+        `pptx.inspect.effective_font`.
+        """
+        from pptx.inspect import effective_font
+
+        return effective_font(self)
+
     @property
     def font(self):
         """|Font| instance containing run-level character properties for the text in this run.

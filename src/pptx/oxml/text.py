@@ -15,7 +15,7 @@ from pptx.enum.text import (
 from pptx.exc import InvalidXmlError
 from pptx.oxml import parse_xml
 from pptx.oxml.dml.fill import CT_GradientFillProperties
-from pptx.oxml.ns import nsdecls
+from pptx.oxml.ns import nsdecls, qn
 from pptx.oxml.simpletypes import (
     ST_Coordinate32,
     ST_TextAutonumberScheme,
@@ -94,6 +94,9 @@ class CT_TextBody(BaseOxmlElement):
 
     bodyPr: CT_TextBodyProperties = OneAndOnlyOne(  # pyright: ignore[reportAssignmentType]
         "a:bodyPr"
+    )
+    lstStyle: CT_TextListStyle | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+        "a:lstStyle", successors=("a:p",)
     )
     p: CT_TextParagraph = OneOrMore("a:p")  # pyright: ignore[reportAssignmentType]
 
@@ -417,6 +420,24 @@ class CT_TextLineBreak(BaseOxmlElement):
         represents.
         """
         return "\v"
+
+
+class CT_TextListStyle(BaseOxmlElement):
+    """`a:lstStyle` custom element class.
+
+    Also used for the master's `p:titleStyle`/`p:bodyStyle`/`p:otherStyle` children and the
+    presentation's `p:defaultTextStyle` — all are the same `CT_TextListStyle` complex type: a
+    sequence of `a:lvl1pPr` … `a:lvl9pPr` (plus `a:defPPr`) paragraph-property elements.
+    """
+
+    def pPr_for_lvl(self, level: int) -> CT_TextParagraphProperties | None:
+        """Return the `a:lvl{level+1}pPr` child for 0-based indent `level`, or |None|.
+
+        Read-only helper for the effective-style inheritance walk.
+        """
+        if not 0 <= level <= 8:
+            raise ValueError("level must be in range 0..8, got %r" % (level,))
+        return self.find(qn("a:lvl%dpPr" % (level + 1)))
 
 
 class CT_TextNormalAutofit(BaseOxmlElement):

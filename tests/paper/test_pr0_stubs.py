@@ -11,22 +11,6 @@ from __future__ import annotations
 import pytest
 
 
-@pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 4 (effective inspection)")
-def test_pr0_inspect_api():
-    from pptx.inspect import (  # noqa: F401
-        BlockAnchor,
-        EffectiveFont,
-        EffectiveValue,
-        ProvenanceStep,
-        TextInspection,
-        effective_font,
-        inspect_text,
-    )
-    from pptx.text.text import _Run
-
-    assert callable(_Run.effective_font)
-
-
 @pytest.mark.xfail(strict=True, reason="PR-0 stub - lands with Phase 5 (package kernel)")
 def test_pr0_package_kernel_api():
     from pptx.package import (  # noqa: F401

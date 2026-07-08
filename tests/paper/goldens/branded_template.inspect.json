@@ -1,0 +1,487 @@
+{
+  "schema": "paper-text-inspection",
+  "version": 1,
+  "part": "/ppt/slides/slide1.xml",
+  "blocks": [
+    {
+      "anchor": {
+        "part": "/ppt/slides/slide1.xml",
+        "block_index": 0,
+        "content_hash": "10d3e3c4"
+      },
+      "shape_id": 2,
+      "shape_name": "Title 1",
+      "placeholder_type": "TITLE",
+      "level": 0,
+      "text": "Branded Title",
+      "runs": [
+        {
+          "text": "Branded Title",
+          "font": {
+            "size": {
+              "value": 457200,
+              "value_pt": 36.0,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no size here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "sz=\"3600\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "name": {
+              "value": "Calibri",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no latin typeface here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "no latin typeface here",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles titleStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "latin typeface=\"+mj-lt\" (theme reference)",
+                  "supplied": false
+                },
+                {
+                  "level": "theme fontScheme majorFont",
+                  "part": "/ppt/theme/theme1.xml",
+                  "detail": "latin typeface=\"Calibri\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "color_rgb": {
+              "value": "000000",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no solidFill here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "no solidFill here",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles titleStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "schemeClr val=\"tx1\"",
+                  "supplied": false
+                },
+                {
+                  "level": "master clrMap",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "tx1=\"dk1\"",
+                  "supplied": false
+                },
+                {
+                  "level": "theme clrScheme dk1",
+                  "part": "/ppt/theme/theme1.xml",
+                  "detail": "sysClr val=\"windowText\" lastClr=\"000000\"",
+                  "supplied": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anchor": {
+        "part": "/ppt/slides/slide1.xml",
+        "block_index": 1,
+        "content_hash": "ea718db5"
+      },
+      "shape_id": 3,
+      "shape_name": "Content Placeholder 2",
+      "placeholder_type": "OBJECT",
+      "level": 0,
+      "text": "Body level one",
+      "runs": [
+        {
+          "text": "Body level one",
+          "font": {
+            "size": {
+              "value": 330200,
+              "value_pt": 26.0,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no size here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "sz=\"2600\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "name": {
+              "value": "Trebuchet MS",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no latin typeface here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "latin typeface=\"Trebuchet MS\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "color_rgb": {
+              "value": "000000",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no solidFill here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl1",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl1",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl1",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "schemeClr val=\"tx1\"",
+                  "supplied": false
+                },
+                {
+                  "level": "master clrMap",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "tx1=\"dk1\"",
+                  "supplied": false
+                },
+                {
+                  "level": "theme clrScheme dk1",
+                  "part": "/ppt/theme/theme1.xml",
+                  "detail": "sysClr val=\"windowText\" lastClr=\"000000\"",
+                  "supplied": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "anchor": {
+        "part": "/ppt/slides/slide1.xml",
+        "block_index": 2,
+        "content_hash": "fd08683e"
+      },
+      "shape_id": 3,
+      "shape_name": "Content Placeholder 2",
+      "placeholder_type": "OBJECT",
+      "level": 1,
+      "text": "Body level two",
+      "runs": [
+        {
+          "text": "Body level two",
+          "font": {
+            "size": {
+              "value": 279400,
+              "value_pt": 22.0,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no size here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl2",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl2",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "sz=\"2200\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "name": {
+              "value": "Calibri",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no latin typeface here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl2",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl2",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "latin typeface=\"+mn-lt\" (theme reference)",
+                  "supplied": false
+                },
+                {
+                  "level": "theme fontScheme minorFont",
+                  "part": "/ppt/theme/theme1.xml",
+                  "detail": "latin typeface=\"Calibri\"",
+                  "supplied": true
+                }
+              ]
+            },
+            "color_rgb": {
+              "value": "000000",
+              "value_pt": null,
+              "resolved": true,
+              "provenance": [
+                {
+                  "level": "run rPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "no solidFill here",
+                  "supplied": false
+                },
+                {
+                  "level": "paragraph defRPr",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "shape lstStyle lvl2",
+                  "part": "/ppt/slides/slide1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "layout placeholder lstStyle lvl2",
+                  "part": "/ppt/slideLayouts/slideLayout2.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master placeholder lstStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "level not present",
+                  "supplied": false
+                },
+                {
+                  "level": "master txStyles bodyStyle lvl2",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "schemeClr val=\"tx1\"",
+                  "supplied": false
+                },
+                {
+                  "level": "master clrMap",
+                  "part": "/ppt/slideMasters/slideMaster1.xml",
+                  "detail": "tx1=\"dk1\"",
+                  "supplied": false
+                },
+                {
+                  "level": "theme clrScheme dk1",
+                  "part": "/ppt/theme/theme1.xml",
+                  "detail": "sysClr val=\"windowText\" lastClr=\"000000\"",
+                  "supplied": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
