@@ -138,4 +138,4 @@ the documentation is inherited from python-pptx and covers the shared foundation
 ## License
 
 MIT, inherited from python-pptx. Original work © Steve Canny and the python-pptx contributors;
-fork additions © Paper Instruments. See [`LICENSE`](LICENSE).
+fork additions © Paper Instruments, Inc. See [`LICENSE`](LICENSE).

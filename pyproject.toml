@@ -7,9 +7,9 @@ name = "paper-pptx"
 version = "0.1.0"
 authors = [
     {name = "Steve Canny", email = "stcanny@gmail.com"},
-    {name = "Paper Instruments"},
+    {name = "Paper Instruments, Inc."},
 ]
-maintainers = [{name = "Paper Instruments"}]
+maintainers = [{name = "Paper Instruments, Inc."}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",

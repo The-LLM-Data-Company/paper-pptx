@@ -69,7 +69,7 @@ master_doc = "index"
 
 # General information about the project.
 project = u"paper-pptx"
-copyright = u"2012-2024 Steve Canny (python-pptx); 2026 Paper Instruments (paper-pptx fork)"
+copyright = u"2012-2024 Steve Canny (python-pptx); 2026 Paper Instruments, Inc. (paper-pptx fork)"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
