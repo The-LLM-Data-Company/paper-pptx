@@ -73,9 +73,21 @@ and on disk — byte-for-byte as it was. A refusal is a success mode, distinct f
 error (which stays a plain `ValueError`/`TypeError`), so callers can tell "this deck can't be
 done safely" apart from "my code has a bug."
 
-`paper-pptx` is a structure editor, not a renderer: it guarantees the file is *correct*, not that
-the deck looks good or that the content is right. On input it can't handle safely, the answer is
-a clear refusal.
+## What it does not do
+
+`paper-pptx` is a structure editor, not a renderer and not a brain: it guarantees the file is
+*correct*, not that the deck looks good or that the content is right. The limits are deliberate:
+
+- **It never renders or computes values from layout.** Field values, pagination, and pixel-level
+  autofit are left to PowerPoint or a headless renderer (LibreOffice is the load oracle in tests).
+- **No SmartArt authoring.** Existing SmartArt is preserved verbatim as an opaque blob; it is
+  never synthesized or rewritten.
+- **No animations or transitions**, and no slide-size migration (4:3 ↔ 16:9) — rescaling content
+  is a layout judgment, not a structural one.
+- **No template-migration orchestration.** `rebind_layout` is the single safe primitive; deciding
+  what maps where across a whole deck is the caller's job.
+- **No document-quality judgment.** paper-pptx edits decks; it does not grade them. Unsafe or
+  unrecognized input surfaces as a specific typed refusal, never a raw traceback.
 
 ## Example
 
