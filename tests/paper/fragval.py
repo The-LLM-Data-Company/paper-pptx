@@ -1,4 +1,4 @@
-"""Scoped schema validation of emitted XML fragments (CONVENTIONS §4, second oracle).
+"""Scoped schema validation of emitted XML fragments (the second oracle).
 
 Validates exactly the fragments paper code writes — never whole documents, which drown in
 upstream noise. Fragments are checked against the ECMA-376 transitional schemas shipped in
@@ -75,7 +75,7 @@ def assert_bodyPr_fragment_valid(text_frame) -> None:
 def assert_tbl_fragment_valid(table) -> None:
     """Assert a table's complete `a:tbl` element validates against ECMA-376 CT_Table.
 
-    The v0.11 Phase 1 oracle: row/column surgery rewrites `a:tr`/`a:tc`/`a:gridCol`
+    The table oracle: row/column surgery rewrites `a:tr`/`a:tc`/`a:gridCol`
     structure, so the whole emitted table element is validated, not just one fragment.
     `a:tbl` is already a global element in dml-main.xsd, so no wrapper schema is needed.
     """

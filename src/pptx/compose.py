@@ -1,4 +1,4 @@
-"""Cross-presentation slide import and deck merge (paper-pptx, v0.11 Phase 5).
+"""Cross-presentation slide import and deck merge (paper-pptx addition).
 
 Composition is how decks are actually made, and composition is relationship-and-
 inheritance surgery - the corruption-prone, package-level mechanics this fork exists to
@@ -6,7 +6,7 @@ own. `Presentation.import_slide` transplants one slide between packages under on
 three CONSCIOUS reconciliation modes (there is no right default):
 
 - "adopt_theme"  - content transplants; the slide rebinds to a destination layout (the
-  Phase 4 machinery), orphan placeholders bake from their SOURCE-resolved look, and every
+  rebind machinery), orphan placeholders bake from their SOURCE-resolved look, and every
   run whose resolved values changed is reported. The slide takes the house style.
 - "keep_appearance" - the source layout + master + theme chain transplants with it.
   Support parts deduplicate by content fingerprint, so ten slides from one source share
@@ -76,7 +76,31 @@ _P14_NS = "http://schemas.microsoft.com/office/powerpoint/2010/main"
 
 @dataclass(frozen=True)
 class ImportReport:
-    """What one import did. Deterministic; `.to_dict()` is goldenable."""
+    """What one import did. Deterministic; `.to_dict()` is goldenable.
+
+    Fields:
+
+    * ``mode`` -- the reconciliation mode used ("adopt_theme", "keep_appearance", "bake").
+    * ``source_slide`` -- partname of the imported slide in the source presentation.
+    * ``dest_slide`` / ``dest_slide_id`` -- partname and permanent slide id of the new
+      slide in the destination.
+    * ``position`` -- 0-based index the new slide was inserted at.
+    * ``layout_binding`` -- partname of the destination layout the slide is bound to.
+    * ``layout_binding_method`` -- how that layout was chosen ("name-match",
+      "type-match", "explicit", "transplant", "blank-fallback", "first-fallback").
+    * ``parts_added`` -- partnames added to the destination package by this import.
+    * ``parts_reused`` -- partnames of existing destination parts reused via
+      content-hash deduplication (keep_appearance).
+    * ``notes_copied`` -- whether the source slide's speaker-notes part was imported.
+    * ``comments_dropped`` -- count of comment parts dropped (comments never travel).
+    * ``section`` -- name of the destination section the slide was enrolled in, or None.
+    * ``baked_shapes`` -- names of placeholders converted to free baked shapes.
+    * ``dropped_placeholders`` -- names of furniture placeholders (dt/ftr/sldNum)
+      removed under "bake".
+    * ``run_shifts`` -- :class:`pptx.rebind.RunShift` entries for every run whose
+      resolved appearance changed (populated for "adopt_theme"; empty for
+      keep_appearance).
+    """
 
     mode: str
     source_slide: str
@@ -654,8 +678,8 @@ def _live_cache_hit(dest_package, cache, fingerprint, allocated):
     leave the package afterwards (imported slide deleted, then scrub removes the
     transplanted chain). Reusing such a ghost re-relates a part whose freed partname an
     intervening import may have reallocated - two live parts sharing one partname, and
-    save() writing duplicate zip members with different content (the v0.11 final-review
-    critical). A hit therefore counts only when the part is reachable from the package
+    save() writing duplicate zip members with different content. A hit therefore counts
+    only when the part is reachable from the package
     root, or was created earlier in this same import call; anything else is evicted.
     """
     hit = cache.get(fingerprint)
@@ -733,7 +757,7 @@ def _import_support_part(dest_package, part, allocated, reused):
 def _import_chart_part(dest_package, chart_part, allocated):
     """Deep-copy a chart (with workbook and style parts) into `dest_package` - never shared.
 
-    Same recipe as the v0 clone machinery's `_copy_chart_part`, but the copies land in
+    Same recipe as the clone machinery's `_copy_chart_part`, but the copies land in
     the DESTINATION package.
     """
     new_chart = _import_leaf_into(dest_package, chart_part, allocated)

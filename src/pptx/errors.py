@@ -59,7 +59,7 @@ class RelationshipPolicyError(PaperRefusal):
 def materialize_slides(prs, operation: str):
     """Return `list(prs.slides)`, refusing typed when the relationship graph is broken.
 
-    paper-pptx internal helper (v0.11). Paper organs traverse the whole deck up front;
+    paper-pptx internal helper. Paper organs traverse the whole deck up front;
     corrupt input (a `p:sldId` referencing a missing relationship) must speak from those
     APIs as a typed, specific refusal - never a raw traceback. Upstream loader and
     traversal behavior on such files is unchanged (the additive contract): only the

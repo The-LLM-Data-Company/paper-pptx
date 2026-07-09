@@ -651,7 +651,7 @@ class SlideShapes(_BaseGroupShapes):
     def add_copy(self, shape):
         """Return a copy of `shape` (from this or another slide) added to this slide.
 
-        paper-pptx addition (v0.1 Phase 1.2). The copy gets fresh shape ids; its
+        paper-pptx addition. The copy gets fresh shape ids; its
         relationships follow the pinned policy: image/media parts shared, external
         (hyperlink) relationships copied, charts deep-copied WITH their embedded workbooks
         and style parts. Any other relationship type refuses with |RelationshipPolicyError|
@@ -725,7 +725,7 @@ class SlideShapes(_BaseGroupShapes):
         """Return the |Chart| held by the shape on this slide named `name`.
 
         paper-pptx addition, the chart-addressing half of safe chart-data replacement.
-        Group-aware since v0.1: shapes inside groups are found too. Raises
+        Group-aware: shapes inside groups are found too. Raises
         |TargetNotFoundError| when no shape has that name, or when shapes with the name
         exist but none holds a chart (the message says what was found instead). Raises
         |AmbiguousTargetError| when more than one chart-bearing shape has the name — this
@@ -752,7 +752,7 @@ class SlideShapes(_BaseGroupShapes):
     def delete(self, shape) -> None:
         """Remove `shape` from this slide, with relationship hygiene.
 
-        paper-pptx addition (v0.1 Phase 1.2). Relationships referenced by the removed
+        paper-pptx addition. Relationships referenced by the removed
         subtree are dropped unless something else in the part still references them (two
         pictures can share one image relationship). A shape that is not a direct member of
         this collection — including a shape inside a group — raises |TargetNotFoundError|
@@ -775,7 +775,7 @@ class SlideShapes(_BaseGroupShapes):
     def move(self, shape, to_index: int) -> None:
         """Move `shape` to 0-based `to_index` in this collection's z-order.
 
-        paper-pptx addition (v0.1 Phase 1.2). Index 0 is backmost, the last index topmost —
+        paper-pptx addition. Index 0 is backmost, the last index topmost —
         the same order this collection iterates. `to_index` outside range raises
         |ValueError|; a shape not directly in this collection raises |TargetNotFoundError|.
         """
@@ -805,7 +805,7 @@ class SlideShapes(_BaseGroupShapes):
     def picture_by_name(self, name: str):
         """Return the |Picture| on this slide named `name` (group-aware).
 
-        paper-pptx addition (v0.1 Phase 1.3), with the same contract as `chart_by_name`:
+        paper-pptx addition, with the same contract as `chart_by_name`:
         |TargetNotFoundError| when nothing (or nothing picture-shaped) has the name,
         |AmbiguousTargetError| when several pictures do.
         """
@@ -816,7 +816,7 @@ class SlideShapes(_BaseGroupShapes):
     def shape_by_name(self, name: str):
         """Return the single shape on this slide named `name` (group-aware).
 
-        paper-pptx addition (v0.1 Phase 1.3): |TargetNotFoundError| / |AmbiguousTargetError|,
+        paper-pptx addition: |TargetNotFoundError| / |AmbiguousTargetError|,
         never first-match.
         """
         return self._by_name_of_kind(name, "shape", lambda s: True)
@@ -824,7 +824,7 @@ class SlideShapes(_BaseGroupShapes):
     def table_by_name(self, name: str):
         """Return the |Table| held by the graphic frame on this slide named `name`.
 
-        paper-pptx addition (v0.1 Phase 1.3), same contract as `chart_by_name`.
+        paper-pptx addition, same contract as `chart_by_name`.
         """
         return self._by_name_of_kind(name, "table", lambda s: s.has_table).table
 

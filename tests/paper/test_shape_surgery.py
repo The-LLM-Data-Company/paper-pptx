@@ -1,4 +1,4 @@
-"""Phase 1.2/1.3 contract tests: shape surgery + generic by-name addressing (SlideShapes)."""
+"""Contract tests: shape surgery + generic by-name addressing (SlideShapes)."""
 
 from __future__ import annotations
 
@@ -284,7 +284,7 @@ def test_table_by_name_returns_the_table_even_inside_a_group():
 
 
 def test_chart_by_name_is_group_aware_since_v01():
-    """chart_by_name gained group traversal with the 1.3 wave (ledgered in PAPER.md)."""
+    """chart_by_name gained group traversal for nested shapes."""
     prs = _open(CHART_NOTES)
     chart_frame = next(s for s in prs.slides[0].shapes if s.has_chart)
     group = prs.slides[0].shapes.add_group_shape()

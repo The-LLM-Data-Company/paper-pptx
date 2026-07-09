@@ -1,6 +1,6 @@
-"""Phase 5 contract tests: the package kernel (`pptx.package` additive functions).
+"""Contract tests: the package kernel (`pptx.package` additive functions).
 
-Every CONVENTIONS §7 pinned requirement is exercised here: the meaningful-whitespace trap
+Every pinned requirement is exercised here: the meaningful-whitespace trap
 (via the frozen trailing-space fixture pair), no-op byte-identity, exact single-part budgets,
 zip determinism (pinned entry order and epoch timestamps), and mid-write crash atomicity.
 """

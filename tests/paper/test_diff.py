@@ -1,4 +1,4 @@
-"""v0.11 Phase 6 contract tests: diff_decks, the verification mirror.
+"""Contract tests: diff_decks, the verification mirror.
 
 Required by the plan: diff(A, A) empty across the ENTIRE corpus; the reorder-only
 fixture reads as moves (never delete-plus-add); determinism goldens; the declared
@@ -30,7 +30,7 @@ def _path(relpath):
     return str(corpus.fixture_path(relpath))
 
 
-# ------------------------------------------------------------------- the keystone invariants
+# ------------------------------------------------------------------- the core invariants
 
 
 @pytest.mark.parametrize("relpath", NONCORRUPT_RELPATHS)
@@ -150,8 +150,8 @@ def test_bad_detail_raises_valueerror():
 
 
 def test_id_matching_contract_on_rebuilt_and_re_idd_decks():
-    """The declared contract, asserted for real (the final review flagged the previous
-    version as vacuous): colliding ids on a rebuilt deck MATCH and surface the content
+    """The declared contract, asserted for real (the previous
+    version was vacuous): colliding ids on a rebuilt deck MATCH and surface the content
     difference honestly; distinct ids read as full replacement."""
     rebuilt = Presentation()
     slide = rebuilt.slides.add_slide(rebuilt.slide_layouts[0])
@@ -198,11 +198,11 @@ def test_unnamed_shape_fallback_keys_are_deterministic():
     assert set(change.shapes_added) == {"sp#2", "sp#3"}  # -- synthetic keys, stable
 
 
-# ------------------------------------------------------------- final-review regressions
+# ------------------------------------------------------------- regressions
 
 
 def test_trailing_whitespace_edit_is_a_reported_text_change():
-    """Regression (final review): whitespace is content (CONVENTIONS 3). The frozen
+    """Regression: whitespace is content. The frozen
     trailing-space pair must diff as a text change, never as 'identical'."""
     report = diff_decks(
         _path("self_generated/whitespace_trailing_a.pptx"),
@@ -218,7 +218,7 @@ def test_trailing_whitespace_edit_is_a_reported_text_change():
 
 
 def test_full_detail_sees_emphasis_shifts():
-    """Regression (final review): bold/italic/underline participate in resolution-state
+    """Regression: bold/italic/underline participate in resolution-state
     comparison - a mutant dropping them must fail here."""
     prs_b = Presentation(_path("self_generated/minimal_clean.pptx"))
     run = prs_b.slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
@@ -235,7 +235,7 @@ def test_full_detail_sees_emphasis_shifts():
 
 
 def test_shape_removal_does_not_misattribute_later_blocks():
-    """Regression (final review): text/effective comparison keys are shape-scoped, so
+    """Regression: text/effective comparison keys are shape-scoped, so
     removing an early shape must read as that shape's blocks disappearing - never as
     edits to the shapes below it."""
     prs_b = Presentation(_path("self_generated/gauntlet.pptx"))
@@ -252,7 +252,7 @@ def test_shape_removal_does_not_misattribute_later_blocks():
 
 
 def test_diff_accepts_presentation_objects():
-    """Regression (final review): the natural first attempt - passing open decks."""
+    """Regression: the natural first attempt - passing open decks."""
     prs_a = Presentation(_path(V1))
     prs_b = Presentation(_path(V2))
     report = diff_decks(prs_a, prs_b, detail="structure")
@@ -272,7 +272,7 @@ def test_unreadable_package_refuses_typed(tmp_path):
 
 
 def test_corrupt_input_speaks_as_typed_refusal():
-    """Plan §Prohibitions: bad input produces typed, specific refusals from the v0.11
+    """Bad input produces typed, specific refusals from the
     organs - never raw tracebacks. (Upstream loader behavior is unchanged, additively.)"""
     from pptx.errors import UnsupportedStructureError
 

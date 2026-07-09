@@ -8,8 +8,8 @@ Two failure classes turn a deck that "opens in python-pptx" into one PowerPoint 
   (`dangling_relationship_targets`).
 
 Both scans work on the raw zip members - never through the pptx object model - so they stay
-valid as an independent oracle when the object model itself is the code under test. Phase 7
-(slide clone/delete/reorder) runs these over every output; corrupt-by-construction fixtures
+valid as an independent oracle when the object model itself is the code under test. The
+slide operations (clone/delete/reorder) run these over every output; corrupt-by-construction fixtures
 prove they actually detect what they claim to.
 """
 

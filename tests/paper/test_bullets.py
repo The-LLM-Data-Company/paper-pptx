@@ -1,7 +1,7 @@
-"""Phase 2 contract tests: `paragraph.bullet` (real bullets and numbering).
+"""Contract tests: `paragraph.bullet` (real bullets and numbering).
 
-Every mutation asserts through save -> reopen (CONVENTIONS §1.4), budgets its changed parts,
-and schema-validates the emitted `a:pPr` fragment (§4 oracle). Bullets define no PaperRefusal
+Every mutation asserts through save -> reopen, budgets its changed parts,
+and schema-validates the emitted `a:pPr` fragment. Bullets define no PaperRefusal
 conditions — bad arguments are programmer errors — but every ValueError path is still proven
 to leave the XML tree untouched (§1.3 spirit).
 """

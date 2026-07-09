@@ -108,3 +108,26 @@ This class is not intended to be constructed directly.
    :members:
    :exclude-members: clone_master_placeholders
    :inherited-members:
+
+
+|SlideClonePolicy| objects
+--------------------------
+
+*paper-pptx addition.* The policy object accepted by :meth:`.Slides.clone`, controlling how a
+cloned slide's related parts are handled.
+
+.. autoclass:: pptx.slide.SlideClonePolicy()
+   :members:
+   :undoc-members:
+   :member-order: bysource
+
+
+|HeaderFooters| objects
+-----------------------
+
+*paper-pptx addition.* Tri-state (``True`` / ``False`` / ``None`` = inherit) visibility flags for
+the date, footer, and slide-number placeholders, read from a layout or master through the
+:attr:`.SlideLayout.header_footers` / :attr:`.SlideMaster.header_footers` properties.
+
+.. autoclass:: pptx.slide.HeaderFooters()
+   :members:

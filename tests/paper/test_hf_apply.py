@@ -1,7 +1,7 @@
-"""v0.11 Phase 2 contract tests: real fields and footer machinery.
+"""Contract tests: real fields and footer machinery.
 
 `Presentation.apply_footers` / `Slide.apply_footers` must persist exactly what
-PowerPoint's Insert > Header & Footer dialog does (mechanism pinned by the Phase 0
+PowerPoint's Insert > Header & Footer dialog does (mechanism pinned by the mechanism
 findings and the frozen `footers_applied` fixture): materialized minimal placeholders
 bound to layout furniture by idx, real `a:fld` elements for slide number and automatic
 date (cached text is a consumer-refreshed hint), literal runs for footer text and fixed
@@ -76,7 +76,7 @@ def test_apply_to_all_materializes_dialog_structure():
 
 
 def test_apply_matches_the_frozen_dialog_fixture_structure():
-    """The API's output must be structurally identical to the Phase 0 `footers_applied`
+    """The API's output must be structurally identical to the `footers_applied`
     fixture (the LibreOffice-validated reproduction of the dialog's persistence):
     same placeholder set, same layout-bound idx values, same fld types."""
     prs = Presentation()
@@ -291,11 +291,11 @@ def test_bad_arguments_raise_valueerror_before_any_change(kwargs):
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
 
 
-# ------------------------------------------------------------- final-review regressions
+# ------------------------------------------------------------- regressions
 
 
 def test_duplicate_furniture_placeholders_converge_to_dialog_state():
-    """Regression (final review): duplicated furniture placeholders (schema-legal) must
+    """Regression: duplicated furniture placeholders (schema-legal) must
     converge to the dialog's one-per-kind state on apply, and ALL must go on uncheck."""
     import copy
 
@@ -328,7 +328,7 @@ def test_duplicate_furniture_placeholders_converge_to_dialog_state():
 
 
 def test_field_formatting_survives_reapplication():
-    """Regression (final review): rPr preservation must hold on the FIELD path too, not
+    """Regression: rPr preservation must hold on the FIELD path too, not
     just the literal-footer path."""
     prs = _open(MINIMAL)
     prs.apply_footers(slide_number=True, footer="F1", now=NOW)
@@ -373,7 +373,7 @@ def test_inspect_text_reports_applied_fields_as_fields():
 
 def test_slide_number_field_renumbers_by_consumers_after_move():
     """The package never rewrites cached text on reorder - consumers refresh it (the
-    Phase 0 LibreOffice probe proved they do). What must hold structurally: the fld
+    LibreOffice probe proved they do). What must hold structurally: the fld
     element travels with its slide, and its type stays 'slidenum'."""
     prs = _open(GAUNTLET)
     prs.apply_footers(slide_number=True)

@@ -1,4 +1,4 @@
-"""Phase 6 contract tests: speaker notes on existing notes parts only.
+"""Contract tests: speaker notes on existing notes parts only.
 
 The upstream `notes_slide` accessor auto-creates a whole notes part graph on access; these
 APIs never do — a slide without notes refuses, atomically, and the refusal provably does not

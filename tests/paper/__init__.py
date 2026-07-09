@@ -1,1 +1,1 @@
-"""paper-pptx fork test suite (CONVENTIONS.md §4), separate from the upstream suite."""
+"""paper-pptx fork test suite, separate from the upstream suite."""

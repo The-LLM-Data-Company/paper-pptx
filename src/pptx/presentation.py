@@ -41,7 +41,7 @@ class Presentation(PartElementProxy):
     ) -> None:
         """Apply the complete footer state to every slide ("Apply to All").
 
-        paper-pptx addition (v0.11 Phase 2). Persists exactly what PowerPoint's
+        paper-pptx addition. Persists exactly what PowerPoint's
         Insert > Header & Footer dialog does: materializes minimal `dt`/`ftr`/`sldNum`
         placeholder shapes per slide (binding to the layout furniture by `idx`), writes
         slide numbers and automatic dates as real `a:fld` elements whose cached text
@@ -80,7 +80,7 @@ class Presentation(PartElementProxy):
     ) -> "tuple[ImportReport, ...]":
         """Import every slide of `source_prs`, in order, at the end of this deck.
 
-        paper-pptx addition (v0.11 Phase 5), built on :meth:`import_slide` — same `mode`
+        paper-pptx addition, built on :meth:`import_slide` — same `mode`
         semantics and refusal ledger. The COMPLETE source deck validates before the first
         write: a refusal on any source slide leaves this presentation untouched. Source
         sections are not copied (this deck's section structure governs — declared).
@@ -102,7 +102,7 @@ class Presentation(PartElementProxy):
     ) -> "ImportReport":
         """Import `slide` from `source_prs` into this presentation; return the report.
 
-        paper-pptx addition (v0.11 Phase 5). `mode` is required — there is no right
+        paper-pptx addition. `mode` is required — there is no right
         default, the caller chooses consciously:
 
         - `"adopt_theme"`: content transplants and rebinds to a destination layout
@@ -159,7 +159,7 @@ class Presentation(PartElementProxy):
     ) -> "ScrubReport":
         """Remove exactly the toggled targets from this deck; return a |ScrubReport|.
 
-        paper-pptx addition (v0.11 Phase 3) — the exit gate before a deck leaves an
+        paper-pptx addition — the exit gate before a deck leaves an
         automated pipeline. Every toggle defaults to False (touch nothing). Removal is
         relationship-graph surgery: a part leaves the package only by becoming
         unreachable, so anything reachable from a live slide, layout, or master
@@ -170,7 +170,7 @@ class Presentation(PartElementProxy):
         `metadata`: clears core-properties text fields (author, title, comments, …;
         created/modified/revision survive) and removes app.xml, custom-properties, and
         thumbnail parts. `hidden_slides`: deletes `show="0"` slides (sections and custom
-        shows maintained via the v0.1 delete path). `unused_layouts`/`unused_masters`:
+        shows maintained via the safe delete path). `unused_layouts`/`unused_masters`:
         layouts no slide references / masters none of whose layouts serve a slide.
         `unreachable_media`: drops media relationships no XML reference actually uses —
         referenced media is never touched. `embedded_fonts`: the `p:embeddedFontLst` and

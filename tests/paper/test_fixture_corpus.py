@@ -581,7 +581,7 @@ def test_hf_flags_ground_truth():
     assert layout_hf_proxy.footer_visible is None
 
 
-# ------------------------------------------------------------------- v0.11 Phase 0 fixtures
+# ------------------------------------------------------------------- fixtures
 
 
 def _table_rows(relpath):
@@ -645,7 +645,7 @@ def test_footers_applied_ground_truth(relpath):
             assert found["ftr"][1] == []  # -- footer is a literal, never a field
     if "hidden_slide_ordinal" in ground_truth:
         # -- `show` lives on the slide part's ROOT `p:sld` element (CT_Slide), never on
-        # -- the presentation's p:sldId entries (a Phase 0 mechanism finding)
+        # -- the presentation's p:sldId entries (a mechanism finding)
         hidden = [
             ordinal
             for ordinal in range(1, 6)
@@ -730,7 +730,7 @@ def test_template_identity_ground_truth(relpath, expect):
 
 def test_template_pair_layout_name_contract():
     """Every alpha layout name exists in beta except beta's renamed 'Beta Special' —
-    the import-collision fixture requirement (FIXTURE-REQUESTS.md R10)."""
+    the import-collision fixture requirement (a real-PowerPoint fixture a human must author)."""
 
     def layout_names(relpath):
         names = set()

@@ -1,4 +1,4 @@
-"""THE explicit golden-update command (CONVENTIONS §4: goldens update only via this).
+"""THE explicit golden-update command (goldens update only via this).
 
 Regenerates every golden inspection JSON under `tests/paper/goldens/` from the frozen fixture
 corpus. Golden diffs are human-reviewed in the PR that lands them; tests never call this.
@@ -24,7 +24,7 @@ GOLDENS = (
     ("gauntlet_slide1.inspect.json", "self_generated/gauntlet.pptx", 0),
 )
 
-#: (golden filename, fixture relpath) — whole-deck structural manifests (Phase 2.1)
+#: (golden filename, fixture relpath) — whole-deck structural manifests
 MANIFEST_GOLDENS = (
     ("gauntlet.manifest.json", "self_generated/gauntlet.pptx"),
     ("tables_in_group.manifest.json", "self_generated/tables_in_group.pptx"),
@@ -48,7 +48,7 @@ def manifest_golden_json(fixture_relpath: str) -> str:
 def scrub_golden_json() -> str:
     """Return the canonical golden for the full scrub of the scrub_gauntlet fixture.
 
-    v0.11 Phase 3: the report is the operation's evidence object; the golden pins its
+    The report is the operation's evidence object; the golden pins its
     exact shape and the exact member budget of scrub-everything on the frozen fixture.
     """
     prs = Presentation(str(FIXTURES_DIR / "self_generated/scrub_gauntlet.pptx"))
@@ -66,7 +66,7 @@ def scrub_golden_json() -> str:
 
 
 def import_golden_json() -> str:
-    """Return the canonical golden for one keep_appearance import (v0.11 Phase 5)."""
+    """Return the canonical golden for one keep_appearance import."""
     dest = Presentation(str(FIXTURES_DIR / "self_generated/template_alpha.pptx"))
     source = Presentation(str(FIXTURES_DIR / "self_generated/template_beta.pptx"))
     report = dest.import_slide(source, 0, mode="keep_appearance")
@@ -74,7 +74,7 @@ def import_golden_json() -> str:
 
 
 def diff_golden_json() -> str:
-    """Return the canonical golden for the lineage v1->v2 diff (v0.11 Phase 6)."""
+    """Return the canonical golden for the lineage v1->v2 diff."""
     from pptx.diff import diff_decks
 
     report = diff_decks(

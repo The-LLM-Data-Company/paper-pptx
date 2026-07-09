@@ -1,4 +1,4 @@
-"""Phase 8 contract tests: geometry-preserving image replacement.
+"""Contract tests: geometry-preserving image replacement.
 
 Position, size, and crop must survive byte-exactly; the extension-mismatch refusal is atomic;
 shared image parts are only orphaned when the last reference goes. The reference's low-res /
@@ -180,7 +180,7 @@ def test_unrecognizable_image_bytes_raise_valueerror_atomically():
 
 
 def test_cross_format_swap_with_allow_format_change(tmp_path):
-    """v0.1 2.3: PNG -> JPEG swap; geometry and crop byte-untouched; content types follow."""
+    """PNG -> JPEG swap; geometry and crop byte-untouched; content types follow."""
     prs = _open(GAUNTLET)
     picture = _cropped_picture(prs)
     spPr_before = etree.tostring(picture._pic.spPr)

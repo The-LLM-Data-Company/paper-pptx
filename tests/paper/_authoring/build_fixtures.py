@@ -9,7 +9,7 @@ script. Regenerating a fixture requires updating the manifest and sidecar in a r
 Provenance produced here is honestly "self-generated" (python-pptx, this file). The
 LibreOffice-export bucket is produced separately by round-tripping these files through headless
 LibreOffice (see `tests/paper/fixtures/README.md`); real-PowerPoint and Google-export fixtures
-require a human and are specified in `FIXTURE-REQUESTS.md`.
+require a human to author.
 
 Usage:  python tests/paper/_authoring/build_fixtures.py
 """
@@ -59,7 +59,7 @@ def _png_bytes(palette: int = 0) -> bytes:
     """Return a small deterministic 64x64 quadrant-pattern PNG.
 
     `palette` selects a color rotation so callers can produce distinct-but-deterministic
-    image bytes (default 0 preserves the original v0 fixture palette exactly).
+    image bytes (default 0 preserves the original fixture palette exactly).
     """
     img = Image.new("RGB", (64, 64))
     colors = [(200, 30, 30), (30, 160, 60), (30, 60, 200), (220, 180, 40)]
@@ -140,7 +140,7 @@ def _add_named_textbox(slide, name, left, top, width, height, text):
 def _add_real_bullet(paragraph, char="•", font="Arial") -> None:
     """Write a real a:buFont/a:buChar pair into the paragraph's a:pPr.
 
-    Raw-XML on purpose: bullets are exactly the gap the fork fills in Phase 2; the fixture must
+    Raw-XML on purpose: bullets are exactly the gap the fork fills; the fixture must
     exist before the API does. a:buFont precedes a:buChar per the a:pPr child sequence.
     """
     pPr = paragraph._p.get_or_add_pPr()
@@ -320,7 +320,7 @@ def _whitespace_deck(text) -> "Presentation":
 def build_whitespace_pair() -> "tuple[Path, Path]":
     """Two decks identical except for one trailing space inside an a:t text node.
 
-    The Phase 5 kernel trap: any comparison that trims meaningful whitespace will call these
+    The kernel trap: any comparison that trims meaningful whitespace will call these
     equivalent. They are not.
     """
     path_a = _save(_whitespace_deck("Trailing space "), "whitespace_trailing_a.pptx")
@@ -451,7 +451,7 @@ def build_sections() -> Path:
     Sections/custom shows cannot be authored via python-pptx, so presentation.xml is rewritten
     by zip surgery after a normal build — same technique as the corrupt fixture, honestly
     self-generated. Section GUIDs are fixed constants for determinism. A real-PowerPoint
-    version is requested as FIXTURE-REQUESTS.md R8 (LibreOffice does not faithfully author
+    version is a fixture a human must author (LibreOffice does not faithfully author
     the p14 extension list).
     """
     P14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
@@ -576,9 +576,9 @@ def build_nested_groups() -> Path:
 def build_autofit_inherited() -> Path:
     """normAutofit placeholder whose font sizes resolve ONLY through the master's txStyles.
 
-    The PLAN-v0.1 Phase 0.4 fixture: normalize_autofit() must refuse without resolution and
+    The autofit-resolution fixture: normalize_autofit() must refuse without resolution and
     succeed with `resolve=True` (sizes come from the branded master: lvl1 2600, lvl2 2200).
-    fontScale only — no lnSpcReduction — because spacing resolution stays a refusal in v0.1.
+    fontScale only — no lnSpcReduction — because spacing resolution stays a refusal.
     """
     prs = Presentation()
     _brand_master(prs)
@@ -602,9 +602,9 @@ def build_autofit_inherited() -> Path:
 def build_hf_flags() -> Path:
     """Master and first layout carrying explicit p:hf visibility flags.
 
-    Injected by zip surgery (v0 python-pptx could not author p:hf), so the corpus
+    Injected by zip surgery (upstream python-pptx could not author p:hf), so the corpus
     round-trip and the HeaderFooters read path exercise authored-elsewhere flags — not just
-    flags this package wrote itself. Real-PowerPoint version tracked in FIXTURE-REQUESTS.md.
+    flags this package wrote itself. Real-PowerPoint version is a fixture a human must author.
     """
     buf = io.BytesIO()
     prs = Presentation()
@@ -662,12 +662,12 @@ def build_large_smoke() -> Path:
     return _save(prs, "large_smoke.pptx")
 
 
-# ---------------------------------------------------------------- v0.11 fixtures
+# ---------------------------------------------------------------- additional fixtures
 #
-# Added 2026-07-08 for PLAN-v0.11 Phase 0. Same rules as above: honest self-generated
+# Added 2026-07-08. Same rules as above: honest self-generated
 # provenance, zip surgery only where python-pptx cannot author the structure, fixed
 # GUIDs/ids for determinism, preconditions asserted so template drift fails loudly.
-# Real-PowerPoint equivalents are FIXTURE-REQUESTS.md R9-R14.
+# Real-PowerPoint equivalents are fixtures a human must author.
 
 _RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CTYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
@@ -720,7 +720,7 @@ def build_merged_tables() -> Path:
     """5x4 table: header row merged across all four columns, a 2-row vertical merge in
     column one, everything else regular with distinct text. Written with upstream's own
     `_Cell.merge` so the gridSpan/rowSpan/hMerge/vMerge attributes are exactly what
-    python-pptx produces; the real-PowerPoint counterpart is FIXTURE-REQUESTS.md R11."""
+    python-pptx produces; the real-PowerPoint counterpart is a fixture a human must author."""
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     shape = slide.shapes.add_table(5, 4, Inches(0.5), Inches(0.7), Inches(9), Inches(5))
@@ -763,7 +763,7 @@ def _next_shape_id(slide) -> int:
 def _materialize_dialog_placeholder(slide, ph_type: str, name: str, body_xml: str) -> None:
     """Append the minimal placeholder `p:sp` PowerPoint's Header & Footer dialog persists.
 
-    Raw-XML on purpose (fixture-first: this is the structure the v0.11 Phase 2 API must
+    Raw-XML on purpose (fixture-first: this is the structure the footer API must
     produce, so the fixture cannot be authored with that API). Geometry and formatting are
     deliberately absent - they inherit from the layout's matching-idx placeholder.
     """
@@ -801,7 +801,7 @@ def _fld_xml(guid_serial: int, fld_type: str, cached_text: str) -> str:
 
 
 def build_footers_applied() -> Path:
-    """Dialog-applied footer furniture, reproduced from the mechanism probe (v0.11 Phase 0).
+    """Dialog-applied footer furniture, reproduced from the mechanism probe.
 
     Five slides. Each carries the three minimal placeholder shapes PowerPoint's
     Insert > Header & Footer dialog materializes on "Apply to All": dt (a:fld
@@ -810,7 +810,7 @@ def build_footers_applied() -> Path:
     Slide 3 omits the footer placeholder (the per-slide uncheck); slide 5 is hidden
     (`show="0"` on p:sld). p:hf is deliberately absent everywhere: all four attributes
     default true, which is exactly what PowerPoint leaves in this state.
-    Real-PowerPoint provenance for the same mechanism is FIXTURE-REQUESTS.md R9.
+    Real-PowerPoint provenance for the same mechanism is a fixture a human must author.
     """
     prs = Presentation()
     layout = prs.slide_layouts[1]
@@ -855,7 +855,7 @@ def build_footers_applied() -> Path:
 
 
 def build_scrub_gauntlet() -> Path:
-    """Everything scrub must remove, next to everything it must keep (v0.11 Phase 3).
+    """Everything scrub must remove, next to everything it must keep.
 
     Live content: 4 slides (slide 4 hidden), notes on slides 1 and 3, a picture on
     slide 1 (media reachable from a live slide - must survive every scrub), core-props
@@ -1035,13 +1035,13 @@ def _retheme(source: zipfile.ZipFile, theme_name: str, major: str, minor: str, a
 
 
 def build_template_alpha() -> Path:
-    """Import/rebind corpus, house style A (v0.11 Phases 4-5).
+    """Import/rebind corpus, house style A.
 
     Default-template deck rethemed by zip surgery ("Paper Alpha": Georgia/Verdana, accent1
     AA3311). Three slides: title, title-and-content with two bullet levels, blank with a
     named picture and textbox. Layout names keep the default-template set, so every name
     collides with template beta's (the import-collision requirement); real-PowerPoint
-    counterpart is FIXTURE-REQUESTS.md R10.
+    counterpart is a fixture a human must author.
     """
     buf = io.BytesIO()
     prs = Presentation()
@@ -1127,11 +1127,11 @@ def build_template_beta() -> Path:
 
 
 def build_lineage_trio() -> "tuple[Path, Path, Path]":
-    """Diff ground-truth corpus (v0.11 Phase 6): v1, v2 saved FROM v1 with known edits,
+    """Diff ground-truth corpus: v1, v2 saved FROM v1 with known edits,
     and a reorder-only variant. v2/reorder are built by loading v1's frozen bytes and
-    applying shipped paper-pptx v0/v0.1 APIs, so permanent slide ids persist exactly as
+    applying shipped paper-pptx APIs, so permanent slide ids persist exactly as
     they do in real save-a-copy lineage. The exact edit list lives in the sidecars; the
-    real-PowerPoint counterpart is FIXTURE-REQUESTS.md R13.
+    real-PowerPoint counterpart is a fixture a human must author.
     """
     from pptx.edit import replace_text
 

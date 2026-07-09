@@ -223,12 +223,11 @@ class _MediaParts(object):
 
 
 # ===========================================================================================
-# paper-pptx package kernel (CONVENTIONS §7) — additive module-level utilities.
+# paper-pptx package kernel — additive module-level utilities.
 #
-# `pptx.package` already held the opc `Package` class when the kernel's pinned module name
-# was chosen, so the kernel extends this module additively rather than shadowing anything
-# (deviation ledgered in PAPER.md). Everything below is new API: semantic XML comparison,
-# part-level package diffing, and compare-based narrow save.
+# `pptx.package` already held the opc `Package` class, so the kernel extends this module
+# additively rather than shadowing anything. Everything below is new API: semantic XML
+# comparison, part-level package diffing, and compare-based narrow save.
 # ===========================================================================================
 
 import io as _io  # noqa: E402
@@ -253,7 +252,7 @@ def xml_equivalent(a: Union[bytes, str], b: Union[bytes, str]) -> bool:
     pretty-print indentation are equivalent — while element order, attribute values, and all
     potentially meaningful text compare exactly.
 
-    Whitespace handling is deliberately asymmetric (CONVENTIONS §3): a whitespace-only text
+    Whitespace handling is deliberately asymmetric: a whitespace-only text
     node is ignored ONLY where its parent element has element children (structural
     indentation; OOXML defines no mixed content, so such whitespace can never render). Text
     of element-childless elements — `a:t` and friends — is never normalized in any way: two
@@ -351,7 +350,7 @@ class PartDelta:
     partname: str  #: partname-style, e.g. "/ppt/slides/slide1.xml"
     kind: str  #: "xml" | "binary"
     change: str  #: "added" | "removed" | "changed"
-    detail: str
+    detail: str  #: human-readable note on the difference
 
     def to_dict(self) -> dict:
         return {
@@ -364,7 +363,11 @@ class PartDelta:
 
 @_dataclass(frozen=True)
 class PackageDiff:
-    """Part-by-part semantic diff between two packages. Schema "paper-package-diff" v1."""
+    """Part-by-part semantic diff between two packages. Schema "paper-package-diff" v1.
+
+    ``deltas`` holds one :class:`PartDelta` per package member that was added, removed,
+    or semantically changed; it is empty when the two packages are equivalent.
+    """
 
     deltas: Tuple[PartDelta, ...]
 
@@ -425,7 +428,7 @@ def _diff_maps(map_a: dict, map_b: dict, label_a: str, label_b: str) -> PackageD
 def patch_save(original_path: str, document, out_path: str) -> PackageDiff:
     """Save `document` to `out_path`, restoring original bytes for unchanged XML parts.
 
-    Compare-based narrow save (CONVENTIONS §7): `document` (a |Presentation|) is serialized
+    Compare-based narrow save: `document` (a |Presentation|) is serialized
     normally, then every XML member that is semantically identical to its counterpart in
     `original_path` is written with the ORIGINAL bytes, so unrelated parts never churn.
     Returns the residual |PackageDiff| between `original_path` and `out_path`.

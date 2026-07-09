@@ -1,4 +1,4 @@
-"""Layout rebind - the template-migration primitive (paper-pptx, v0.11 Phase 4).
+"""Layout rebind - the template-migration primitive (paper-pptx addition).
 
 Moving a slide between layouts without corrupting placeholder inheritance is the
 package-level piece of template migration; deciding what maps where is the caller's job
@@ -54,7 +54,17 @@ class RunShift:
     Runs are identified by (shape_id, block_ordinal-within-shape, run_index) - a STABLE
     key that survives shapes being added or removed elsewhere on the slide. Keying by
     the slide-global block index would pair unrelated runs the moment any earlier shape
-    disappears (a v0.11 final-review finding).
+    disappears.
+
+    Fields:
+
+    * ``part`` -- partname of the slide the run lives on.
+    * ``shape_id`` -- id of the shape containing the run.
+    * ``block_ordinal`` -- 0-based paragraph-block index within that shape.
+    * ``run_index`` -- 0-based run index within the block.
+    * ``text`` -- the run's text (for human legibility of the shift).
+    * ``before`` / ``after`` -- the run's resolved effective-font payload
+      (``EffectiveFont.to_dict()``) before and after the rebind.
     """
 
     part: str
@@ -79,7 +89,21 @@ class RunShift:
 
 @dataclass(frozen=True)
 class RebindReport:
-    """What one rebind did: the mapping used, orphan handling, and every resolution shift."""
+    """What one rebind did: the mapping used, orphan handling, and every resolution shift.
+
+    Fields:
+
+    * ``source_layout`` / ``source_layout_name`` -- partname and display name of the
+      layout the slide was bound to before.
+    * ``target_layout`` / ``target_layout_name`` -- partname and display name of the
+      layout the slide is bound to after.
+    * ``placeholder_map_used`` -- the resolved ``(source_idx, target_idx)`` pairs; a
+      ``target_idx`` of ``None`` marks a source placeholder that was orphaned.
+    * ``baked_orphans`` -- names of orphan placeholders converted to free shapes (only
+      populated under ``orphan_policy="bake"``).
+    * ``run_shifts`` -- one :class:`RunShift` for every run whose resolved effective
+      values changed; empty when the rebind preserved appearance exactly.
+    """
 
     source_layout: str
     source_layout_name: str
@@ -263,7 +287,7 @@ def _compute_mapping(slide_phs, target_layout, placeholder_map):
     # -- auto matching in three GLOBAL passes: every exact type+idx match settles before
     # -- any type-matching, and every type match before any family fallback. Interleaving
     # -- the tiers per-placeholder would let a lower-idx placeholder steal a higher-idx
-    # -- placeholder's exact slot (a v0.11 final-review finding).
+    # -- placeholder's exact slot.
     unmatched = sorted(
         (shape for shape in slide_phs if shape.element.ph_idx not in mapping),
         key=lambda s: s.element.ph_idx,

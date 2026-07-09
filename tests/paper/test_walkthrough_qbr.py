@@ -1,12 +1,11 @@
-"""The QBR walkthrough eval (PLAN-v0.1): the canonical template job as a permanent test.
+"""The QBR walkthrough eval: the canonical template job as a permanent test.
 
-The post-v0 gap review found its gaps by simulating a real job AFTER v0 was declared done.
-This module makes that simulation permanent: `test_walkthrough_end_to_end` executes the
+This module makes a real-job simulation permanent: `test_walkthrough_end_to_end` executes the
 canonical template job — build a QBR deck from the gauntlet "corporate template" — using only
-shipped public API, asserting through the contract harness at every step. Capabilities the
-current wave has not shipped yet are strict-xfail step tests (the PR-0 stub mechanism): the
-suite FAILS the moment an organ lands without its walkthrough step flipping, and v0.1 is not
-done while any Phase 0-2 step here is an xfail.
+shipped public API, asserting through the contract harness at every step. Capabilities not
+shipped yet are strict-xfail step tests: the
+suite FAILS the moment an organ lands without its walkthrough step flipping, and the suite is not
+done while any such step here is an xfail.
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ def _build_qbr_deck(tmp_path):
     ))))
     assert len(prs.slides) == 5  # -- 3 branded + chart + closing
 
-    # -- content pass (Phase 1.1): anchored retitles — each branded clone gets its own title
+    # -- content pass: anchored retitles — each branded clone gets its own title
     # -- via a hash-checked anchor; then one deck-wide format-preserving language pass
     from pptx.edit import replace_text, replace_text_at
     from pptx.inspect import inspect_text
@@ -64,7 +63,7 @@ def _build_qbr_deck(tmp_path):
     closing_title = prs.slides[-1].shapes.title
     closing_title.text_frame.paragraphs[0].runs[0].text = "Next steps"
     # -- capture an anchor now; later structural passes will shift block indices and the
-    # -- refind recovery path (Phase 1.1) brings it back
+    # -- refind recovery path brings it back
     closing_title_anchor = next(
         b.anchor for b in inspect_text(prs.slides[-1]).blocks if b.text == "Next steps"
     )
@@ -77,10 +76,10 @@ def _build_qbr_deck(tmp_path):
     # -- speaker notes for the talk track
     chart_slide.replace_notes_text("Walk through Q4 revenue; flag the Alpha renewal.")
 
-    # -- declutter the chart slide (Phase 1.2): drop its decorative picture, rel-safely
+    # -- declutter the chart slide: drop its decorative picture, rel-safely
     chart_slide.shapes.delete(chart_slide.shapes.picture_by_name("gauntlet_img_1"))
 
-    # -- image swap by name (Phase 1.3), across formats (Phase 2.3: the brand asset arrives
+    # -- image swap by name, across formats (the brand asset arrives
     # -- as a JPEG), geometry preserved
     from PIL import Image as PILImage
 
@@ -89,7 +88,7 @@ def _build_qbr_deck(tmp_path):
     closing = prs.slides[-1]
     picture = closing.shapes.picture_by_name("gauntlet_img_2")
     picture.replace_image(io.BytesIO(replacement.getvalue()), allow_format_change=True)
-    # -- reuse the swapped brand asset on the title slide (Phase 1.2 add_copy: image shared)
+    # -- reuse the swapped brand asset on the title slide (add_copy: image shared)
     brand_mark = prs.slides[0].shapes.add_copy(picture)
     title_slide_ids = [s.shape_id for s in prs.slides[0].shapes]
     assert title_slide_ids.count(brand_mark.shape_id) == 1  # -- fresh id on ITS slide
@@ -107,21 +106,21 @@ def _build_qbr_deck(tmp_path):
     tf.normalize_autofit(resolve=True, min_font_size=Pt(11))
     assert tf.auto_size == MSO_AUTO_SIZE.NONE
 
-    # -- footer pass, v0.11 Phase 2: the deck-level dialog-equivalent replaces the
-    # -- v0.1 hand-rolled per-slide page-number rail (the deck_furniture anti-pattern,
+    # -- footer pass: the deck-level dialog-equivalent replaces the
+    # -- hand-rolled per-slide page-number rail (the static-page-number anti-pattern,
     # -- now retired); numbers are real slidenum fields, live across any later reorder
     from pptx.inspect import effective_paragraph_format
 
     prs.slide_masters[0].header_footers.slide_number_visible = True
     prs.apply_footers(footer="Q4 QBR", slide_number=True)
-    # -- the title slide keeps one caption with a real datetime field (Phase 2.5
-    # -- primitive: fields compose into arbitrary text, not just furniture)
+    # -- the title slide keeps one caption with a real datetime field (the
+    # -- field primitive: fields compose into arbitrary text, not just furniture)
     caption = prs.slides[0].shapes.add_textbox(Pt(20), Pt(500), Pt(200), Pt(20))
     caption.name = "prepared_on_caption"
     caption_paragraph = caption.text_frame.paragraphs[0]
     caption_paragraph.add_run().text = "Prepared "
     caption_paragraph.add_datetime_field("datetime1")
-    # -- Phase 2.2: the applied footer's effective alignment resolves through the layout
+    # -- the applied footer's effective alignment resolves through the layout
     footer_ph = next(
         s
         for s in prs.slides[0].shapes
@@ -131,7 +130,7 @@ def _build_qbr_deck(tmp_path):
     assert footer_format.alignment.resolved is True
 
     # -- the early anchor is now stale (z-order + footer passes shifted indices or will);
-    # -- the pinned recovery path: refuse -> refind -> retry (Phase 1.1)
+    # -- the pinned recovery path: refuse -> refind -> retry
     from pptx.edit import refind
     from pptx.errors import StaleAnchorError, TargetNotFoundError
 
@@ -141,7 +140,7 @@ def _build_qbr_deck(tmp_path):
         fresh = refind(prs, closing_title_anchor)
         replace_text_at(prs, fresh, "Next steps", "Next steps & owners")
 
-    # -- exit gate (v0.11 Phase 3): the deck is about to leave the pipeline. Speaker
+    # -- exit gate: the deck is about to leave the pipeline. Speaker
     # -- notes are the talk track and stay; metadata, unused layouts, and any
     # -- unreferenced media go. The report's budget is the scrub's own evidence.
     scrub_report = prs.scrub(
@@ -187,8 +186,8 @@ def test_walkthrough_end_to_end(tmp_path):
         "Walk through Q4 revenue; flag the Alpha renewal."
     )
 
-    # -- the applied footer trio landed on every slide as REAL fields (v0.11 Phase 2),
-    # -- and the title slide's caption carries its datetime field (Phase 2.5 primitive)
+    # -- the applied footer trio landed on every slide as REAL fields,
+    # -- and the title slide's caption carries its datetime field
     from pptx.inspect import inspect_text as _inspect_text
 
     for ordinal, slide in enumerate(reopened.slides, start=1):
@@ -222,7 +221,7 @@ def test_walkthrough_end_to_end(tmp_path):
 
 
 def test_walkthrough_self_consistency_against_deck_diff(tmp_path):
-    """The v0.11 keystone: the job's own operation reports and diff_decks(input, output)
+    """The self-consistency check: the job's own operation reports and diff_decks(input, output)
     are two independent evidence systems - they must tell the same story."""
     from pptx.diff import diff_decks
 
@@ -265,12 +264,12 @@ def test_walkthrough_output_loads_in_libreoffice(tmp_path):
 
 
 # ---------------------------------------------------------------- unshipped steps (strict)
-# Each xfail names its PLAN-v0.1 item and FAILS the suite when the organ lands without the
+# Each xfail names its capability item and FAILS the suite when the organ lands without the
 # walkthrough growing the real step.
 
 
 def test_step_survey_template_with_deck_manifest():
-    """Phase 2.1 step (was xfail): the job starts with a structural survey, not guesswork."""
+    """Survey step (was xfail): the job starts with a structural survey, not guesswork."""
     from pptx.inspect import inspect_deck
 
     prs = Presentation(str(corpus.fixture_path(GAUNTLET)))
@@ -281,7 +280,7 @@ def test_step_survey_template_with_deck_manifest():
         if any(shape.chart for shape in slide.shapes)
     ]
     assert chart_slides == ["/ppt/slides/slide2.xml"]
-    # -- and the template's table is addressable by name (Phase 1.3) from the survey
+    # -- and the template's table is addressable by name from the survey
     table_slide_index = next(
         index for index, slide in enumerate(manifest.slides)
         if any(shape.table for shape in slide.shapes)
@@ -291,7 +290,7 @@ def test_step_survey_template_with_deck_manifest():
 
 
 def test_step_check_brand_accent_via_effective_shape_format():
-    """Phase 2.2 step (was xfail): 'is that box actually brand-colored?' is now answerable."""
+    """Brand-accent step (was xfail): 'is that box actually brand-colored?' is now answerable."""
     from pptx.inspect import effective_shape_format
 
     prs = Presentation(str(corpus.fixture_path("self_generated/clrmap_remap.pptx")))
@@ -302,7 +301,7 @@ def test_step_check_brand_accent_via_effective_shape_format():
 
 
 def test_step_update_libreoffice_authored_chart():
-    """Phase 2.4 step (was xfail): the externally-produced deck's chart takes new numbers."""
+    """Chart-update step (was xfail): the externally-produced deck's chart takes new numbers."""
     prs = Presentation(str(corpus.fixture_path("libreoffice_export/lo_chart_notes.pptx")))
     chart = next(sh.chart for sh in prs.slides[0].shapes if sh.has_chart)
     chart.replace_data_safe(["A", "B"], [("S1", (1.0, 2.0))])

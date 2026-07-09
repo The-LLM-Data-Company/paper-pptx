@@ -1,6 +1,6 @@
 # Manual PowerPoint release checklist
 
-The third CONVENTIONS §4 oracle: once per release, a human opens gauntlet outputs in desktop
+The third oracle: once per release, a human opens gauntlet outputs in desktop
 Microsoft PowerPoint and works through this list. Automated oracles (LibreOffice smoke,
 relationship-integrity scans, changed-part budgets) cannot prove PowerPoint itself accepts our
 output — this list is that proof. Record the run (date, PowerPoint version, OS, checker,
@@ -12,7 +12,7 @@ For every release: `tests/paper/fixtures/self_generated/gauntlet.pptx` **and**, 
 organs exist, a file produced by exercising each shipped organ against the gauntlet (clone a
 slide, delete a slide, reorder, replace an image, replace chart data, edit notes, set bullets,
 normalize autofit — whichever organs the release ships). Once the real-PowerPoint gauntlet
-(FIXTURE-REQUESTS.md R7) exists, run the same list against outputs derived from it.
+(a fixture a human must author) exists, run the same list against outputs derived from it.
 
 ## Checklist (per file)
 
@@ -38,7 +38,7 @@ normalize autofit — whichever organs the release ships). Once the real-PowerPo
 10. **Save-and-reopen from PowerPoint** — File → Save As a new copy from PowerPoint, reopen
     that copy with this package (`Presentation(path)`), and confirm it loads. This catches
     output PowerPoint tolerates but silently rewrites.
-11. **Live fields and footers (v0.11 Phase 2)** — generate a deck with
+11. **Live fields and footers** — generate a deck with
     `prs.apply_footers(footer="Checklist", slide_number=True, date_format="datetime1")` and
     open it in PowerPoint: every slide shows the footer, a date, and a *live* slide number.
     Drag a slide to a new position — the numbers renumber immediately (they are fields, not
@@ -48,4 +48,4 @@ normalize autofit — whichever organs the release ships). Once the real-PowerPo
     one per slide; PowerPoint recognizes ours as its own).
 
 Any failure: file it with a frozen fixture reproducing the problem and a failing test before
-the fix merges ("no fix without a fixture", CONVENTIONS §4).
+the fix merges ("no fix without a fixture").

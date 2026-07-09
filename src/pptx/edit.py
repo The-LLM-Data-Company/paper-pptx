@@ -1,8 +1,7 @@
-"""Anchor-consuming write APIs: formatting-preserving text replacement (paper-pptx v0.1).
+"""Anchor-consuming write APIs: formatting-preserving text replacement (paper-pptx addition).
 
 The write half of the loop `pptx.inspect` opened. `inspect_text` produces content-hash
-anchors; this module consumes them. The pinned run-preservation semantics (API-PROPOSAL,
-v0.1 Phase 1 amendment):
+anchors; this module consumes them. The run-preservation semantics:
 
 - literal, case-sensitive matching; matches never cross paragraph, line-break (`a:br`), or
   field (`a:fld`) boundaries;
@@ -39,7 +38,14 @@ RESULT_SCHEMA_VERSION = 1
 
 @dataclass(frozen=True)
 class ReplaceResult:
-    """Outcome of a text replacement. `blocks` are POST-edit anchors of touched blocks."""
+    """Outcome of a text replacement.
+
+    Fields:
+
+    * ``replacements`` -- total number of occurrences replaced across the deck.
+    * ``blocks`` -- POST-edit :class:`pptx.inspect.BlockAnchor` for each block that was
+      touched (their content hashes reflect the new text).
+    """
 
     replacements: int
     blocks: Tuple[BlockAnchor, ...] = field(default_factory=tuple)

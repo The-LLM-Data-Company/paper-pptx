@@ -1,4 +1,4 @@
-"""Phase 2.1 contract tests: the structural deck manifest (pptx.inspect.inspect_deck)."""
+"""Contract tests: the structural deck manifest (pptx.inspect.inspect_deck)."""
 
 from __future__ import annotations
 

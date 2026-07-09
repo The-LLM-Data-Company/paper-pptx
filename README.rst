@@ -1,25 +1,24 @@
-*python-pptx* is a Python library for creating, reading, and updating PowerPoint (.pptx)
-files.
+*paper-pptx* is Paper Instruments' hard fork of *python-pptx* (from upstream ``v1.0.2``) — a
+Python library for creating, reading, and updating PowerPoint (.pptx) files, extended into a
+library for safely **inspecting, editing, and composing** real, brand-driven, multi-source
+decks. It remains a 100% drop-in replacement: ``from pptx import Presentation`` and every other
+existing call keep working, unchanged.
 
-A typical use would be generating a PowerPoint presentation from dynamic content such as
-a database query, analytics output, or a JSON payload, perhaps in response to an HTTP
-request and downloading the generated PPTX file in response. It runs on any Python
-capable platform, including macOS and Linux, and does not require the PowerPoint
-application to be installed or licensed.
+Stock python-pptx is a superb deck *generator* — reliable on files its own code created.
+paper-pptx adds the other three verbs professional deck work needs: perceive an existing deck
+(effective font/color resolution through the placeholder → layout → master → theme chain, with
+provenance), edit it safely (anchored formatting-preserving text replacement, slide and shape
+and table surgery, image and chart operations — all validate-fully-then-mutate, refusing loudly
+rather than corrupting), and assemble it from other decks (cross-file slide import and merge,
+layout rebind, send-safe scrub, and a deck-to-deck diff that proves what changed). It runs on
+any Python-capable platform, macOS and Linux included, and does not require PowerPoint to be
+installed or licensed.
 
-It can also be used to analyze PowerPoint files from a corpus, perhaps to extract search
-indexing text and images.
+The founding commitment is against *silent wrongness* — the deck that opens fine and lies. Every
+mutating operation either does exactly what it claims (proven by save → reopen, exact
+changed-part budgets, and an independent LibreOffice load smoke) or raises a typed refusal and
+leaves the document byte-identical.
 
-In can also be used to simply automate the production of a slide or two that would be
-tedious to get right by hand, which is how this all got started.
-
-More information is available in the `python-pptx documentation`_.
-
-Browse `examples with screenshots`_ to get a quick idea what you can do with
-python-pptx.
-
-.. _`python-pptx documentation`:
-   https://python-pptx.readthedocs.org/en/latest/
-
-.. _`examples with screenshots`:
-   https://python-pptx.readthedocs.org/en/latest/user/quickstart.html
+The paper additions are surveyed in :ref:`paper_additions` (start there); each added module has
+its own page under `API Documentation`_. The rest of this documentation is inherited from
+python-pptx and describes the shared, unchanged foundation.

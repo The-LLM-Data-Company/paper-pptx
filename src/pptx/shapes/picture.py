@@ -174,7 +174,7 @@ class Picture(_BasePicture):
         (`a:srcRect`) are not touched — only the `a:blip/@r:embed` target changes. By
         default the new image's canonical format must match the existing image part's
         extension (jpg == jpeg); a mismatch refuses with |UnsupportedStructureError|.
-        Passing `allow_format_change=True` (v0.1) permits a cross-format swap: the new
+        Passing `allow_format_change=True` permits a cross-format swap: the new
         image gets its own correctly-typed part and `[Content_Types].xml` follows
         automatically at save (it is regenerated from live parts).
 

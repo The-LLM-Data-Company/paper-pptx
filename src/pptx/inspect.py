@@ -3,8 +3,7 @@
 Upstream python-pptx reports `None` for any character property that is inherited, leaving
 callers blind to what a deck actually renders. This module implements the documented
 inheritance walk for **font size, font name, and font color** and reports, for every resolved
-value, the ordered chain of sources consulted (CONVENTIONS §2: read-only inspection is
-provenance-bearing).
+value, the ordered chain of sources consulted (read-only inspection is provenance-bearing).
 
 The pinned walk, per run (levels consulted in order until one supplies the value):
 
@@ -47,7 +46,7 @@ if TYPE_CHECKING:
     from pptx.text.text import _Run
 
 SCHEMA_NAME = "paper-text-inspection"
-SCHEMA_VERSION = 2  # -- v2 (v0.1): visibility-complete traversal, container/blind fields
+SCHEMA_VERSION = 2  # -- visibility-complete traversal, container/blind fields
 
 _TITLE_FAMILY = frozenset([PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE])
 _BODY_FAMILY = frozenset(
@@ -129,7 +128,7 @@ class EffectiveFont:
     def to_dict(self) -> dict:
         return {
             "schema": "paper-effective-font",
-            "version": 2,  # -- v2 (v0.1): bold/italic/underline added
+            "version": 2,  # -- bold/italic/underline added
             "size": self.size.to_dict(),
             "name": self.name.to_dict(),
             "color_rgb": self.color_rgb.to_dict(),
@@ -141,7 +140,16 @@ class EffectiveFont:
 
 @dataclass(frozen=True)
 class BlockAnchor:
-    """The pinned anchor shape: part + block index + content hash (detects staleness)."""
+    """The pinned anchor shape: part + block index + content hash (detects staleness).
+
+    Fields:
+
+    * ``part`` -- partname of the story the block lives in (a slide or notes slide).
+    * ``block_index`` -- 0-based index of the paragraph block within that part, in the
+      visibility-complete traversal order.
+    * ``content_hash`` -- first 8 hex chars of the SHA-256 of the block's NFC-normalized
+      text; a mismatch on re-inspection is how a stale anchor is detected.
+    """
 
     part: str
     block_index: int
@@ -172,7 +180,7 @@ class TextBlock:
     inside `p:grpSp` nesting; `container_detail` is the slash-joined group-name path), or
     "table-cell" (`container_detail` is `"<frame-name>!r{row}c{col}"`). `blind` is True when
     the block's *text* is visible but its effective values are unresolvable by design in
-    this version (table-cell runs inherit through table styles, a chain v0.1 does not walk);
+    this version (table-cell runs inherit through table styles, a chain not yet walked);
     a blind block's runs carry `resolved=False` values, never guesses.
     """
 
@@ -230,7 +238,7 @@ def effective_font(run: "_Run") -> EffectiveFont:
     """Return the |EffectiveFont| for `run`, a `_Run` on a slide shape.
 
     Raises |UnsupportedStructureError| for runs outside a `p:sp` shape on a slide part
-    (table-cell and chart text are out of v0 scope).
+    (table-cell and chart text are not resolved).
     """
     r = run._r
     sp = _ancestor_sp(r)
@@ -255,7 +263,7 @@ MAX_GROUP_DEPTH = 16
 
 @dataclass(frozen=True)
 class EffectiveParagraphFormat:
-    """Effective alignment and line spacing of one paragraph (paper-pptx v0.1)."""
+    """Effective alignment and line spacing of one paragraph (paper-pptx addition)."""
 
     alignment: EffectiveValue  #: ECMA algn token, e.g. "l", "ctr", "r", "just"
     line_spacing: EffectiveValue  #: float lines (1.0 = single) or EMU |Length| for points
@@ -313,7 +321,7 @@ DECK_MANIFEST_VERSION = 1
 
 @dataclass(frozen=True)
 class ShapeManifest:
-    """Structural facts of one shape (paper-pptx v0.1). Group children nest."""
+    """Structural facts of one shape (paper-pptx addition). Group children nest."""
 
     shape_id: int
     name: str
@@ -401,7 +409,7 @@ class DeckManifest:
 
 
 def inspect_deck(prs) -> DeckManifest:
-    """Return a structural |DeckManifest| of `prs` (paper-pptx v0.1, Phase 2.1).
+    """Return a structural |DeckManifest| of `prs` (paper-pptx addition).
 
     The survey every brownfield edit starts with, as one deterministic typed payload:
     per-slide shape inventory (identity, kind, z-order, geometry where explicit, placeholder
@@ -529,9 +537,9 @@ def _shape_manifest(shape, z_index: int) -> ShapeManifest:
 
 @dataclass(frozen=True)
 class EffectiveShapeFormat:
-    """Effective solid fill and line color of one shape (paper-pptx v0.1).
+    """Effective solid fill and line color of one shape (paper-pptx addition).
 
-    v0.1 resolves EXPLICIT `p:spPr` fills fully (solid colors through the scheme/clrMap/
+    It resolves EXPLICIT `p:spPr` fills fully (solid colors through the scheme/clrMap/
     theme walk; "none" for noFill). A shape whose fill comes only from its `p:style`
     fill/line reference reports unresolved — the provenance carries the reference index and
     its resolved phClr color, but theme format-scheme modulation is not applied (guessing it
@@ -982,7 +990,7 @@ class _FontResolver(object):
         Explicit solid colors resolve fully (srgb direct, scheme through clrMap/theme);
         `a:noFill` resolves to "none". A style fill/line reference reports unresolved with
         the reference index and its resolved phClr color in provenance — theme format-scheme
-        modulation is not applied in v0.1.
+        modulation is not applied.
         """
         steps = []
         if container is not None:

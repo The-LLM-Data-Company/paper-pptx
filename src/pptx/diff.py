@@ -1,16 +1,15 @@
-"""Deck diff - the verification mirror (paper-pptx, v0.11 Phase 6).
+"""Deck diff - the verification mirror (paper-pptx addition).
 
 PPTX carries no revision markup: a deck is amnesiac about its own history, so "what
 changed between v3 and v4?" has no programmable answer anywhere in the ecosystem. This
-organ provides it as a typed report beside the file - the deck-format analogue of a
-redline - assembled from ingredients v0/v0.1 shipped: permanent slide ids, the
-visibility-complete text layer, the effective-value resolver, and the kernel's semantic
-XML comparison.
+provides it as a typed report beside the file - the deck-format analogue of a
+redline - assembled from the permanent slide ids, the visibility-complete text layer,
+the effective-value resolver, and the kernel's semantic XML comparison.
 
 The matching contract, declared honestly: slides match by their PERMANENT slide id,
 which serves lineage-derived decks (v4 saved from v3 - the actual use case). Decks
 rebuilt from scratch get fresh ids and will not match; a content-fingerprint fallback is
-a declared future flag, not a v0.11 promise. One documented hazard: deleting the max-id
+a possible future option, not a promise here. One documented hazard: deleting the max-id
 slide then adding a new one recycles the id (upstream allocates max+1), which id-based
 matching reads as one edited slide - order add-before-delete when building lineage.
 
