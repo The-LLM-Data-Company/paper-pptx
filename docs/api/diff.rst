@@ -3,21 +3,17 @@
 Deck diff (``pptx.diff``)
 =========================
 
-*paper-pptx addition.* The verification mirror — git-diff for decks. PPTX carries no revision
-markup, so "what changed between v3 and v4?" has had no programmable answer anywhere in the
-ecosystem. :func:`diff_decks` provides one as a typed report beside the file: slides added,
-removed, or **moved** (matched by permanent slide id, so a reorder reads as a move rather than a
-delete-plus-add), and within matched slides the shape, text, chart-data, image, and notes
-deltas. At ``detail="full"`` it also reports per-run effective-value shifts via the resolver.
+*paper-pptx addition.* :func:`diff_decks` compares two decks and returns a typed report. It lists
+slides added, removed, or **moved** (matched by permanent slide id, so a reorder is reported as a
+move rather than delete-plus-add) and the shape, text, chart-data, image, and notes changes within
+matched slides. At ``detail="full"`` it also reports per-run effective-value shifts via the
+resolver.
 
-It is report-only — presenting or rendering the diff is harness territory — and it is the
-independent witness the release's job evals check every operation report against: on each
-import / rebind / refresh job, the operation's own report and ``diff_decks(input, output)`` must
-agree.
+Release job evaluations compare each import / rebind / refresh operation report with
+``diff_decks(input, output)`` and require them to agree.
 
-Matching is by permanent slide id, which serves lineage-derived decks (v4 saved from v3). Decks
-rebuilt from scratch get fresh ids and will not match; a content-fingerprint fallback is a
-declared future option, not a promise here.
+Matching uses the permanent slide id, which serves lineage-derived decks (v4 saved from v3). Decks
+rebuilt from scratch get fresh ids and will not match.
 
 .. currentmodule:: pptx.diff
 

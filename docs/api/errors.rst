@@ -3,12 +3,11 @@
 Refusals (``pptx.errors``)
 ==========================
 
-*paper-pptx addition.* Every mutating or inspecting addition follows a
-*validate-fully-then-mutate* contract: when an operation cannot be performed safely it raises a
-typed :exc:`.PaperRefusal` and leaves the document — in memory and on disk — exactly as it was.
-A refused operation is a **success mode**, distinct from a programmer error (which stays a plain
-``ValueError`` / ``TypeError``). Callers catch |PaperRefusal| to handle "this deck can't be done
-safely" separately from "my code has a bug".
+*paper-pptx addition.* Every added operation either does exactly what it claims or refuses
+atomically. Mutating operations follow *validate-fully-then-mutate*. If one cannot proceed
+safely, it raises a typed :exc:`.PaperRefusal` and leaves the document byte-for-byte unchanged
+in memory and on disk. Programmer errors remain plain ``ValueError`` / ``TypeError``. Callers can
+handle unsupported deck operations separately by catching |PaperRefusal|.
 
 This module is distinct from :mod:`pptx.exc`, which holds the exceptions inherited from
 python-pptx.

@@ -3,11 +3,11 @@
 Inspection (``pptx.inspect``)
 =============================
 
-*paper-pptx addition.* Read-only, provenance-bearing resolution of the values a deck actually
-renders — the sizes, fonts, and colors that stock python-pptx returns as ``None`` because they
-are inherited through the placeholder → layout → master → theme chain. Nothing here mutates the
-document. Every resolved value can explain where it came from; a value that cannot be resolved is
-reported as unresolved, never guessed.
+*paper-pptx addition.* Resolve the values a deck actually renders, with provenance and without
+mutation. These are the sizes, fonts, and colors that stock python-pptx returns as ``None``
+because they are inherited through the placeholder → layout → master → theme chain. Every
+resolved value explains where it came from. A value that cannot be resolved is reported as
+unresolved.
 
 .. currentmodule:: pptx.inspect
 
