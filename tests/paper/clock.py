@@ -1,6 +1,6 @@
-"""Frozen-clock utility (CONVENTIONS.md §4: any API that stamps dates takes an injectable clock).
+"""Frozen-clock utility: any API that stamps dates takes an injectable clock.
 
-The injection mechanism for package APIs is pinned at PR-0; this utility supports both plausible
+This utility supports both plausible
 call shapes (a callable, or an object with `.now()`) so tests freeze time the same way either
 way.
 """

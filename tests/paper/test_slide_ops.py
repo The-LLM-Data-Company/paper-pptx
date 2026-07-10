@@ -1,4 +1,4 @@
-"""Phase 7 contract tests: slide clone / delete / reorder / move.
+"""Contract tests: slide clone / delete / reorder / move.
 
 This is where "opens in python-pptx but not in PowerPoint" corruption gets manufactured, so
 the tests lean hardest on the oracles: exact changed-part budgets, relationship-integrity
@@ -461,7 +461,7 @@ def _custom_show_rids_of(pptx_bytes):
 
 
 def test_delete_removes_section_membership():
-    """PLAN-v0.1 0.1: deleting a slide must not leave its id dangling in p14:sectionLst."""
+    """Deleting a slide must not leave its id dangling in p14:sectionLst."""
     prs = _open(SECTIONS)
     prs.slides.delete(0)  # -- slide id 256, sole member of "Intro"
     saved = save_to_bytes(prs)
@@ -529,7 +529,7 @@ def test_slide_ops_on_sectioned_deck_reopen_clean():
 
 @pytest.mark.lo_smoke
 def test_slide_ops_on_sectioned_deck_load_in_libreoffice(tmp_path):
-    """The Phase 0.1 section-maintenance writes get independent-loader coverage too."""
+    """The section-maintenance writes get independent-loader coverage too."""
     prs = _open(SECTIONS)
     prs.slides.delete(0)
     prs.slides.clone(1)

@@ -51,7 +51,7 @@ class Table(object):
     def delete_column(self, col_idx: int) -> None:
         """Remove the column at 0-based `col_idx`, cells included.
 
-        paper-pptx addition (v0.11 Phase 1). The `a:gridCol` and every row's cell at that
+        paper-pptx addition. The `a:gridCol` and every row's cell at that
         grid position are removed together, so each row keeps exactly one `a:tc` per grid
         column, and the graphic frame's width is recalculated from the remaining columns.
 
@@ -83,7 +83,7 @@ class Table(object):
     def delete_row(self, row_idx: int) -> None:
         """Remove the row at 0-based `row_idx`, cells included.
 
-        paper-pptx addition (v0.11 Phase 1). The graphic frame's height is recalculated
+        paper-pptx addition. The graphic frame's height is recalculated
         from the remaining rows.
 
         Merged-cell guard is cell-wise: the operation refuses
@@ -151,7 +151,7 @@ class Table(object):
     def insert_column(self, after: int, *, width: Length | None = None) -> _Column:
         """Insert a new empty column immediately after 0-based column `after`; return it.
 
-        paper-pptx addition (v0.11 Phase 1). `after=-1` inserts before the first column.
+        paper-pptx addition. `after=-1` inserts before the first column.
         `width` (EMU int) defaults to the width of the neighboring column at `after` (the
         first column when `after=-1`). A new minimal empty cell is inserted at the same grid
         position in every row - the grid stays consistent by construction - and the graphic
@@ -193,7 +193,7 @@ class Table(object):
     def insert_row(self, after: int, *, copy_format_from: int | None = None) -> _Row:
         """Insert a new empty row immediately after 0-based row `after`; return it.
 
-        paper-pptx addition (v0.11 Phase 1). `after=-1` inserts before the first row. The
+        paper-pptx addition. `after=-1` inserts before the first row. The
         new row holds one minimal empty cell per grid column. Row height and per-cell
         formatting (each cell's `a:tcPr`: fill, margins, anchor) are copied from the row at
         `copy_format_from` when given, otherwise the height of the neighboring row at
@@ -320,7 +320,7 @@ class Table(object):
     def _merge_regions(self) -> list[_MergeRegion]:
         """All merged regions in this table, one entry per merge-origin cell.
 
-        paper-pptx helper for the v0.11 row/column surgery guards. Read-only scan.
+        paper-pptx helper for the row/column surgery guards. Read-only scan.
         """
         regions = []
         for row_idx, tr in enumerate(self._tbl.tr_lst):
@@ -357,7 +357,7 @@ class Table(object):
 class _MergeRegion(object):
     """Extent of one merged-cell region: origin (top, left) plus row/grid spans.
 
-    paper-pptx addition (v0.11 Phase 1), used by the surgery guards and their messages.
+    paper-pptx addition, used by the surgery guards and their messages.
     """
 
     def __init__(self, top: int, left: int, rowSpan: int, gridSpan: int):

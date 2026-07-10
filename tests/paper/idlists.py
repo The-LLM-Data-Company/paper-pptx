@@ -3,8 +3,8 @@
 Sections (`p14:sectionLst`, PowerPoint 2010+ extension) reference slides by *slide id*, not
 relationship id, so `relint.py`'s r-namespace scans cannot see a dangling entry. A section
 that names a deleted slide's id is exactly the "opens in python-pptx, breaks in PowerPoint"
-corruption class Phase 7 exists to eliminate — this scan makes the class visible to every
-fixture test and every slide-op output test (PLAN-v0.1 Phase 0.1).
+corruption class the slide operations exist to eliminate — this scan makes the class visible to every
+fixture test and every slide-op output test.
 
 Custom shows (`p:custShowLst`) reference slides by `r:id`, which `relint.py` already covers;
 `duplicate_section_slide_ids` covers the other section invariant (an id in two sections).

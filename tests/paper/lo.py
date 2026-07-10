@@ -1,6 +1,6 @@
 """Independent-loader smoke oracle: headless LibreOffice conversion exit-code check.
 
-Assertion 4 of the contract harness (CONVENTIONS.md §4). Tests using it are marked `lo_smoke`
+Assertion 4 of the contract harness. Tests using it are marked `lo_smoke`
 and skip - explicitly, never silently - where `soffice` is unavailable (e.g. CI).
 """
 

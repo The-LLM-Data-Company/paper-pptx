@@ -1,4 +1,4 @@
-"""v0.11 Phase 3 contract tests: scrub, the exit gate.
+"""Contract tests: scrub, the exit gate.
 
 Every removal is relationship-graph surgery, so reachable parts structurally cannot be
 removed; the |ScrubReport| carries the exact zip-member budget and every test here holds
@@ -266,11 +266,11 @@ def _distinct_png():
     return buf.getvalue()
 
 
-# ------------------------------------------------------------- final-review regressions
+# ------------------------------------------------------------- regressions
 
 
 def test_metadata_clears_every_documented_field():
-    """Regression (final review): all 11 documented core fields clear, not just the 3
+    """Regression: all 11 documented core fields clear, not just the 3
     the fixture happens to populate."""
     from pptx.scrub import _CLEARED_CORE_FIELDS
 
@@ -293,7 +293,7 @@ def test_metadata_clears_every_documented_field():
 
 
 def test_scrub_with_broken_layout_relationship():
-    """Regression (final review): a broken slide->layout relationship must (a) not stop
+    """Regression: a broken slide->layout relationship must (a) not stop
     the all-False scrub from returning its promised empty report, and (b) refuse TYPED
     and ATOMICALLY before the layout-usage passes - never mutate-then-KeyError."""
     from pptx.errors import UnsupportedStructureError
@@ -322,7 +322,7 @@ def test_scrub_with_broken_layout_relationship():
 
 
 def test_scrub_metadata_without_core_properties_part_is_a_noop():
-    """Regression (final review): a package with no core-properties part must not have
+    """Regression: a package with no core-properties part must not have
     one CREATED by the metadata pass (scrub may never create parts)."""
     prs = Presentation("tests/test_files/no-core-props.pptx")
     before = save_to_bytes(prs)
@@ -338,7 +338,7 @@ def test_scrub_metadata_without_core_properties_part_is_a_noop():
 
 
 def test_content_types_budget_covers_override_typed_media():
-    """Regression (final review): a removed media part carrying its own Override (e.g.
+    """Regression: a removed media part carrying its own Override (e.g.
     image/svg+xml) changes [Content_Types].xml even when other parts share its
     extension - the budget must say so (and the exact-budget helper proves it)."""
     prs = _open(SCRUB_GAUNTLET)

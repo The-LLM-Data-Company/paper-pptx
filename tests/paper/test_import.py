@@ -1,4 +1,4 @@
-"""v0.11 Phase 5 contract tests: slide import and deck merge.
+"""Contract tests: slide import and deck merge.
 
 The plan's required list: cross-contamination (source byte-identical after edits to the
 import), dedupe (three slides from one source -> one transplanted master), every mode
@@ -407,7 +407,7 @@ def test_import_from_libreoffice_authored_source():
 
 
 def test_import_delete_scrub_reimport_never_duplicates_partnames():
-    """Regression (v0.11 final review, critical): the fingerprint-dedupe cache must not
+    """Regression: the fingerprint-dedupe cache must not
     resurrect parts that scrub removed - a ghost hit re-relates a part whose freed
     partname a later import reallocated, producing duplicate zip members with different
     content. The cycle below must yield a clean, fully-registered package."""
@@ -444,7 +444,7 @@ def test_import_delete_scrub_reimport_never_duplicates_partnames():
 
 
 def test_import_placeholder_picture_slide_under_reconciling_modes():
-    """Regression (final review): a placeholder PICTURE has no text frame; bake and
+    """Regression: a placeholder PICTURE has no text frame; bake and
     adopt_theme must not crash on it."""
     source = Presentation()
     layout = source.slide_layouts[8]  # -- "Picture with Caption"
@@ -490,7 +490,7 @@ def test_append_deck_corrupt_source_refuses_typed():
 
 
 def test_notes_import_enrolls_destination_notes_master():
-    """Regression (final review): a destination without a notes master gets one created
+    """Regression: a destination without a notes master gets one created
     on notes import; it must be enrolled in p:notesMasterIdLst, not just related."""
     dest = _open(ALPHA)  # -- alpha has no notes, hence no notes master
     assert dest._element.notesMasterIdLst is None
@@ -506,7 +506,7 @@ def test_notes_import_enrolls_destination_notes_master():
 
 
 def test_scrub_removes_transplanted_master_once_its_slides_go():
-    """Cross-phase: keep_appearance adds a second master; deleting the imported slide
+    """Cross-feature: keep_appearance adds a second master; deleting the imported slide
     leaves that master unused, and scrub(unused_masters=True) removes the whole chain."""
     dest = _open(ALPHA)
     dest.import_slide(_open(BETA), 0, mode="keep_appearance")

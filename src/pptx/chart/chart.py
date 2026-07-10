@@ -218,8 +218,8 @@ class Chart(PartElementProxy):
         Data-shape problems raise |ValueError| (programmer error). Structural refusals
         (|UnsupportedStructureError|, document untouched): a chart type outside the
         supported category-chart families (XY/bubble/stock/surface/radar and 3-D variants
-        are out of v0 scope) or a multi-plot (combo) chart. Charts without an embedded
-        workbook (e.g. LibreOffice/Google-authored) are supported since v0.1: their chart
+        are not supported) or a multi-plot (combo) chart. Charts without an embedded
+        workbook (e.g. LibreOffice/Google-authored) are supported: their chart
         XML is rewritten and the (absent) workbook update is skipped.
         """
         from pptx.chart.data import CategoryChartData
@@ -297,7 +297,7 @@ class Chart(PartElementProxy):
             )
 
         # -- route to the existing public mechanism. Charts without an embedded workbook
-        # -- (LibreOffice/Google-authored) update chart XML only (v0.1): the same series
+        # -- (LibreOffice/Google-authored) update chart XML only: the same series
         # -- rewriter runs, and the workbook update is skipped because there is none.
         chart_data = (
             CategoryChartData(number_format=number_format)

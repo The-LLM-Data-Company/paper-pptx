@@ -1,10 +1,10 @@
-"""The pitch-book assembly eval (v0.11): composition as a permanent, job-shaped test.
+"""The pitch-book assembly eval: composition as a permanent, job-shaped test.
 
 Nobody builds a pitch book from scratch: bank-overview pages come from the master deck,
 tombstones from the credentials library, sector pages from the sector team. This module
 freezes that job with shipped API only: assemble from a library deck plus a second source
-deck (one slide per import mode), rebind a library page (the rebind job), renumber via
-Phase 2, scrub via Phase 3 — and end with the release keystone: the operations' own
+deck (one slide per import mode), rebind a library page (the rebind job), renumber,
+scrub — and end with the self-consistency check: the operations' own
 reports and `diff_decks(input, output)` agree.
 """
 
@@ -44,10 +44,10 @@ def _build_pitchbook(tmp_path):
         next(layout for layout in prs.slide_layouts if layout.name == "Two Content")
     )
 
-    # -- renumber (Phase 2): real fields across the assembled deck ----------------------
+    # -- renumber: real fields across the assembled deck ----------------------
     prs.apply_footers(footer="Paper Pitch Book", slide_number=True)
 
-    # -- exit gate (Phase 3): metadata and unused furniture go, content stays -----------
+    # -- exit gate: metadata and unused furniture go, content stays -----------
     scrub = prs.scrub(metadata=True, unused_layouts=True, unreachable_media=True)
 
     out_path = tmp_path / "pitchbook.pptx"
@@ -119,7 +119,7 @@ def test_pitchbook_end_to_end(tmp_path):
 
 
 def test_pitchbook_self_consistency_against_deck_diff(tmp_path):
-    """The release keystone: every operation report agrees with the deck diff."""
+    """The self-consistency check: every operation report agrees with the deck diff."""
     library_path, out_path, evidence = _build_pitchbook(tmp_path)
     report = diff_decks(str(library_path), str(out_path), detail="text")
 

@@ -650,7 +650,7 @@ class _Paragraph(Subshape):
     def add_datetime_field(self, format_code: str = "datetime") -> None:
         """Append a real date/time field (`a:fld type="datetime…"`) to this paragraph.
 
-        paper-pptx addition (v0.1). `format_code` is "datetime" or "datetime1" through
+        paper-pptx addition. `format_code` is "datetime" or "datetime1" through
         "datetime13" (the ECMA-376 date/time field formats); anything else raises
         |ValueError|. The field's cached text is left empty; PowerPoint renders the live
         value. Recognized by `pptx.inspect.inspect_text` via `TextBlock.fields`.
@@ -666,7 +666,7 @@ class _Paragraph(Subshape):
     def add_slide_number_field(self) -> None:
         """Append a real slide-number field (`a:fld type="slidenum"`) to this paragraph.
 
-        paper-pptx addition (v0.1). This is the honest version of typing a literal page
+        paper-pptx addition. This is the honest version of typing a literal page
         number into a footer: PowerPoint renders the actual slide number and keeps it right
         across reordering. The cached text is "1". Recognized by
         `pptx.inspect.inspect_text` via `TextBlock.fields`.

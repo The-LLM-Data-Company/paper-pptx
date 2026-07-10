@@ -197,7 +197,7 @@ class Slide(_BaseSlide):
     ) -> None:
         """Apply the complete footer state to this slide only (the dialog's "Apply").
 
-        paper-pptx addition (v0.11 Phase 2). Same parameters, mechanism, and refusals as
+        paper-pptx addition. Same parameters, mechanism, and refusals as
         :meth:`.Presentation.apply_footers`, restricted to this slide — the per-slide
         override path (e.g. removing just this slide's footer while the rest of the deck
         keeps it). Each call sets this slide's full three-element state.
@@ -222,8 +222,8 @@ class Slide(_BaseSlide):
     ) -> "RebindReport":
         """Move this slide to `target_layout`; return the required |RebindReport|.
 
-        paper-pptx addition (v0.11 Phase 4) — the template-migration *primitive*
-        (bulk-migration workflows stay in the harness). Placeholders reconcile against the
+        paper-pptx addition — the template-migration *primitive* (bulk-migration
+        workflows are left to the caller). Placeholders reconcile against the
         target layout: auto-matching binds by exact type+idx, then same type, then
         interchangeable type family (title/ctrTitle; body/object/subTitle); pass
         `placeholder_map={source_idx: target_idx | None}` to override any of it (None
@@ -301,7 +301,7 @@ class Slide(_BaseSlide):
         and its first run's character formatting are kept and applied to the replacement
         text; `"\\n"` in `text` starts a new paragraph. Never creates a notes slide: a slide
         with no notes part raises |UnsupportedStructureError| before anything changes
-        (creating the notes part graph is out of v0 scope; see PAPER.md).
+        (creating the notes part graph is intentionally not supported).
         """
         if not isinstance(text, str):
             raise ValueError("text must be a str, got %r" % type(text).__name__)
@@ -498,7 +498,7 @@ class Slides(ParentedElementProxy):
                 self._sldIdLst.remove(sldId)
                 self.part.drop_rel(rId)
                 # -- sections (by slide id) and custom shows (by rId) reference slides
-                # -- outside the rels graph; purge those entries too (PLAN-v0.1 0.1)
+                # -- outside the rels graph; purge those entries too
                 remove_slide_from_id_lists(self._sldIdLst.getparent(), slide_id, rId)
                 return
 
@@ -575,7 +575,7 @@ class Slides(ParentedElementProxy):
 
 
 class HeaderFooters(object):
-    """Header/footer placeholder visibility flags of a layout or master (paper-pptx v0.1).
+    """Header/footer placeholder visibility flags of a layout or master (paper-pptx addition).
 
     Wraps the `p:hf` element. Each property is tri-state: |True|/|False| when the attribute
     is explicit, |None| when it is absent — meaning "inherit" (a layout inherits from its
@@ -637,7 +637,7 @@ class SlideLayout(_BaseSlide):
 
     @property
     def header_footers(self) -> HeaderFooters:
-        """|HeaderFooters| flags for this layout (paper-pptx addition, v0.1)."""
+        """|HeaderFooters| flags for this layout (paper-pptx addition)."""
         return HeaderFooters(self._element)
 
     def iter_cloneable_placeholders(self) -> Iterator[LayoutPlaceholder]:
@@ -761,7 +761,7 @@ class SlideMaster(_BaseMaster):
 
     @property
     def header_footers(self) -> HeaderFooters:
-        """|HeaderFooters| flags for this master (paper-pptx addition, v0.1)."""
+        """|HeaderFooters| flags for this master (paper-pptx addition)."""
         return HeaderFooters(self._element)
 
     @lazyproperty

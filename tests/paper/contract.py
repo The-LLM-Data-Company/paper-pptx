@@ -1,4 +1,4 @@
-"""Contract-harness utilities implementing CONVENTIONS.md §4's five assertions.
+"""Contract-harness utilities implementing the five contract assertions.
 
 Every mutating paper API must pass, on the relevant fixtures:
 
@@ -12,7 +12,7 @@ Every mutating paper API must pass, on the relevant fixtures:
 
 Comparison here is deliberately BYTE-level per zip member. Byte-compare can never call two
 different parts "the same", so it can never mask a real change; semantic XML comparison is the
-Phase 5 kernel's job and is not test infrastructure. Because upstream `save()` stamps wall-clock
+package kernel's job and is not test infrastructure. Because upstream `save()` stamps wall-clock
 times into zip *entry headers* (not member bytes), budgets must always compare two save outputs
 member-by-member — never whole-file bytes, and never a save output against the original input
 file (re-serialization makes every XML part differ from the original bytes).

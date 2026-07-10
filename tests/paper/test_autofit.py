@@ -1,4 +1,4 @@
-"""Phase 3 contract tests: autofit reading and `TextFrame.normalize_autofit`.
+"""Contract tests: autofit reading and `TextFrame.normalize_autofit`.
 
 The organ extends upstream's `auto_size` property (never a parallel API): `font_scale` /
 `line_space_reduction` expose what `a:normAutofit` records, and `normalize_autofit` freezes
@@ -175,7 +175,7 @@ def test_normalize_with_bare_normautofit_drops_element_without_touching_text():
 
 
 def test_normalize_autofit_resolve_freezes_inherited_placeholder_sizes():
-    """PLAN-v0.1 0.4: the template-placeholder case. Without resolution the refusal stands;
+    """The template-placeholder case. Without resolution the refusal stands;
     with resolve=True the sizes come from the master through the effective walk and are
     frozen at size x fontScale (2600->1625, 2200->1375 per the fixture sidecar)."""
     INHERITED = "self_generated/autofit_inherited.pptx"

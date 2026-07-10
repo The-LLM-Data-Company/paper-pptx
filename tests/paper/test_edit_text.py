@@ -1,6 +1,6 @@
-"""Phase 1.1 contract tests: anchored, formatting-preserving text replacement (pptx.edit).
+"""Contract tests: anchored, formatting-preserving text replacement (pptx.edit).
 
-Includes the CONVENTIONS §4 invariant this organ finally gives a subject to:
+Includes the invariant this organ finally gives a subject to:
 replace(x→y) then replace(y→x) restores visible text AND formatting.
 """
 
@@ -337,8 +337,8 @@ def test_cross_boundary_occurrence_in_anchored_block_refuses():
 
 
 def test_replace_inverse_restores_text_and_formatting():
-    """CONVENTIONS §4: replace(x→y) then replace(y→x) restores text AND formatting —
-    asserted on the REOPENED document (§1.4), not the live object."""
+    """replace(x→y) then replace(y→x) restores text AND formatting —
+    asserted on the REOPENED document, not the live object."""
     prs = _open(BRANDED)
     paragraph = prs.slides[0].placeholders[1].text_frame.paragraphs[0]
     text_before = paragraph.text
@@ -372,7 +372,7 @@ def test_replace_inverse_is_exact_across_identically_formatted_runs():
 
 
 def test_replace_inverse_across_mixed_formatting_restores_text_and_collapses_formatting():
-    """The documented limit of the invariant (API-PROPOSAL v0.1 amendment): a match spanning
+    """The documented limit of the invariant: a match spanning
     differently-formatted runs collapses the span to the START run's formatting — the
     consumed runs' formatting is gone by design; the alternative is guessing."""
     prs = _open(MINIMAL)

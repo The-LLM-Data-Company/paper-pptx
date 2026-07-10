@@ -94,7 +94,7 @@ def remove_slide_from_id_lists(presentation_elm, slide_id: int, rId: str) -> Non
     Sections (`p14:sectionLst`, in the presentation's extension list) reference slides by
     slide id; custom shows (`p:custShowLst`) reference them by relationship id. Neither is
     reachable through the relationship graph, so without this step a delete leaves dangling
-    entries behind — the corruption class PLAN-v0.1 Phase 0.1 closes. Empty sections and
+    entries behind — the corruption class this step closes. Empty sections and
     empty custom-show slide lists are schema-valid and left in place (matching PowerPoint,
     which keeps an emptied section).
     """

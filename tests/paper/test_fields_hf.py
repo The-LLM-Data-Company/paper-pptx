@@ -1,4 +1,4 @@
-"""Phase 2.5 contract tests: real text fields (a:fld) and header/footer flags (p:hf)."""
+"""Contract tests: real text fields (a:fld) and header/footer flags (p:hf)."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def test_inspect_reports_fields_without_hashing_their_volatile_text():
 
 
 def test_normalize_autofit_still_covers_created_fields():
-    """The Phase 0.4/organ interplay: a created field participates in autofit freezing."""
+    """The organ interplay: a created field participates in autofit freezing."""
     from pptx.enum.text import MSO_AUTO_SIZE
     from pptx.util import Pt
 

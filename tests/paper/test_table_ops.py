@@ -1,4 +1,4 @@
-"""v0.11 Phase 1 contract tests: table structure operations.
+"""Contract tests: table structure operations.
 
 insert_row / delete_row / insert_column / delete_column with grid-width bookkeeping and
 cell-wise merged-region guards. The grid invariant (every `a:tr` holds exactly one `a:tc`
@@ -43,7 +43,7 @@ def _gauntlet_table(prs):
 
 
 def assert_grid_consistent(table):
-    """The Phase 1 invariant: one a:tc per a:gridCol in every row, continuations included."""
+    """The invariant: one a:tc per a:gridCol in every row, continuations included."""
     col_count = len(table._tbl.tblGrid.gridCol_lst)
     for tr in table._tbl.tr_lst:
         assert len(tr.tc_lst) == col_count
@@ -89,7 +89,7 @@ def test_insert_row_has_exact_part_budget():
 
 def test_insert_row_default_height_copies_neighbor():
     """The neighbor's height must be DISTINCT from every other row's, or a wrong-source
-    mutant passes (final-review mutation finding); asserted through save->reopen."""
+    mutant passes; asserted through save->reopen."""
     prs = _open(GAUNTLET)
     table = _gauntlet_table(prs)
     table.rows[1].height = Emu(777240)  # -- make the neighbor unmistakable
@@ -246,7 +246,7 @@ def test_insert_column_default_width_copies_neighbor_and_updates_frame():
 def test_insert_column_boundary_inside_horizontal_merge_refuses_atomically(after):
     """Every interior boundary of the header merge (cols 0..3) must refuse - including
     the left edge (after=0), where an off-by-one in the intersection test would
-    silently split the merge (final-review mutation finding)."""
+    silently split the merge."""
     prs = _open(MERGED)
     raised = assert_refusal_atomic(
         prs, lambda p: _merged_table(p).insert_column(after), UnsupportedStructureError
@@ -390,7 +390,7 @@ def test_operations_on_libreoffice_authored_merged_table():
 
 
 def test_anchored_replace_reaches_table_cells_including_merge_origin():
-    """PLAN v0.11 Phase 1: cell text edits route through the v0.1 anchored-write path -
+    """Cell text edits route through the anchored-write path -
     prove that path reaches table cells, merged origins included."""
     from pptx.edit import replace_text, replace_text_at
     from pptx.inspect import inspect_text

@@ -1,4 +1,4 @@
-"""Phase 9 contract tests: chart addressing + safe data replacement (route, don't build).
+"""Contract tests: chart addressing + safe data replacement (route, don't build).
 
 The organ is `SlideShapes.chart_by_name` plus `Chart.replace_data_safe`: full validation,
 typed refusals for structures the mechanism can't honor, then routing to upstream's public
@@ -126,7 +126,7 @@ def test_data_shape_problems_are_valueerrors_and_leave_the_chart_untouched(bad_c
 
 
 def test_updates_workbookless_libreoffice_chart_xml_only():
-    """v0.1 2.4 (previously a refusal): LibreOffice charts carry no c:externalData; the
+    """Previously a refusal: LibreOffice charts carry no c:externalData; the
     series rewriter runs against chart XML alone and no workbook is invented."""
     prs = _open(LO_CHART_NOTES)
     chart_shape_name = next(s for s in prs.slides[0].shapes if s.has_chart).name

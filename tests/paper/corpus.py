@@ -1,6 +1,6 @@
 """Access to the frozen fixture corpus and its ground-truth sidecars.
 
-The corpus contract (CONVENTIONS.md §4):
+The corpus contract:
 
 - Fixtures live under `tests/paper/fixtures/<provenance-bucket>/`.
 - Every fixture's SHA-256 is pinned in `fixtures/MANIFEST.sha256`; a hash mismatch is a test
@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 MANIFEST_PATH = FIXTURES_DIR / "MANIFEST.sha256"
 
-#: Provenance buckets, in CONVENTIONS.md §4 order. Directories exist as they are populated.
+#: Provenance buckets, in canonical order. Directories exist as they are populated.
 BUCKETS = (
     "office_authored",
     "google_export",

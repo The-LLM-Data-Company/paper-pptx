@@ -1,4 +1,4 @@
-"""Deck scrubbing - the exit gate (paper-pptx, v0.11 Phase 3).
+"""Deck scrubbing - the exit gate (paper-pptx addition).
 
 `Presentation.scrub(...)` removes exactly the individually-toggled targets and nothing
 else. Reachability is the heart: every removal is expressed as dropping a relationship
@@ -17,9 +17,7 @@ Declared behaviors (deliberate, documented):
   (app.xml), custom-properties, and thumbnail parts; created/modified/revision survive -
   they are pipeline-relevant, not personal.
 - Comment removal matches both classic (`.../comments`, `.../commentAuthors`) and modern
-  (2018/10 `.../comments`, `.../authors`) relationship types; only classic parts exist in
-  the frozen corpus today (FIXTURE-REQUESTS.md R12 tracks the real-PowerPoint modern
-  fixture).
+  (2018/10 `.../comments`, `.../authors`) relationship types.
 """
 
 from __future__ import annotations
@@ -135,7 +133,7 @@ def scrub_presentation(
     if unused_layouts or unused_masters:
         # -- the layout-usage pass resolves every slide's layout; validate that NOW so
         # -- a broken slide->layout relationship refuses BEFORE any pass has mutated
-        # -- anything (refusal atomicity, CONVENTIONS 1.3)
+        # -- anything (refusal atomicity)
         try:
             for slide in slides:
                 slide.slide_layout

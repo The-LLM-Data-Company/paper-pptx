@@ -1,7 +1,7 @@
-"""Footer, date, and slide-number application machinery (paper-pptx, v0.11 Phase 2).
+"""Footer, date, and slide-number application machinery (paper-pptx addition).
 
-Reproduces what PowerPoint's Insert > Header & Footer dialog actually persists, per the
-v0.11 Phase 0 mechanism findings (PAPER.md): the dialog materializes minimal placeholder
+Reproduces what PowerPoint's Insert > Header & Footer dialog actually persists: the
+dialog materializes minimal placeholder
 `p:sp` shapes on each slide - `dt`/`ftr`/`sldNum`, with `idx` matching the slide layout's
 furniture so geometry and formatting inherit; slide-number and auto-date content are real
 `a:fld` elements; footer text and fixed dates are literal runs; `p:hf` flags are left
@@ -161,7 +161,7 @@ def _validate_slide_furniture(slide, footer, slide_number, date_format, fixed_da
                 % (layout.name or layout.part.partname, _KIND_LABEL[kind])
             )
         # -- nearest explicit p:hf declaration wins (layout over master; absent = inherit),
-        # -- mirroring the v0.1 HeaderFooters proxy's tri-state semantics
+        # -- mirroring the HeaderFooters proxy's tri-state semantics
         master = layout.slide_master
         for level_name, owner_name, hf in (
             ("layout", layout.name or str(layout.part.partname), layout._element.hf),

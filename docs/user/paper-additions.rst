@@ -1,0 +1,196 @@
+.. _paper_additions:
+
+The paper-pptx additions
+========================
+
+**paper-pptx** is an agent-first, strict-superset hard fork of python-pptx. The distribution is
+renamed; the import name stays ``pptx``. ``from pptx import Presentation`` and every other
+existing call keep working unchanged. The added APIs cover four groups of operations:
+**perceive**, **edit**, **compose**, and **verify**.
+
+This page summarizes the added APIs. Each capability's exact signatures, return types, and refusal
+conditions live on the API pages linked throughout (and are collected under *paper-pptx
+additions* in the :ref:`API Documentation <api>` table of contents).
+
+
+Safety contract
+---------------
+
+The fork exists to prevent **silent corruption**: a deck that opens fine and is quietly wrong.
+Every added operation either does exactly what it claims or refuses atomically. Mutating
+operations follow **validate-fully-then-mutate**. When one cannot proceed safely, it raises a
+typed refusal and leaves the document byte-for-byte unchanged in memory and on disk. The refusal
+indicates that the operation was not applied.
+
+The refusals form a small hierarchy rooted at |PaperRefusal| (see :ref:`errors_api`):
+|TargetNotFoundError|, |AmbiguousTargetError|, |UnsupportedStructureError|,
+|RelationshipPolicyError|, |BoundaryViolationError|, and |StaleAnchorError|. Programmer mistakes
+(a bad type, an out-of-range index) stay plain ``ValueError`` / ``TypeError``. Callers can catch
+``PaperRefusal`` separately::
+
+    from pptx import Presentation
+    from pptx.errors import PaperRefusal
+
+    prs = Presentation("deck.pptx")
+    try:
+        prs.slides.clone(3)                 # slide contains an embedded OLE object
+    except PaperRefusal as exc:
+        ...                                 # document is untouched; handle or report exc
+
+
+Perceive a deck
+---------------
+
+Stock python-pptx returns ``None`` for any run property that is inherited rather than set
+locally. On a branded template, that is nearly everything. :mod:`pptx.inspect` resolves those
+values through the full inheritance walk (run → paragraph → shape list style → placeholder →
+layout → master text styles → theme, with theme colors mapped through the master's ``clrMap``),
+then reports *where each value came from*. Values that cannot be resolved are marked unresolved.
+
+.. highlight:: python
+
+::
+
+    run = prs.slides[0].shapes.title.text_frame.paragraphs[0].runs[0]
+    font = run.effective_font()             # -> EffectiveFont
+    if font.size.resolved:
+        print(font.size.value_pt)           # e.g. 36.0
+        for step in font.size.provenance:   # the ordered chain of sources consulted
+            if step.supplied:
+                print("supplied by", step.level)   # e.g. "master txStyles titleStyle lvl1"
+
+What cannot be resolved (a gradient fill, a missing theme) is reported as ``resolved=False`` with
+its provenance intact. See :ref:`inspect_api` for
+:func:`~pptx.inspect.effective_paragraph_format` and
+:func:`~pptx.inspect.effective_shape_format` as well.
+
+Two functions emit deterministic, schema-versioned payloads (dataclasses with ``.to_dict()``)
+built for diffing, golden-file tests, and automation:
+
+* :func:`~pptx.inspect.inspect_text` — every text block on a slide, visibility-complete (it sees
+  inside grouped shapes and table cells, which ordinary traversal skips), each block
+  carrying a content-hash |BlockAnchor|.
+* :func:`~pptx.inspect.inspect_deck` — a whole-deck structural manifest: per-slide shape
+  inventory, geometry, placeholder roles, and layout/master inventory.
+
+
+Edit one deck
+-------------
+
+**Anchored text replacement** (:ref:`edit_api`). :func:`~pptx.edit.replace_text` changes text
+across the deck while preserving each run's formatting. :func:`~pptx.edit.replace_text_at`
+targets one block by the |BlockAnchor| from :func:`~pptx.inspect.inspect_text`. The anchor carries
+a hash of the block's text, so an edit aimed at content that has since changed raises
+|StaleAnchorError| rather than landing in the wrong place. :func:`~pptx.edit.refind` is the
+explicit recovery path.
+
+**Slide operations** (:ref:`slides_api`). :meth:`~pptx.slide.Slides.clone`,
+:meth:`~pptx.slide.Slides.delete`, :meth:`~pptx.slide.Slides.reorder`, and
+:meth:`~pptx.slide.Slides.move` are in-memory, relationship-safe versions of operations that
+previously required direct zip-package edits. Clone deep-copies charts *with their embedded
+workbooks* and notes, so editing the clone's chart leaves the original byte-identical. It shares
+media and refuses (|RelationshipPolicyError|) on relationship types it cannot safely honor.
+Delete cannot leave orphaned parts and keeps section and custom-show lists consistent. The clone
+policy is a |SlideClonePolicy|.
+
+**Shape and table operations** (:ref:`shape_api`, :ref:`table_api`).
+:meth:`~pptx.shapes.shapetree.SlideShapes.delete` /
+:meth:`~pptx.shapes.shapetree.SlideShapes.move` /
+:meth:`~pptx.shapes.shapetree.SlideShapes.add_copy`, plus group-aware by-name addressing
+(:meth:`~pptx.shapes.shapetree.SlideShapes.shape_by_name`,
+:meth:`~pptx.shapes.shapetree.SlideShapes.picture_by_name`,
+:meth:`~pptx.shapes.shapetree.SlideShapes.table_by_name`,
+:meth:`~pptx.shapes.shapetree.SlideShapes.chart_by_name`) refuse ambiguous names rather than
+guess. On tables, :meth:`~pptx.table.Table.insert_row` /
+:meth:`~pptx.table.Table.delete_row` / :meth:`~pptx.table.Table.insert_column` /
+:meth:`~pptx.table.Table.delete_column` keep the grid definition consistent and guard merged
+regions cell-wise. A merged header row does not block body-row operations.
+
+**Text, notes, images, and charts** (:ref:`text_api`, :ref:`shape_api`, :ref:`chart-api`). Real
+bullets and numbering via :attr:`~pptx.text.text._Paragraph.bullet` (a |BulletFormat|); autofit
+you can read and freeze with :meth:`~pptx.text.text.TextFrame.normalize_autofit`; speaker-notes
+:meth:`~pptx.slide.Slide.read_notes_text` / :meth:`~pptx.slide.Slide.replace_notes_text` that
+leave absent notes parts absent; :meth:`~pptx.shapes.picture.Picture.replace_image` that swaps
+pixels while keeping position, size, and crop byte-exact (optionally across formats); and
+:meth:`~pptx.chart.chart.Chart.replace_data_safe`, which validates before it touches anything and
+handles the workbook-less charts that Google Slides and LibreOffice produce.
+
+**Package comparison and narrow saves** (:ref:`package_api`).
+:func:`~pptx.package.diff_package` reports what changed between two files, part by part, using
+semantic XML comparison. Indentation is noise; a trailing space inside a text run is content.
+:func:`~pptx.package.patch_save` writes the edit and restores original bytes for every part that
+did not semantically change. A one-line edit to a sixty-slide deck therefore diffs as one part,
+not sixty.
+
+
+Compose across decks
+--------------------
+
+Production decks are often assembled from many sources:
+a pitch book's bank-overview pages may come from the master deck, its tombstones from the
+credentials library, and its sector pages from the sector team. That relationship and
+inheritance work is where decks get corrupted. The workflow is **import → renumber → scrub →
+diff**.
+
+**Real fields and footers** (:ref:`hf_api`). :meth:`~pptx.presentation.Presentation.apply_footers`
+and :meth:`~pptx.slide.Slide.apply_footers` reproduce what PowerPoint's Insert → Header & Footer
+dialog does, writing slide numbers and dates as genuine ``a:fld`` fields rather than static text.
+The package authors the fields. PowerPoint or LibreOffice refreshes their values on open, so a
+slide number written this way stays correct after a reorder.
+
+**Layout rebind** (:ref:`rebind_api`). :meth:`~pptx.slide.Slide.rebind_layout` moves a slide to
+another layout, matching placeholders by type and
+index with an explicit map and orphan policy for the rest. Its |RebindReport| is required. The
+resolver runs before and after, and every run whose *resolved* appearance changed is reported.
+
+**Slide import and deck merge** (:ref:`compose_api`).
+:meth:`~pptx.presentation.Presentation.import_slide` and
+:meth:`~pptx.presentation.Presentation.append_deck` import a slide (or a whole deck) from another
+presentation under one of three explicit reconciliation modes: ``"adopt_theme"`` (rebind to the
+destination theme and report shifts), ``"keep_appearance"`` (transplant the source
+layout/master/theme chain, hash-deduplicated so ten slides from one source do not create ten
+masters), or ``"bake"`` (freeze effective values into explicit properties). The source
+presentation remains unchanged. Charts travel with their workbooks, and unresolvable
+relationships raise a typed refusal. Each import returns an |ImportReport|.
+
+**Scrub** (:ref:`scrub_api`).
+:meth:`~pptx.presentation.Presentation.scrub` removes selected speaker notes, comments,
+metadata, unused layouts and masters, unreachable media, and embedded fonts. A
+relationship-graph reachability analysis preserves parts reachable from a live slide. Its
+|ScrubReport| part budget matches the operation's package diff.
+
+Verify what changed
+-------------------
+
+**Deck diff** (:ref:`diff_api`). :func:`~pptx.diff.diff_decks` reports slides added, removed, or
+**moved** (matched by permanent slide id, so a
+reorder is reported as a move rather than delete-plus-add), and within matched slides the shape,
+chart-data, image, and notes deltas. At ``detail="full"``, it also reports per-run
+effective-value shifts.
+Callers can use the result to check a session's changes. Release job evaluations compare the
+operation report with ``diff_decks(input, output)`` for every import/rebind/refresh job and
+require them to agree.
+
+A composition end to end::
+
+    import shutil, tempfile, os
+    from pptx import Presentation
+    from pptx.diff import diff_decks
+
+    tmp = tempfile.mkdtemp()
+    house = shutil.copy("house_library.pptx", os.path.join(tmp, "house.pptx"))
+    before = shutil.copy(house, os.path.join(tmp, "before.pptx"))
+
+    prs = Presentation(house)
+    source = Presentation("sector_team_deck.pptx")
+
+    report = prs.import_slide(source, 0, mode="adopt_theme")   # -> ImportReport
+    for shift in report.run_shifts:                            # appearance changes, reported
+        print(shift.text, shift.before["name"]["value"], "->", shift.after["name"]["value"])
+
+    prs.apply_footers(footer="Confidential", slide_number=True)   # real a:fld fields
+    prs.scrub(metadata=True, comments=True)                       # remove metadata and comments
+    prs.save(os.path.join(tmp, "after.pptx"))
+
+    delta = diff_decks(before, os.path.join(tmp, "after.pptx"), detail="text")
+    print("slides added:", [s.slide_id for s in delta.slides_added])   # exactly the imported one

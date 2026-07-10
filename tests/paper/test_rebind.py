@@ -1,9 +1,9 @@
-"""v0.11 Phase 4 contract tests: layout rebind, the template-migration primitive.
+"""Contract tests: layout rebind, the template-migration primitive.
 
 The report is the differentiator and is required: the resolver runs before and after, and
 every run whose resolved values changed appears with before/after payloads — appearance
 never shifts silently. Cross-template rebinds (two-template corpus) are exercised through
-Phase 5's adopt_theme mode, which is built on this machinery; here the shift-reporting
+the adopt_theme mode, which is built on this machinery; here the shift-reporting
 proof uses the gauntlet's branded layout overrides (present on the source layout, absent
 on the target).
 """
@@ -163,7 +163,7 @@ def test_bake_geometry_falls_back_through_inheritance():
 
 
 def test_bake_refuses_field_bearing_placeholder():
-    """Cross-phase: apply_footers writes a slidenum field; force-orphaning that
+    """Cross-feature: apply_footers writes a slidenum field; force-orphaning that
     placeholder under bake must refuse (a baked field freezes volatile content)."""
     prs = _open(GAUNTLET)
     prs.slides[0].apply_footers(slide_number=True)
@@ -207,7 +207,7 @@ def test_explicit_map_validation():
 
 
 def test_exact_matches_settle_before_lower_idx_placeholders_can_steal_slots():
-    """Regression (final review): auto-match runs exact type+idx as a GLOBAL first
+    """Regression: auto-match runs exact type+idx as a GLOBAL first
     pass. Previously a lower-idx placeholder fell through to its family fallback and
     claimed a higher-idx placeholder's exact slot before that placeholder was even
     considered - orphaning the rightful owner."""

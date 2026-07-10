@@ -1,4 +1,4 @@
-"""Phase 4 contract tests: effective-style inspection (`pptx.inspect`).
+"""Contract tests: effective-style inspection (`pptx.inspect`).
 
 Sidecar-driven against the branded-template and clrMap fixtures, determinism-goldened, and
 independently cross-checked against LibreOffice's own resolution of the same source deck.
@@ -252,11 +252,11 @@ def test_libreoffice_independently_confirms_branded_effective_sizes():
 # --------------------------------------------------------------------------------- anchors
 
 
-# -------------------------------------------------- visibility completeness (v0.1 Phase 0.2/0.3)
+# -------------------------------------------------- visibility completeness
 
 
 def test_inspect_text_sees_table_cells_as_counted_blind_regions():
-    """v0.1 0.2: table-cell text appears (row-major) as typed blind regions, never silence."""
+    """Table-cell text appears (row-major) as typed blind regions, never silence."""
     inspection = inspect_text(_open("self_generated/tables_in_group.pptx").slides[0])
     by_container = {}
     for block in inspection.blocks:
@@ -282,7 +282,7 @@ def test_inspect_text_sees_table_cells_as_counted_blind_regions():
 
 
 def test_inspect_text_sees_grouped_shape_text_with_group_paths():
-    """v0.1 0.3: text inside groups appears, recursively, with its group path."""
+    """Text inside groups appears, recursively, with its group path."""
     inspection = inspect_text(_open("self_generated/nested_groups.pptx").slides[0])
     by_text = {b.text: b for b in inspection.blocks}
     assert by_text["Level zero"].container == "shape"
@@ -395,7 +395,7 @@ def test_boolean_effective_values_serialize_as_json_booleans():
     assert payload["italic"]["value"] is False
 
 
-# --------------------------------------------------------- v0.1 Phase 2.2 walk extensions
+# --------------------------------------------------------- walk extensions
 
 
 def test_bold_italic_underline_resolve_with_schema_defaults():
@@ -443,7 +443,7 @@ def test_effective_paragraph_format_resolves_alignment_and_spacing():
 
 
 def test_effective_shape_format_resolves_explicit_fill_through_clrmap():
-    """The gap-review probe case: the rectangle behind the text, resolved like the text."""
+    """A probe case: the rectangle behind the text, resolved like the text."""
     from pptx.inspect import effective_shape_format
 
     prs = _open(CLRMAP)
@@ -492,7 +492,7 @@ def test_effective_font_payload_carries_pinned_schema_keys():
         .to_dict()
     )
     assert payload["schema"] == "paper-effective-font"
-    assert payload["version"] == 2  # -- v2 since Phase 2.2: bold/italic/underline added
+    assert payload["version"] == 2  # -- v2: bold/italic/underline added
 
 
 def test_content_hash_treats_whitespace_as_content():
