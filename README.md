@@ -93,10 +93,10 @@ compatibility.
 
 ## Installation
 
-This repository is private for now and publication to PyPI is gated. Install from Git:
+Install from PyPI:
 
 ```bash
-pip install "paper-pptx @ git+https://github.com/The-LLM-Data-Company/paper-pptx.git@main"
+pip install paper-pptx
 ```
 
 Verify the install:

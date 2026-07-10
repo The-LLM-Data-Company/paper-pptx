@@ -1,7 +1,6 @@
 name: Release
 
 on:
-  workflow_dispatch:
   push:
     tags:
       # Publish on any tag starting with a `v`, e.g., v1.2.3
@@ -27,11 +26,15 @@ jobs:
         run: uv python install 3.13
       - name: Build
         run: uv build
+      - name: Verify tag matches package version
+        shell: bash
+        run: |
+          package_version="$(uv run --isolated --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "${GITHUB_REF_NAME}" = "v${package_version}"
       # Check that basic features work and we didn't miss to include crucial files
       - name: Smoke test (wheel)
         run: uv run --isolated --no-project --with dist/*.whl python -c "import pptx; print(pptx.__paper_version__)"
       - name: Smoke test (source distribution)
         run: uv run --isolated --no-project --with dist/*.tar.gz python -c "import pptx; print(pptx.__paper_version__)"
       - name: Publish
-        if: ${{ vars.PUBLISH_ENABLED == 'true' }}
         run: uv publish
