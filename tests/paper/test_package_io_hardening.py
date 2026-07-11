@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import stat
 import warnings
 import zipfile
@@ -10,7 +11,7 @@ import zipfile
 import pytest
 from lxml import etree
 
-from pptx import Presentation, _zipguard
+from pptx import Presentation
 from pptx.errors import PackageLimitError, PaperRefusal
 from pptx.opc import serialized
 
@@ -46,14 +47,35 @@ def test_normal_open_refuses_noncanonical_member_names(tmp_path):
         Presentation(target)
 
 
-def test_normal_open_enforces_actual_compression_ratio(tmp_path, monkeypatch):
-    target = tmp_path / "ratio.pptx"
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("ppt/presentation.xml", b"A" * 4096)
-    monkeypatch.setattr(_zipguard, "MAX_COMPRESSION_RATIO", 2)
+def test_saved_repetitive_deck_reopens(tmp_path):
+    """Regression: the save -> reopen covenant must hold for this package's OWN output.
 
-    with pytest.raises(PackageLimitError, match="compression ratio"):
-        Presentation(target)
+    Machine-generated decks (thousands of near-identical paragraphs) legitimately
+    exceed any expanded-to-compressed ratio a zip bomb would need. A ratio guard once
+    refused such files at reopen; the absolute member and package byte limits are the
+    safety envelope instead.
+    """
+    from pptx.util import Inches
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    frame = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(4)).text_frame
+    for index in range(12_000):
+        paragraph = frame.paragraphs[0] if index == 0 else frame.add_paragraph()
+        paragraph.text = "Quarterly revenue synergy alignment placeholder row"
+    target = tmp_path / "repetitive.pptx"
+    presentation.save(target)
+
+    with zipfile.ZipFile(target) as archive:
+        worst_ratio = max(
+            info.file_size / info.compress_size
+            for info in archive.infolist()
+            if info.compress_size
+        )
+    assert worst_ratio > 100, "fixture lost its bite; deck no longer compresses past 100:1"
+
+    reopened = Presentation(target)
+    assert len(reopened.slides) == 1
 
 
 def _rewrite_package(source, target, transform):
@@ -138,3 +160,35 @@ def test_successful_path_save_preserves_existing_mode(tmp_path):
 
     assert stat.S_IMODE(destination.stat().st_mode) == 0o604
     assert len(Presentation(io.BytesIO(destination.read_bytes())).slides) == 1
+
+
+def test_new_path_save_honors_umask(tmp_path):
+    """Regression: a save to a NEW path must not keep mkstemp's private 0600 mode."""
+    presentation = Presentation(_minimal_path())
+    destination = tmp_path / "brand-new.pptx"
+    previous_umask = os.umask(0o027)
+    try:
+        presentation.save(destination)
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o666 & ~0o027
+    assert len(Presentation(io.BytesIO(destination.read_bytes())).slides) == 1
+
+
+def test_patch_save_honors_umask_and_existing_mode(tmp_path):
+    """`patch_save` output modes follow the same contract as ordinary path saves."""
+    from pptx.package import patch_save
+
+    source = _minimal_path()
+    destination = tmp_path / "patched.pptx"
+    previous_umask = os.umask(0o027)
+    try:
+        patch_save(str(source), Presentation(source), str(destination))
+    finally:
+        os.umask(previous_umask)
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o666 & ~0o027
+
+    destination.chmod(0o604)
+    patch_save(str(source), Presentation(source), str(destination))
+    assert stat.S_IMODE(destination.stat().st_mode) == 0o604

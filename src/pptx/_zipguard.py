@@ -6,9 +6,13 @@ from consuming unbounded CPU, memory, or disk-backed input:
 
 * 256 MiB compressed package size;
 * 4,096 members;
-* 64 MiB for one XML member and 256 MiB for one binary member;
-* 512 MiB expanded across the package; and
-* a 100:1 expanded-to-compressed ratio for each non-empty member.
+* 64 MiB for one XML member and 256 MiB for one binary member; and
+* 512 MiB expanded across the package.
+
+There is deliberately no expanded-to-compressed ratio limit: legitimate machine-generated
+decks (thousands of near-identical paragraphs or rows) routinely exceed any ratio a zip
+bomb would need, and every expansion is already capped absolutely by the member and
+package limits above. A ratio rule would refuse files this package itself saves.
 
 Only the two compression methods permitted by the OPC ZIP mapping (stored and
 deflated) are accepted. Every member is inflated from its raw compressed bytes
@@ -45,8 +49,6 @@ MAX_XML_MEMBER_BYTES = 64 * _MIB
 MAX_BINARY_MEMBER_BYTES = 256 * _MIB
 #: Maximum expanded bytes across all members in one package.
 MAX_TOTAL_EXPANDED_BYTES = 512 * _MIB
-#: Maximum expanded-to-compressed ratio for each non-empty member.
-MAX_COMPRESSION_RATIO = 100
 
 _READ_CHUNK_BYTES = 64 * 1024
 _LOCAL_HEADER = struct.Struct("<4s5H3L2H")
@@ -499,7 +501,6 @@ class GuardedZipReader:
                 raise PackageLimitError(
                     f"ZIP total expanded size exceeds the {MAX_TOTAL_EXPANDED_BYTES}-byte limit"
                 )
-            _enforce_ratio(name, info.file_size, info.compress_size)
             if info.compress_type == ZIP_STORED and info.file_size != info.compress_size:
                 raise PackageLimitError(
                     f"stored ZIP member {name!r} has inconsistent size metadata"
@@ -726,7 +727,6 @@ class GuardedZipReader:
                     "ZIP actual total expanded size exceeds the "
                     f"{MAX_TOTAL_EXPANDED_BYTES}-byte limit"
                 )
-            _enforce_ratio(info.filename, actual_size, info.compress_size, actual=True)
             crc = zlib.crc32(data, crc)
             chunks.append(data)
 
@@ -873,17 +873,6 @@ def _member_limit(name: str) -> int:
     if lower_name.endswith(".xml") or lower_name.endswith(".rels"):
         return MAX_XML_MEMBER_BYTES
     return MAX_BINARY_MEMBER_BYTES
-
-
-def _enforce_ratio(name: str, expanded: int, compressed: int, *, actual: bool = False) -> None:
-    if expanded == 0:
-        return
-    if compressed <= 0 or expanded > compressed * MAX_COMPRESSION_RATIO:
-        qualifier = "actual " if actual else ""
-        raise PackageLimitError(
-            f"ZIP member {name!r} {qualifier}compression ratio exceeds "
-            f"the {MAX_COMPRESSION_RATIO}:1 limit"
-        )
 
 
 def _validate_member_name(name: str) -> None:

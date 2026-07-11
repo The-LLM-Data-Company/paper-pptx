@@ -178,6 +178,12 @@ class OpcPackage(_RelatableMixin):
             PackageWriter.write(temporary, self._rels, parts)
             if existing_mode is not None:
                 os.chmod(temporary, existing_mode)
+            else:
+                # -- mkstemp creates 0600; a NEW destination must get the mode a plain
+                # -- open() would have given it, or downstream readers lose access
+                active_umask = os.umask(0)
+                os.umask(active_umask)
+                os.chmod(temporary, 0o666 & ~active_umask)
             with open(temporary, "rb") as stream:
                 os.fsync(stream.fileno())
             os.replace(temporary, destination)
