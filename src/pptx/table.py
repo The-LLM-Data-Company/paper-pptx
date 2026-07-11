@@ -61,6 +61,7 @@ class Table(object):
         deleted with it. Deleting the last remaining column raises |ValueError| (delete the
         table's shape instead).
         """
+        self._validate_structure()
         col_count = len(self._tbl.tblGrid.gridCol_lst)
         self._validate_grid_index(col_idx, "col_idx", col_count)
         if col_count == 1:
@@ -92,6 +93,7 @@ class Table(object):
         merged header) is deleted with it and must not poison other rows' operations.
         Deleting the last remaining row raises |ValueError|.
         """
+        self._validate_structure()
         row_count = len(self._tbl.tr_lst)
         self._validate_grid_index(row_idx, "row_idx", row_count)
         if row_count == 1:
@@ -161,6 +163,7 @@ class Table(object):
         untouched) only when the insertion boundary would split a horizontal merge; vertical
         merges elsewhere in the table never block the operation.
         """
+        self._validate_structure()
         col_count = len(self._tbl.tblGrid.gridCol_lst)
         self._validate_grid_index(after, "after", col_count, lower=-1)
         if width is not None and (
@@ -207,6 +210,7 @@ class Table(object):
         """
         from copy import deepcopy
 
+        self._validate_structure()
         row_count = len(self._tbl.tr_lst)
         self._validate_grid_index(after, "after", row_count, lower=-1)
         if copy_format_from is not None:
@@ -328,6 +332,36 @@ class Table(object):
                 if tc.is_merge_origin:
                     regions.append(_MergeRegion(row_idx, col_idx, tc.rowSpan, tc.gridSpan))
         return regions
+
+    def _validate_structure(self) -> None:
+        """Refuse malformed table grids before a surgery operation mutates XML."""
+        from pptx._ownership import require_shape_attached
+        from pptx.errors import UnsupportedStructureError
+
+        require_shape_attached(self._graphic_frame, argument="table shape")
+        col_count = len(self._tbl.tblGrid.gridCol_lst)
+        row_count = len(self._tbl.tr_lst)
+        if col_count == 0 or row_count == 0:
+            raise UnsupportedStructureError(
+                "table has no rows or columns; repair the table before editing it"
+            )
+        for row_idx, tr in enumerate(self._tbl.tr_lst):
+            if len(tr.tc_lst) != col_count:
+                raise UnsupportedStructureError(
+                    "table row %d has %d cells for %d grid columns; repair the table before "
+                    "editing it" % (row_idx, len(tr.tc_lst), col_count)
+                )
+        for region in self._merge_regions():
+            if (
+                region.rowSpan < 1
+                or region.gridSpan < 1
+                or region.bottom >= row_count
+                or region.right >= col_count
+            ):
+                raise UnsupportedStructureError(
+                    "table contains an out-of-bounds merged region %s; repair the table before "
+                    "editing it" % region
+                )
 
     def _refuse_merge_conflict(self, operation: str, conflicts: list[_MergeRegion]) -> None:
         """Raise |UnsupportedStructureError| naming every merged region in `conflicts`."""

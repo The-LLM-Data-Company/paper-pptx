@@ -183,10 +183,12 @@ class Picture(_BasePicture):
         becomes unreferenced when this picture held its last reference (an unreachable part
         is never serialized).
         """
+        from pptx._ownership import require_shape_attached
         from pptx.errors import UnsupportedStructureError
         from pptx.parts.image import Image
 
         # -- validation pass, complete before any mutation --
+        require_shape_attached(self, argument="picture")
         if not isinstance(allow_format_change, bool):
             raise ValueError(
                 "allow_format_change must be a bool, got %r" % (allow_format_change,)

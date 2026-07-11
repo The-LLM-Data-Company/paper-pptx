@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Sequence
 
@@ -18,7 +19,7 @@ from pptx.util import lazyproperty
 
 
 def _require_xml_encodable(value, name):
-    """Raise |ValueError| when `value` cannot be serialized into XML (e.g. lone surrogates).
+    """Raise |ValueError| when `value` cannot be represented in XML 1.0.
 
     Part of validate-fully-then-mutate (paper-pptx): a str that passes isinstance checks but
     explodes during serialization would otherwise corrupt the chart mid-replacement.
@@ -27,6 +28,20 @@ def _require_xml_encodable(value, name):
         value.encode("utf-8")
     except UnicodeEncodeError:
         raise ValueError("%s contains characters not encodable in XML: %r" % (name, value))
+    if any(
+        not (
+            ch in "\t\n\r"
+            or "\x20" <= ch <= "\ud7ff"
+            or "\ue000" <= ch <= "\ufffd"
+            or "\U00010000" <= ch <= "\U0010ffff"
+        )
+        for ch in value
+    ):
+        raise ValueError("%s contains characters not permitted in XML 1.0: %r" % (name, value))
+
+
+_MAX_CHART_CATEGORIES = 1_048_575  # row 1 is reserved for headings
+_MAX_CHART_SERIES = 16_383  # column A is reserved for categories
 
 
 #: chart types `Chart.replace_data_safe` supports: the category-chart families the
@@ -229,6 +244,11 @@ class Chart(PartElementProxy):
         categories = list(categories)
         if not categories:
             raise ValueError("categories must be a non-empty sequence of str")
+        if len(categories) > _MAX_CHART_CATEGORIES:
+            raise ValueError(
+                "categories cannot exceed Excel's %d data-row limit, got %d"
+                % (_MAX_CHART_CATEGORIES, len(categories))
+            )
         for category in categories:
             if not isinstance(category, str):
                 raise ValueError("categories must all be str, got %r" % (category,))
@@ -236,6 +256,11 @@ class Chart(PartElementProxy):
         series = list(series)
         if not series:
             raise ValueError("series must be a non-empty sequence of (name, values) pairs")
+        if len(series) > _MAX_CHART_SERIES:
+            raise ValueError(
+                "series cannot exceed Excel's %d data-column limit, got %d"
+                % (_MAX_CHART_SERIES, len(series))
+            )
         normalized_series = []
         seen_names = set()
         for item in series:
@@ -307,11 +332,25 @@ class Chart(PartElementProxy):
         chart_data.categories = categories
         for name, values in normalized_series:
             chart_data.add_series(name, values)
-        if self._workbook.xlsx_part is None:
+        xlsx_part = self._workbook.xlsx_part
+        xlsx_blob = chart_data.xlsx_blob if xlsx_part is not None else None
+        chart_snapshot = copy.deepcopy(self._chartSpace)
+        workbook_snapshot = xlsx_part.blob if xlsx_part is not None else None
+        try:
             rewriter = SeriesXmlRewriterFactory(self.chart_type, chart_data)
             rewriter.replace_series_data(self._chartSpace)
-        else:
-            self.replace_data(chart_data)
+            if xlsx_blob is not None:
+                self._workbook.update_from_xlsx_blob(xlsx_blob)
+        except BaseException:
+            self._chartSpace.attrib.clear()
+            self._chartSpace.attrib.update(chart_snapshot.attrib)
+            for child in list(self._chartSpace):
+                self._chartSpace.remove(child)
+            for child in chart_snapshot:
+                self._chartSpace.append(copy.deepcopy(child))
+            if xlsx_part is not None:
+                xlsx_part.blob = workbook_snapshot
+            raise
 
     @lazyproperty
     def series(self):

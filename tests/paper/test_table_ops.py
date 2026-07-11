@@ -414,6 +414,19 @@ def test_anchored_replace_reaches_table_cells_including_merge_origin():
     assert _merged_table(final).cell(1, 2).text_frame.text == "R1C2 EDITED"
 
 
+def test_column_surgery_refuses_a_ragged_table_before_mutation():
+    prs = _open(GAUNTLET)
+    table = _gauntlet_table(prs)
+    malformed_row = table._tbl.tr_lst[1]
+    malformed_row.remove(malformed_row.tc_lst[-1])
+    before = table._tbl.xml
+
+    with pytest.raises(UnsupportedStructureError, match="cells for"):
+        table.delete_column(0)
+
+    assert table._tbl.xml == before
+
+
 # --------------------------------------------------------------------------------- lo_smoke
 
 

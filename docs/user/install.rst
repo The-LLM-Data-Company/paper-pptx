@@ -5,21 +5,29 @@ Installing
 
 |pp| is hosted on PyPI, so installing with `pip` is simple::
 
-    pip install python-pptx
+    pip uninstall -y python-pptx paper-pptx
+    pip install paper-pptx
+
+The distributions ``paper-pptx`` and ``python-pptx`` both provide the ``pptx`` import
+package and must not be installed together. The import remains unchanged::
+
+    from pptx import Presentation
+
+Verify distribution ownership and installed file hashes after installation::
+
+    paper-pptx-doctor
 
 |pp| depends on the ``lxml`` package and ``Pillow``, the modern version of
 the Python Imaging Library (``PIL``). The charting features depend on
-``XlsxWriter``. Both ``pip`` and ``easy_install`` will take care of
-satisfying these dependencies for you, but if you use the ``setup.py``
-installation method you will need to install the dependencies yourself.
+``XlsxWriter``. ``pip`` installs these dependencies automatically.
 
-Currently |pp| requires Python 2.7 or 3.3 or later. The tests are run against 2.7 and
-3.8 on Travis CI.
+paper-pptx requires Python 3.9 or later. GitHub Actions runs the complete inherited and
+fork test suites on Python 3.9 through 3.13.
 
 Dependencies
 ------------
 
-* Python 2.6, 2.7, 3.3 or later
+* Python 3.9 or later
 * lxml
 * Pillow
 * XlsxWriter (to use charting features)

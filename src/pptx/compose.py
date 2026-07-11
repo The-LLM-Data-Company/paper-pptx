@@ -20,23 +20,24 @@ The source presentation is never mutated (the cross-contamination guarantee, byt
 tested). All transplant decisions - the full refusal ledger - validate BEFORE the first
 destination write. Media always copies across packages (never shared); charts deep-copy
 with their embedded workbooks; SmartArt carries opaquely; comments drop (reported);
-OLE/ActiveX/internal-link relationships refuse. Fingerprint dedupe is guaranteed within
-one destination |Presentation| session; across sessions it applies only when content is
-identical after rId normalization (a transplanted master pruned to fewer layouts no
-longer fingerprints like its source - declared).
+OLE/ActiveX/internal-link relationships refuse. Fingerprint dedupe is conservative and
+relationship-binding-aware: support parts are reused only when their bytes and referenced
+part graph match. A transplanted master pruned to fewer layouts no longer fingerprints
+like its source.
 """
 
 from __future__ import annotations
 
 import copy
 import hashlib
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from pptx.errors import RelationshipPolicyError, TargetNotFoundError, UnsupportedStructureError
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.opc.package import XmlPart
+from pptx.oxml import parse_xml
+from pptx.oxml.ns import qn
 from pptx.slideops import (
     _allocate_partname,
     _partname_template,
@@ -52,6 +53,54 @@ if TYPE_CHECKING:
 
 SCHEMA_NAME = "paper-import-report"
 SCHEMA_VERSION = 1
+
+
+class _ComposeTransaction:
+    """Restore the complete reachable destination graph when composition raises."""
+
+    def __init__(self, dest_prs):
+        self._dest_prs = dest_prs
+        self._package = dest_prs.part.package
+        self._parts = list(self._package.iter_parts())
+        self._part_state = []
+        for part in self._parts:
+            payload = copy.deepcopy(part._element) if isinstance(part, XmlPart) else part.blob
+            self._part_state.append((part, payload, dict(part.rels._rels)))
+        self._package_rels = dict(self._package._rels._rels)
+        self._had_cache = hasattr(self._package, "_paper_compose_fingerprints")
+        self._cache = dict(getattr(self._package, "_paper_compose_fingerprints", {}))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if exc_type is None:
+            return False
+        for part, payload, rels in self._part_state:
+            if isinstance(part, XmlPart):
+                _restore_xml_element(part._element, payload)
+            else:
+                part.blob = payload
+            part.rels._rels.clear()
+            part.rels._rels.update(rels)
+        self._package._rels._rels.clear()
+        self._package._rels._rels.update(self._package_rels)
+        if self._had_cache:
+            self._package._paper_compose_fingerprints = self._cache
+        elif hasattr(self._package, "_paper_compose_fingerprints"):
+            delattr(self._package, "_paper_compose_fingerprints")
+        return False
+
+
+def _restore_xml_element(target, snapshot) -> None:
+    target.attrib.clear()
+    target.attrib.update(snapshot.attrib)
+    target.text = snapshot.text
+    target.tail = snapshot.tail
+    for child in list(target):
+        target.remove(child)
+    for child in snapshot:
+        target.append(copy.deepcopy(child))
 
 _MODES = ("adopt_theme", "keep_appearance", "bake")
 _MEDIA_RELTYPES = frozenset([RT.IMAGE, RT.MEDIA, RT.VIDEO, RT.AUDIO])
@@ -161,9 +210,10 @@ def import_slide(
     plan = _validated_transplant_plan(source_slide.part, notes)
     binding = _resolve_layout_binding(dest_prs, source_slide, mode, target_layout)
     prep = _validate_mode_preparation(source_slide, mode, binding)
-    return _perform_import(
-        dest_prs, source_slide, plan, mode, binding, prep, position, notes, section
-    )
+    with _ComposeTransaction(dest_prs):
+        return _perform_import(
+            dest_prs, source_slide, plan, mode, binding, prep, position, notes, section
+        )
 
 
 def append_deck(
@@ -193,13 +243,14 @@ def append_deck(
         prep = _validate_mode_preparation(source_slide, mode, binding)
         staged.append((source_slide, plan, binding, prep))
 
-    reports = []
-    for source_slide, plan, binding, prep in staged:
-        reports.append(
-            _perform_import(
-                dest_prs, source_slide, plan, mode, binding, prep, None, notes, None
+    with _ComposeTransaction(dest_prs):
+        reports = []
+        for source_slide, plan, binding, prep in staged:
+            reports.append(
+                _perform_import(
+                    dest_prs, source_slide, plan, mode, binding, prep, None, notes, None
+                )
             )
-        )
     return tuple(reports)
 
 
@@ -224,6 +275,13 @@ def _validate_arguments(
 
     materialize_slides(source_prs, "import_slide")  # -- typed refusal on broken source
     materialize_slides(dest_prs, "import_slide")
+    source_size = (source_prs.slide_width, source_prs.slide_height)
+    dest_size = (dest_prs.slide_width, dest_prs.slide_height)
+    if source_size != dest_size:
+        raise UnsupportedStructureError(
+            "source and destination slide sizes differ (%s vs %s); import refuses rather "
+            "than rescale content" % (source_size, dest_size)
+        )
     if isinstance(slide, bool) or not isinstance(slide, (int, _Slide)):
         raise ValueError("slide must be a Slide or int index, got %r" % (slide,))
     if isinstance(slide, int):
@@ -264,6 +322,15 @@ def _validate_arguments(
             raise ValueError("target_layout must be a SlideLayout")
         if target_layout.part.package is not dest_prs.part.package:
             raise ValueError("target_layout must belong to the destination presentation")
+        live_layout_parts = {
+            layout.part
+            for master in dest_prs.slide_masters
+            for layout in master.slide_layouts
+        }
+        if target_layout.part not in live_layout_parts:
+            raise TargetNotFoundError(
+                "target_layout is no longer enrolled in the destination presentation"
+            )
     if mode in ("adopt_theme", "bake") and any(
         True for _ in slide._element.spTree.iterchildren(_MC_ALTERNATE_CONTENT)
     ):
@@ -424,6 +491,20 @@ def _resolved_run_values(shape) -> list:
     for p_idx, paragraph in enumerate(shape.text_frame.paragraphs):
         for r_idx, run in enumerate(paragraph.runs):
             effective = run.effective_font()
+            unsafe_name = any(
+                "non-Latin" in step.detail for step in effective.name.provenance
+            )
+            unsafe_color = any(
+                "unapplied transforms" in step.detail
+                for step in effective.color_rgb.provenance
+            ) and effective.color_rgb.bake_color_xml is None
+            if unsafe_name or unsafe_color:
+                from pptx.errors import UnsupportedStructureError
+
+                raise UnsupportedStructureError(
+                    "shape %r has unresolved text formatting; baking would change its "
+                    "appearance" % shape.name
+                )
             values = {}
             if effective.size.resolved and effective.size.value is not None:
                 values["size"] = effective.size.value
@@ -431,6 +512,8 @@ def _resolved_run_values(shape) -> list:
                 values["name"] = effective.name.value
             if effective.color_rgb.resolved and effective.color_rgb.value is not None:
                 values["color_rgb"] = effective.color_rgb.value
+            elif effective.color_rgb.bake_color_xml is not None:
+                values["color_xml"] = effective.color_rgb.bake_color_xml
             for facet in ("bold", "italic"):
                 facet_value = getattr(effective, facet)
                 if facet_value is not None and facet_value.resolved and (
@@ -625,6 +708,12 @@ def _reconcile_copied_placeholders(new_slide_part, mode, prep):
                     run.font.name = values["name"]
                 if "color_rgb" in values:
                     run.font.color.rgb = RGBColor.from_string(values["color_rgb"])
+                elif "color_xml" in values:
+                    color = parse_xml(values["color_xml"])
+                    run.font.color.rgb = RGBColor.from_string(color.get("val"))
+                    target = run._r.get_or_add_rPr().find(qn("a:solidFill"))[0]
+                    for transform in color:
+                        target.append(copy.deepcopy(transform))
                 if "bold" in values:
                     run.font.bold = values["bold"]
                 if "italic" in values:
@@ -694,29 +783,36 @@ def _live_cache_hit(dest_package, cache, fingerprint, allocated):
     return None
 
 
-def _fingerprint(part, depth: int = 0, visiting=None) -> str:
-    """Content fingerprint: SHA-256 over content type + rId-normalized blob + children."""
+def _fingerprint(part, visiting=None, memo=None) -> str:
+    """Conservative graph fingerprint retaining each rId-to-target binding."""
     if visiting is None:
         visiting = set()
+    if memo is None:
+        memo = {}
     key = id(part)
-    if key in visiting or depth > 3:
-        return "cycle"
+    if key in memo:
+        return memo[key]
+    if key in visiting:
+        return "cycle:%s:%s" % (
+            part.partname,
+            hashlib.sha256(part.blob).hexdigest(),
+        )
     visiting = visiting | {key}
-    normalized = re.sub(rb'"rId[0-9]+"', b'"rId#"', part.blob)
     digest = hashlib.sha256()
     digest.update(part.content_type.encode("utf-8"))
-    digest.update(normalized)
-    children = []
-    for rel in part.rels.values():
+    digest.update(part.blob)
+    for rId in sorted(part.rels, key=_rId_sort_key):
+        rel = part.rels[rId]
+        digest.update(rId.encode("utf-8"))
+        digest.update(rel.reltype.encode("utf-8"))
         if rel.is_external:
-            children.append("%s>%s" % (rel.reltype, rel.target_ref))
+            child = "external:%s" % rel.target_ref
         else:
-            children.append(
-                "%s>%s" % (rel.reltype, _fingerprint(rel.target_part, depth + 1, visiting))
-            )
-    for entry in sorted(children):
-        digest.update(entry.encode("utf-8"))
-    return digest.hexdigest()
+            child = _fingerprint(rel.target_part, visiting, memo)
+        digest.update(child.encode("utf-8"))
+    result = digest.hexdigest()
+    memo[key] = result
+    return result
 
 
 def _import_support_part(dest_package, part, allocated, reused):
@@ -746,12 +842,30 @@ def _import_support_part(dest_package, part, allocated, reused):
                 _import_support_part(dest_package, rel.target_part, allocated, reused),
                 rel.reltype,
             )
-    if rId_mapping and isinstance(new_part, XmlPart):
-        _rewrite_r_references(new_part._element, rId_mapping)
+    if rId_mapping:
+        if isinstance(new_part, XmlPart):
+            _rewrite_r_references(new_part._element, rId_mapping)
+        elif _is_xml_payload(new_part):
+            from lxml import etree
+
+            root = parse_xml(new_part.blob)
+            _rewrite_r_references(root, rId_mapping)
+            new_part.blob = etree.tostring(
+                root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
     cache[fingerprint] = new_part
     if hasattr(allocated, "created_parts"):
         allocated.created_parts.append(new_part)
     return new_part
+
+
+def _is_xml_payload(part) -> bool:
+    content_type = part.content_type.lower()
+    return (
+        content_type.endswith("+xml")
+        or content_type in ("application/xml", "text/xml")
+        or str(part.partname).lower().endswith(".xml")
+    )
 
 
 def _import_chart_part(dest_package, chart_part, allocated):

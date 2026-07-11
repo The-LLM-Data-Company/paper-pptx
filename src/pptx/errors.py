@@ -15,6 +15,7 @@ from __future__ import annotations
 __all__ = [
     "AmbiguousTargetError",
     "BoundaryViolationError",
+    "PackageLimitError",
     "PaperRefusal",
     "RelationshipPolicyError",
     "StaleAnchorError",
@@ -25,6 +26,10 @@ __all__ = [
 
 class PaperRefusal(Exception):
     """Base class for all safe refusals raised by paper-pptx APIs."""
+
+
+class PackageLimitError(PaperRefusal):
+    """The package archive is too large, ambiguous, or unsafe to expand."""
 
 
 class AmbiguousTargetError(PaperRefusal):

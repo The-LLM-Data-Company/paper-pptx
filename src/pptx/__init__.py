@@ -1,9 +1,15 @@
 """Initialization module for python-pptx package."""
 
+# ruff: noqa: E402 -- conflict detection must run before importing package internals
+
 from __future__ import annotations
 
 import sys
 from typing import TYPE_CHECKING
+
+from pptx._version import __paper_version__, assert_distribution_identity
+
+assert_distribution_identity()
 
 import pptx.exc as exceptions
 from pptx.api import Presentation
@@ -26,7 +32,6 @@ if TYPE_CHECKING:
     from pptx.opc.package import Part
 
 __version__ = "1.0.2"
-__paper_version__ = "0.1.0"
 
 sys.modules["pptx.exceptions"] = exceptions
 del sys

@@ -15,7 +15,8 @@ The pinned walk, per run (levels consulted in order until one supplies the value
    otherwise master body placeholder), then the master's `p:txStyles` family style
    (title/ctrTitle → `titleStyle`; body/subTitle/obj and vertical variants → `bodyStyle`;
    anything else → `otherStyle`)
-5. non-placeholder shapes: the presentation's `p:defaultTextStyle`
+5. non-placeholder shapes: the shape's `p:style/a:fontRef`, then the presentation's
+   `p:defaultTextStyle`
 
 Font-name theme references (`+mj-lt`/`+mn-lt`) resolve through the master's theme part
 (`a:fontScheme`). Scheme colors resolve through the slide's `p:clrMapOvr` override when
@@ -29,6 +30,7 @@ used throughout (several upstream proxy accessors are get-or-add and would dirty
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import unicodedata
 from dataclasses import dataclass, field
@@ -39,6 +41,7 @@ from pptx.errors import UnsupportedStructureError
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx.util import Centipoints, Length
 
 if TYPE_CHECKING:
@@ -100,6 +103,7 @@ class EffectiveValue:
     value_pt: Optional[float]  #: convenience for sizes only, never instead of the EMU value
     resolved: bool
     provenance: Tuple[ProvenanceStep, ...]
+    bake_color_xml: Optional[bytes] = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
         return {
@@ -417,8 +421,10 @@ def inspect_deck(prs) -> DeckManifest:
     inventory. Values that are inherited rather than explicit report None — never a guess.
     Read-only.
     """
+    from pptx.errors import materialize_slides
+
     slides = []
-    for slide in prs.slides:
+    for slide in materialize_slides(prs, "inspect_deck"):
         shapes = tuple(
             _shape_manifest(shape, z_index) for z_index, shape in enumerate(slide.shapes)
         )
@@ -800,7 +806,7 @@ class _FontResolver(object):
         chain = list(self._chain(r, p, sp, level))
         return EffectiveFont(
             size=self._resolve_size(chain),
-            name=self._resolve_name(chain),
+            name=self._resolve_name(chain, _run_text(r)),
             color_rgb=self._resolve_color(chain, sp),
             bold=self._resolve_flag(chain, "b", "bold"),
             italic=self._resolve_flag(chain, "i", "italic"),
@@ -833,6 +839,7 @@ class _FontResolver(object):
             for step in self._placeholder_chain(sp, level):
                 yield step
         else:
+            yield "shape fontRef", slide_partname, self._rPr_from_fontRef(sp)
             yield (
                 "presentation defaultTextStyle lvl%d" % (level + 1),
                 str(self._presentation_part.partname),
@@ -1067,6 +1074,9 @@ class _FontResolver(object):
                 srgbClr.get("val"),
                 self._transforms_note(srgbClr),
             )
+            if len(srgbClr):
+                steps.append(ProvenanceStep(label, partname, detail, False))
+                return self._transformed_color_value(srgbClr, srgbClr.get("val"), steps)
             steps.append(ProvenanceStep(label, partname, detail, True))
             return EffectiveValue(srgbClr.get("val").upper(), None, True, tuple(steps))
         schemeClr = solidFill.find(qn("a:schemeClr"))
@@ -1080,6 +1090,13 @@ class _FontResolver(object):
                     False,
                 )
             )
+            if len(schemeClr):
+                base = self._resolve_scheme_color(schemeClr.get("val"), steps)
+                if not base.resolved or base.value is None:
+                    return base
+                return self._transformed_color_value(
+                    schemeClr, str(base.value), list(base.provenance)
+                )
             return self._resolve_scheme_color(schemeClr.get("val"), steps)
         steps.append(
             ProvenanceStep(
@@ -1180,7 +1197,22 @@ class _FontResolver(object):
         )
         return EffectiveValue("none", None, True, tuple(steps))
 
-    def _resolve_name(self, chain) -> EffectiveValue:
+    def _resolve_name(self, chain, text="") -> EffectiveValue:
+        if self._has_non_latin_letters(text):
+            return EffectiveValue(
+                None,
+                None,
+                False,
+                (
+                    ProvenanceStep(
+                        "script-specific font",
+                        str(self._slide_part.partname),
+                        "run contains non-Latin text; East Asian and complex-script font "
+                        "selection is not resolved",
+                        False,
+                    ),
+                ),
+            )
         steps = []
         for label, partname, rPr in chain:
             latin = rPr.find(qn("a:latin")) if rPr is not None else None
@@ -1263,6 +1295,11 @@ class _FontResolver(object):
                     srgbClr.get("val"),
                     self._transforms_note(srgbClr),
                 )
+                if len(srgbClr):
+                    steps.append(ProvenanceStep(label, partname, detail, False))
+                    return self._transformed_color_value(
+                        srgbClr, srgbClr.get("val"), steps
+                    )
                 steps.append(ProvenanceStep(label, partname, detail, True))
                 return EffectiveValue(srgbClr.get("val").upper(), None, True, tuple(steps))
             schemeClr = solidFill.find(qn("a:schemeClr"))
@@ -1276,6 +1313,13 @@ class _FontResolver(object):
                         False,
                     )
                 )
+                if len(schemeClr):
+                    base = self._resolve_scheme_color(schemeClr.get("val"), steps)
+                    if not base.resolved or base.value is None:
+                        return base
+                    return self._transformed_color_value(
+                        schemeClr, str(base.value), list(base.provenance)
+                    )
                 return self._resolve_scheme_color(schemeClr.get("val"), steps)
             steps.append(
                 ProvenanceStep(
@@ -1387,6 +1431,47 @@ class _FontResolver(object):
         if not transforms:
             return ""
         return " with unapplied transforms [%s]" % ", ".join(transforms)
+
+    @staticmethod
+    def _transformed_color_value(color_element, base_rgb, steps) -> EffectiveValue:
+        localized = OxmlElement("a:srgbClr")
+        localized.set("val", str(base_rgb).upper())
+        for transform in color_element:
+            localized.append(copy.deepcopy(transform))
+        from lxml import etree
+
+        return EffectiveValue(
+            None,
+            None,
+            False,
+            tuple(steps),
+            bake_color_xml=etree.tostring(localized),
+        )
+
+    @staticmethod
+    def _has_non_latin_letters(text: str) -> bool:
+        for char in text:
+            if not unicodedata.category(char).startswith("L"):
+                continue
+            if not unicodedata.name(char, "").startswith("LATIN"):
+                return True
+        return False
+
+    @staticmethod
+    def _rPr_from_fontRef(sp):
+        """Return an rPr-like projection of this shape's explicit fontRef."""
+        fontRef = sp.find(qn("p:style") + "/" + qn("a:fontRef"))
+        if fontRef is None or fontRef.get("idx") not in ("major", "minor"):
+            return None
+        rPr = OxmlElement("a:defRPr")
+        latin = OxmlElement("a:latin")
+        latin.set("typeface", "+%s-lt" % ("mj" if fontRef.get("idx") == "major" else "mn"))
+        rPr.append(latin)
+        if len(fontRef):
+            solidFill = OxmlElement("a:solidFill")
+            solidFill.append(copy.deepcopy(fontRef[0]))
+            rPr.append(solidFill)
+        return rPr
 
     @staticmethod
     def _non_solid_fill_kind(rPr):

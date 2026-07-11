@@ -12,7 +12,7 @@ including macOS and Linux, and does not require PowerPoint to be installed or li
 The fork exists to prevent **silent corruption**: a deck that opens fine and is quietly wrong.
 Every added operation either does exactly what it claims or refuses atomically, leaving the
 document byte-for-byte unchanged. The contract harness checks this through save → reopen checks,
-exact changed-part budgets, and an independent LibreOffice load smoke.
+exact changed-part budgets, and an independent LibreOffice load smoke in release verification.
 
 Start with :ref:`paper_additions` for an overview. Each added module has a page under
 `API Documentation`_. The remaining documentation is inherited from python-pptx and describes

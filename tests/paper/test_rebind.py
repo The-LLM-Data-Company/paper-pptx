@@ -177,6 +177,59 @@ def test_bake_refuses_field_bearing_placeholder():
     assert "a:fld" in str(raised)
 
 
+def test_bake_localizes_transformed_scheme_color_without_losing_transform():
+    prs = _open(GAUNTLET)
+    body = next(s for s in prs.slides[0].shapes if s.element.ph_idx == 1)
+    run = body.text_frame.paragraphs[0].runs[0]
+    rPr = run._r.get_or_add_rPr()
+    solidFill = etree.SubElement(
+        rPr, "{http://schemas.openxmlformats.org/drawingml/2006/main}solidFill"
+    )
+    schemeClr = etree.SubElement(
+        solidFill, "{http://schemas.openxmlformats.org/drawingml/2006/main}schemeClr"
+    )
+    schemeClr.set("val", "accent1")
+    etree.SubElement(
+        schemeClr, "{http://schemas.openxmlformats.org/drawingml/2006/main}lumMod"
+    ).set("val", "50000")
+
+    prs.slides[0].rebind_layout(prs.slide_layouts[5], orphan_policy="bake")
+    reopened = save_reopen(prs)
+    baked = next(
+        s for s in reopened.slides[0].shapes if s.name == "Content Placeholder 2"
+    )
+    color = baked.text_frame.paragraphs[0].runs[0]._r.get_or_add_rPr().find(
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}solidFill"
+    )[0]
+    assert color.tag.endswith("srgbClr")
+    assert color.find(
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}lumMod"
+    ).get("val") == "50000"
+
+
+def test_post_mutation_report_failure_rolls_rebind_back(monkeypatch):
+    import pptx.rebind as rebind_module
+
+    prs = _open(GAUNTLET)
+    original = rebind_module._resolution_state
+    calls = 0
+
+    def fail_after_mutation(slide):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise UnsupportedStructureError("forced report failure")
+        return original(slide)
+
+    monkeypatch.setattr(rebind_module, "_resolution_state", fail_after_mutation)
+    raised = assert_refusal_atomic(
+        prs,
+        lambda p: p.slides[0].rebind_layout(p.slide_layouts[3]),
+        UnsupportedStructureError,
+    )
+    assert "forced report failure" in str(raised)
+
+
 # --------------------------------------------------------------------------- explicit map
 
 

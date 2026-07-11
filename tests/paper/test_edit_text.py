@@ -252,6 +252,18 @@ def test_traversal_refusal_fires_before_any_write():
     assert "nested" in str(raised)
 
 
+def test_broken_slide_relationship_graph_refuses_typed_before_any_write():
+    prs = Presentation(
+        str(corpus.fixture_path("self_generated/corrupt_dangling_sldid.pptx"))
+    )
+    from .contract import assert_refusal_atomic
+
+    raised = assert_refusal_atomic(
+        prs, lambda p: replace_text(p, "anything", "replacement"), UnsupportedStructureError
+    )
+    assert "relationship graph is broken" in str(raised)
+
+
 _MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 _P = "http://schemas.openxmlformats.org/presentationml/2006/main"
 

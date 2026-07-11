@@ -249,12 +249,12 @@ class DescribeOpcPackage:
         _rels_prop_.return_value = relationships_
         parts_ = tuple(instance_mock(request, Part) for _ in range(3))
         method_mock(request, OpcPackage, "iter_parts", return_value=iter(parts_))
-        PackageWriter_ = class_mock(request, "pptx.opc.package.PackageWriter")
+        _save_path_atomically_ = method_mock(request, OpcPackage, "_save_path_atomically")
         package = OpcPackage(None)
 
         package.save("prs.pptx")
 
-        PackageWriter_.write.assert_called_once_with("prs.pptx", relationships_, parts_)
+        _save_path_atomically_.assert_called_once_with(package, "prs.pptx", parts_)
 
     def it_loads_the_pkg_file_to_help(self, request, _rels_prop_, relationships_):
         _PackageLoader_ = class_mock(request, "pptx.opc.package._PackageLoader")

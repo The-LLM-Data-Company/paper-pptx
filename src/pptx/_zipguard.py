@@ -1,0 +1,920 @@
+"""Bounded, unambiguous ZIP reads for OPC packages.
+
+These limits are a safety envelope, not OOXML validity rules. They are
+deliberately generous for ordinary PowerPoint presentations while keeping one package
+from consuming unbounded CPU, memory, or disk-backed input:
+
+* 256 MiB compressed package size;
+* 4,096 members;
+* 64 MiB for one XML member and 256 MiB for one binary member;
+* 512 MiB expanded across the package; and
+* a 100:1 expanded-to-compressed ratio for each non-empty member.
+
+Only the two compression methods permitted by the OPC ZIP mapping (stored and
+deflated) are accepted. Every member is inflated from its raw compressed bytes
+rather than through ``ZipFile.read()``. This allows actual output length and
+deflate end-of-stream to be checked even when central-directory sizes lie.
+"""
+
+from __future__ import annotations
+
+import os
+import stat
+import struct
+import unicodedata
+import zlib
+from contextlib import suppress
+from typing import BinaryIO, Dict, List, Optional, Tuple, Union, cast
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
+
+from lxml import etree
+
+from pptx.errors import PackageLimitError
+
+_MIB = 1024 * 1024
+
+#: Maximum physical size of a ZIP package before any member is expanded.
+MAX_COMPRESSED_BYTES = 256 * _MIB
+#: Maximum number of central-directory records in one package.
+MAX_MEMBER_COUNT = 4_096
+#: Maximum bytes occupied by central-directory records.
+MAX_CENTRAL_DIRECTORY_BYTES = 16 * _MIB
+#: Maximum expanded size of one XML or relationships part.
+MAX_XML_MEMBER_BYTES = 64 * _MIB
+#: Maximum expanded size of one non-XML part, such as an image or embedding.
+MAX_BINARY_MEMBER_BYTES = 256 * _MIB
+#: Maximum expanded bytes across all members in one package.
+MAX_TOTAL_EXPANDED_BYTES = 512 * _MIB
+#: Maximum expanded-to-compressed ratio for each non-empty member.
+MAX_COMPRESSION_RATIO = 100
+
+_READ_CHUNK_BYTES = 64 * 1024
+_LOCAL_HEADER = struct.Struct("<4s5H3L2H")
+_LOCAL_HEADER_SIGNATURE = b"PK\x03\x04"
+_CENTRAL_HEADER = struct.Struct("<4s6H3L5H2L")
+_CENTRAL_HEADER_SIGNATURE = b"PK\x01\x02"
+_END_RECORD = struct.Struct("<4s4H2LH")
+_END_RECORD_SIGNATURE = b"PK\x05\x06"
+_ZIP64_END_RECORD = struct.Struct("<4sQ2H2L4Q")
+_ZIP64_END_RECORD_SIGNATURE = b"PK\x06\x06"
+_ZIP64_LOCATOR = struct.Struct("<4sLQL")
+_ZIP64_LOCATOR_SIGNATURE = b"PK\x06\x07"
+_MAX_END_COMMENT_BYTES = 65_535
+
+_CONTENT_TYPES_NAME = "[Content_Types].xml"
+_CONTENT_TYPES_NAMESPACE = (
+    "http://schemas.openxmlformats.org/package/2006/content-types"
+)
+_CONTENT_TYPES_TAG = f"{{{_CONTENT_TYPES_NAMESPACE}}}Types"
+_DEFAULT_TAG = f"{{{_CONTENT_TYPES_NAMESPACE}}}Default"
+_OVERRIDE_TAG = f"{{{_CONTENT_TYPES_NAMESPACE}}}Override"
+_CONTENT_TYPES_PARSER = etree.XMLParser(
+    load_dtd=False,
+    no_network=True,
+    remove_blank_text=False,
+    resolve_entities=False,
+)
+
+_FLAG_ENCRYPTED = 0x0001
+_FLAG_DATA_DESCRIPTOR = 0x0008
+_FLAG_PATCHED_DATA = 0x0020
+_FLAG_STRONG_ENCRYPTION = 0x0040
+_FLAG_UTF8_NAME = 0x0800
+
+_SUPPORTED_COMPRESSION = (ZIP_STORED, ZIP_DEFLATED)
+_HEX_DIGITS = frozenset("0123456789ABCDEF")
+_URI_UNRESERVED = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+
+def compressed_size(source: object) -> Optional[int]:
+    """Return physical byte size for a path or seekable stream, if available."""
+    if isinstance(source, (str, os.PathLike)):
+        path = cast(Union[str, "os.PathLike[str]"], source)
+        return os.path.getsize(path)
+
+    fileno = getattr(source, "fileno", None)
+    if callable(fileno):
+        try:
+            descriptor = fileno()
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        else:
+            if isinstance(descriptor, int) and not isinstance(descriptor, bool):
+                try:
+                    return os.fstat(descriptor).st_size
+                except (OSError, ValueError):
+                    pass
+
+    tell = getattr(source, "tell", None)
+    seek = getattr(source, "seek", None)
+    if not callable(tell) or not callable(seek):
+        return None
+    try:
+        position = tell()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    try:
+        seek(0, os.SEEK_END)
+        size = tell()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    finally:
+        with suppress(AttributeError, OSError, TypeError, ValueError):
+            seek(position, os.SEEK_SET)
+    return size if isinstance(size, int) and not isinstance(size, bool) else None
+
+
+def enforce_compressed_size(source: object) -> Optional[int]:
+    """Refuse `source` when its physical size exceeds the package bound."""
+    size = compressed_size(source)
+    if size is not None and size > MAX_COMPRESSED_BYTES:
+        raise PackageLimitError(
+            "ZIP package compressed size "
+            f"{size} bytes exceeds the {MAX_COMPRESSED_BYTES}-byte limit"
+        )
+    return size
+
+
+def read_compressed_bytes(path: Union[str, "os.PathLike[str]"]) -> bytes:
+    """Read a package file in chunks while enforcing its actual byte count."""
+    enforce_compressed_size(path)
+    chunks: List[bytes] = []
+    total = 0
+    with open(path, "rb") as stream:
+        while True:
+            chunk = stream.read(min(_READ_CHUNK_BYTES, MAX_COMPRESSED_BYTES - total + 1))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_COMPRESSED_BYTES:
+                raise PackageLimitError(
+                    "ZIP package actual compressed size exceeds the "
+                    f"{MAX_COMPRESSED_BYTES}-byte limit"
+                )
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def preflight_zip(source: object) -> None:
+    """Validate bounded central-directory metadata before ``ZipFile`` opens.
+
+    ``zipfile.ZipFile`` creates one ``ZipInfo`` object per central-directory
+    record. A forged but physically small archive can otherwise force an
+    unbounded allocation before the ordinary member-count guard runs. This
+    preflight reads only fixed-size records and skips variable fields without
+    retaining them.
+    """
+    enforce_compressed_size(source)
+    if isinstance(source, (str, os.PathLike)):
+        path = cast(Union[str, "os.PathLike[str]"], source)
+        with open(path, "rb") as stream:
+            _preflight_zip_stream(stream)
+        return
+
+    read = getattr(source, "read", None)
+    seek = getattr(source, "seek", None)
+    tell = getattr(source, "tell", None)
+    if not callable(read) or not callable(seek) or not callable(tell):
+        # ``ZipFile`` will reject objects that do not implement its stream
+        # protocol before it can parse or allocate central-directory entries.
+        return
+    _preflight_zip_stream(cast(BinaryIO, source))
+
+
+def _preflight_zip_stream(stream: BinaryIO) -> None:
+    try:
+        original_position = stream.tell()
+        stream.seek(0, os.SEEK_END)
+        archive_size_value = cast(object, stream.tell())
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        raise PackageLimitError("ZIP package input must be a seekable binary stream") from exc
+
+    try:
+        if not isinstance(archive_size_value, int) or isinstance(archive_size_value, bool):
+            # Test doubles and invalid stream implementations cannot reach
+            # ZipFile's central-directory parser with this result type.
+            return
+        archive_size = archive_size_value
+        if archive_size > MAX_COMPRESSED_BYTES:
+            raise PackageLimitError(
+                "ZIP package compressed size "
+                f"{archive_size} bytes exceeds the {MAX_COMPRESSED_BYTES}-byte limit"
+            )
+
+        end_offset, end_fields = _find_end_record(stream, archive_size)
+        (
+            _signature,
+            disk_number,
+            central_disk,
+            disk_entries,
+            total_entries,
+            central_size,
+            central_offset,
+            _comment_length,
+        ) = end_fields
+        if disk_number != 0 or central_disk != 0:
+            raise PackageLimitError("multi-disk ZIP packages are not supported")
+
+        zip64_required = (
+            disk_entries == 0xFFFF
+            or total_entries == 0xFFFF
+            or central_size == 0xFFFFFFFF
+            or central_offset == 0xFFFFFFFF
+        )
+        central_end = end_offset
+        if zip64_required:
+            (
+                disk_entries,
+                total_entries,
+                central_size,
+                central_offset,
+                central_end,
+            ) = _read_zip64_end_record(stream, end_offset, end_fields)
+
+        if disk_entries != total_entries:
+            raise PackageLimitError("ZIP central-directory counts disagree across disks")
+        if total_entries > MAX_MEMBER_COUNT:
+            raise PackageLimitError(
+                f"ZIP member count {total_entries} exceeds the "
+                f"{MAX_MEMBER_COUNT}-member limit"
+            )
+        if central_size > MAX_CENTRAL_DIRECTORY_BYTES:
+            raise PackageLimitError(
+                f"ZIP central directory size {central_size} bytes exceeds the "
+                f"{MAX_CENTRAL_DIRECTORY_BYTES}-byte limit"
+            )
+        if central_offset < 0 or central_size < 0:
+            raise PackageLimitError("ZIP central-directory metadata is negative")
+        if central_offset + central_size != central_end:
+            raise PackageLimitError(
+                "ZIP central-directory offset and size do not identify one unambiguous region"
+            )
+        if total_entries == 0 and central_size != 0:
+            raise PackageLimitError("empty ZIP package has a non-empty central directory")
+        if total_entries and central_size < total_entries * _CENTRAL_HEADER.size:
+            raise PackageLimitError("ZIP central directory is too small for its member count")
+
+        _scan_central_directory(
+            stream,
+            central_offset,
+            central_size,
+            total_entries,
+        )
+    finally:
+        with suppress(AttributeError, OSError, TypeError, ValueError):
+            stream.seek(original_position, os.SEEK_SET)
+
+
+def _find_end_record(stream: BinaryIO, archive_size: int) -> Tuple[int, Tuple[int, ...]]:
+    tail_size = min(archive_size, _END_RECORD.size + _MAX_END_COMMENT_BYTES)
+    stream.seek(archive_size - tail_size, os.SEEK_SET)
+    tail = stream.read(tail_size)
+    if len(tail) != tail_size:
+        raise PackageLimitError("ZIP package ends before its declared physical size")
+
+    candidates: List[Tuple[int, Tuple[int, ...]]] = []
+    cursor = 0
+    while True:
+        index = tail.find(_END_RECORD_SIGNATURE, cursor)
+        if index < 0:
+            break
+        cursor = index + 1
+        if index + _END_RECORD.size > len(tail):
+            continue
+        fields = _END_RECORD.unpack_from(tail, index)
+        comment_length = fields[-1]
+        if index + _END_RECORD.size + comment_length == len(tail):
+            candidates.append((archive_size - tail_size + index, fields))
+
+    if not candidates:
+        raise PackageLimitError("ZIP package has no valid end-of-central-directory record")
+    if len(candidates) != 1:
+        raise PackageLimitError("ZIP package has ambiguous end-of-central-directory records")
+    return candidates[0]
+
+
+def _read_zip64_end_record(
+    stream: BinaryIO,
+    end_offset: int,
+    legacy_fields: Tuple[int, ...],
+) -> Tuple[int, int, int, int, int]:
+    locator_offset = end_offset - _ZIP64_LOCATOR.size
+    if locator_offset < 0:
+        raise PackageLimitError("ZIP64 package is missing its locator")
+    stream.seek(locator_offset, os.SEEK_SET)
+    locator_data = stream.read(_ZIP64_LOCATOR.size)
+    if len(locator_data) != _ZIP64_LOCATOR.size:
+        raise PackageLimitError("ZIP64 locator is truncated")
+    signature, record_disk, record_offset, disk_count = _ZIP64_LOCATOR.unpack(locator_data)
+    if signature != _ZIP64_LOCATOR_SIGNATURE:
+        raise PackageLimitError("ZIP64 package is missing its locator")
+    if record_disk != 0 or disk_count != 1:
+        raise PackageLimitError("multi-disk ZIP64 packages are not supported")
+    if record_offset < 0 or record_offset + _ZIP64_END_RECORD.size != locator_offset:
+        raise PackageLimitError("ZIP64 end record has an ambiguous offset or size")
+
+    stream.seek(record_offset, os.SEEK_SET)
+    record_data = stream.read(_ZIP64_END_RECORD.size)
+    if len(record_data) != _ZIP64_END_RECORD.size:
+        raise PackageLimitError("ZIP64 end record is truncated")
+    (
+        signature,
+        record_size,
+        _made_by,
+        _extract_version,
+        disk_number,
+        central_disk,
+        disk_entries,
+        total_entries,
+        central_size,
+        central_offset,
+    ) = _ZIP64_END_RECORD.unpack(record_data)
+    if signature != _ZIP64_END_RECORD_SIGNATURE or record_size != 44:
+        raise PackageLimitError("ZIP64 end record has an unsupported or ambiguous shape")
+    if disk_number != 0 or central_disk != 0 or disk_entries != total_entries:
+        raise PackageLimitError("multi-disk ZIP64 packages are not supported")
+
+    legacy_disk_entries = legacy_fields[3]
+    legacy_total_entries = legacy_fields[4]
+    legacy_central_size = legacy_fields[5]
+    legacy_central_offset = legacy_fields[6]
+    _validate_zip64_legacy_value(legacy_disk_entries, disk_entries, 0xFFFF, "member count")
+    _validate_zip64_legacy_value(legacy_total_entries, total_entries, 0xFFFF, "member count")
+    _validate_zip64_legacy_value(
+        legacy_central_size,
+        central_size,
+        0xFFFFFFFF,
+        "central-directory size",
+    )
+    _validate_zip64_legacy_value(
+        legacy_central_offset,
+        central_offset,
+        0xFFFFFFFF,
+        "central-directory offset",
+    )
+    return disk_entries, total_entries, central_size, central_offset, record_offset
+
+
+def _validate_zip64_legacy_value(
+    legacy: int,
+    actual: int,
+    sentinel: int,
+    label: str,
+) -> None:
+    if legacy != sentinel and legacy != actual:
+        raise PackageLimitError(f"ZIP64 {label} disagrees with the legacy end record")
+
+
+def _scan_central_directory(
+    stream: BinaryIO,
+    central_offset: int,
+    central_size: int,
+    expected_count: int,
+) -> None:
+    cursor = central_offset
+    central_end = central_offset + central_size
+    actual_count = 0
+    while cursor < central_end:
+        if cursor + _CENTRAL_HEADER.size > central_end:
+            raise PackageLimitError("ZIP central directory ends inside a member record")
+        stream.seek(cursor, os.SEEK_SET)
+        header = stream.read(_CENTRAL_HEADER.size)
+        if len(header) != _CENTRAL_HEADER.size:
+            raise PackageLimitError("ZIP central-directory member record is truncated")
+        fields = _CENTRAL_HEADER.unpack(header)
+        if fields[0] != _CENTRAL_HEADER_SIGNATURE:
+            raise PackageLimitError("ZIP central directory contains an unsupported record")
+        name_length, extra_length, comment_length = fields[10:13]
+        if fields[13] != 0:
+            raise PackageLimitError("multi-disk ZIP member records are not supported")
+        record_size = _CENTRAL_HEADER.size + name_length + extra_length + comment_length
+        if cursor + record_size > central_end:
+            raise PackageLimitError("ZIP central-directory member record exceeds its region")
+        cursor += record_size
+        actual_count += 1
+        if actual_count > MAX_MEMBER_COUNT:
+            raise PackageLimitError(
+                f"ZIP member count exceeds the {MAX_MEMBER_COUNT}-member limit"
+            )
+        if actual_count > expected_count:
+            raise PackageLimitError("ZIP central-directory member count exceeds its end record")
+
+    if cursor != central_end or actual_count != expected_count:
+        raise PackageLimitError("ZIP central-directory member count disagrees with its end record")
+
+
+class GuardedZipReader:
+    """Validate and stream every member of an already-open ``ZipFile``.
+
+    Construction fully validates the archive and caches bounded member bytes.
+    This makes ordinary ``Document()`` opens and package-kernel reads share the
+    same validation, including for members not reachable from OPC relationships.
+    """
+
+    def __init__(self, zip_file: ZipFile):
+        self._zip_file = zip_file
+        enforce_compressed_size(zip_file.fp)
+        self._infos = tuple(zip_file.infolist())
+        self._member_limits = {
+            info.filename: _member_limit(info.filename) for info in self._infos
+        }
+        self._validate_metadata()
+        self._parts = self._read_all_members()
+
+    @property
+    def order(self) -> Tuple[str, ...]:
+        """Member names in central-directory order."""
+        return tuple(info.filename for info in self._infos)
+
+    def read(self, name: str) -> bytes:
+        """Return validated bytes for member `name`."""
+        return self._parts[name]
+
+    def read_all(self) -> Tuple[Dict[str, bytes], List[str]]:
+        """Return a copy of validated parts and their archive order."""
+        return dict(self._parts), list(self.order)
+
+    def _validate_metadata(self) -> None:
+        if len(self._infos) > MAX_MEMBER_COUNT:
+            raise PackageLimitError(
+                f"ZIP member count {len(self._infos)} exceeds the {MAX_MEMBER_COUNT}-member limit"
+            )
+
+        seen_names: set[str] = set()
+        seen_equivalent_names: set[str] = set()
+        seen_offsets: set[int] = set()
+        expanded_total = 0
+        for info in self._infos:
+            name = info.orig_filename
+            if name != info.filename:
+                raise PackageLimitError(
+                    f"ZIP member name {name!r} contains a noncanonical NUL suffix"
+                )
+            _validate_member_name(name)
+
+            if name in seen_names:
+                raise PackageLimitError(f"ZIP contains duplicate member name {name!r}")
+            equivalent_name = name.casefold()
+            if equivalent_name in seen_equivalent_names:
+                raise PackageLimitError(f"ZIP contains case-ambiguous member name {name!r}")
+            seen_names.add(name)
+            seen_equivalent_names.add(equivalent_name)
+
+            if info.header_offset < 0 or info.header_offset in seen_offsets:
+                raise PackageLimitError(
+                    f"ZIP member {name!r} has an invalid or shared local-header offset"
+                )
+            seen_offsets.add(info.header_offset)
+
+            if info.flag_bits & (_FLAG_ENCRYPTED | _FLAG_STRONG_ENCRYPTION):
+                raise PackageLimitError(f"ZIP member {name!r} is encrypted")
+            if info.flag_bits & _FLAG_PATCHED_DATA:
+                raise PackageLimitError(
+                    f"ZIP member {name!r} uses unsupported patched-data encoding"
+                )
+            if info.compress_type not in _SUPPORTED_COMPRESSION:
+                raise PackageLimitError(
+                    f"ZIP member {name!r} uses unsupported compression method {info.compress_type}"
+                )
+            if info.is_dir() or info.external_attr & 0x10:
+                raise PackageLimitError(f"ZIP member {name!r} is a directory entry")
+
+            unix_mode = (info.external_attr >> 16) & 0xFFFF
+            file_type = stat.S_IFMT(unix_mode)
+            if file_type not in (0, stat.S_IFREG):
+                raise PackageLimitError(
+                    f"ZIP member {name!r} uses unsupported filesystem entry type"
+                )
+
+            if info.file_size < 0 or info.compress_size < 0:
+                raise PackageLimitError(f"ZIP member {name!r} has a negative size")
+            member_limit = self._limit_for(name)
+            if info.file_size > member_limit:
+                raise PackageLimitError(
+                    f"ZIP member {name!r} expanded size {info.file_size} bytes "
+                    f"exceeds the {member_limit}-byte limit"
+                )
+            expanded_total += info.file_size
+            if expanded_total > MAX_TOTAL_EXPANDED_BYTES:
+                raise PackageLimitError(
+                    f"ZIP total expanded size exceeds the {MAX_TOTAL_EXPANDED_BYTES}-byte limit"
+                )
+            _enforce_ratio(name, info.file_size, info.compress_size)
+            if info.compress_type == ZIP_STORED and info.file_size != info.compress_size:
+                raise PackageLimitError(
+                    f"stored ZIP member {name!r} has inconsistent size metadata"
+                )
+
+    def _read_all_members(self) -> Dict[str, bytes]:
+        if not self._infos:
+            return {}
+        stream = self._zip_file.fp
+        if stream is None:
+            raise PackageLimitError("ZIP package stream is closed")
+
+        start_dir = self._zip_file.start_dir
+        archive_size = compressed_size(stream)
+        if start_dir < 0:
+            raise PackageLimitError("ZIP central-directory offset is invalid")
+        if archive_size is not None and start_dir > archive_size:
+            raise PackageLimitError("ZIP central directory lies beyond the package")
+
+        sorted_infos = sorted(self._infos, key=lambda info: info.header_offset)
+        boundaries = {
+            info.header_offset: (
+                sorted_infos[index + 1].header_offset
+                if index + 1 < len(sorted_infos)
+                else start_dir
+            )
+            for index, info in enumerate(sorted_infos)
+        }
+
+        try:
+            original_position = stream.tell()
+        except (AttributeError, OSError, TypeError, ValueError):
+            original_position = None
+
+        parts: Dict[str, bytes] = {}
+        actual_total = 0
+        try:
+            content_types_info = next(
+                (info for info in self._infos if info.filename == _CONTENT_TYPES_NAME),
+                None,
+            )
+            if content_types_info is not None:
+                data_start = self._validate_local_header(
+                    content_types_info,
+                    boundaries[content_types_info.header_offset],
+                )
+                content_types, actual_total = self._inflate_member(
+                    content_types_info,
+                    data_start,
+                    actual_total,
+                )
+                parts[content_types_info.filename] = content_types
+                self._apply_content_type_limits(content_types)
+                self._validate_declared_member_limits()
+
+            for info in self._infos:
+                if info is content_types_info:
+                    continue
+                data_start = self._validate_local_header(info, boundaries[info.header_offset])
+                blob, actual_total = self._inflate_member(info, data_start, actual_total)
+                parts[info.filename] = blob
+        finally:
+            if original_position is not None:
+                with suppress(AttributeError, OSError, TypeError, ValueError):
+                    stream.seek(original_position, os.SEEK_SET)
+        return parts
+
+    def _apply_content_type_limits(self, content_types: bytes) -> None:
+        defaults, overrides = _parse_content_types(content_types)
+        for info in self._infos:
+            name = info.filename
+            content_type = overrides.get(f"/{name}".casefold())
+            if content_type is None and "." in name.rsplit("/", 1)[-1]:
+                extension = name.rsplit(".", 1)[-1].lower()
+                content_type = defaults.get(extension)
+            if content_type is not None and _is_xml_content_type(content_type):
+                self._member_limits[name] = MAX_XML_MEMBER_BYTES
+
+    def _validate_declared_member_limits(self) -> None:
+        for info in self._infos:
+            member_limit = self._limit_for(info.filename)
+            if info.file_size > member_limit:
+                raise PackageLimitError(
+                    f"ZIP member {info.filename!r} expanded size {info.file_size} bytes "
+                    f"exceeds the {member_limit}-byte limit"
+                )
+
+    def _limit_for(self, name: str) -> int:
+        return self._member_limits[name]
+
+    def _validate_local_header(self, info: ZipInfo, boundary: int) -> int:
+        stream = self._zip_file.fp
+        if stream is None:
+            raise PackageLimitError("ZIP package stream is closed")
+        if info.header_offset + _LOCAL_HEADER.size > boundary:
+            raise PackageLimitError(f"ZIP member {info.filename!r} has an overlapping header")
+
+        stream.seek(info.header_offset, os.SEEK_SET)
+        header = stream.read(_LOCAL_HEADER.size)
+        if len(header) != _LOCAL_HEADER.size:
+            raise PackageLimitError(f"ZIP member {info.filename!r} has a truncated header")
+        (
+            signature,
+            _extract_version,
+            flags,
+            compression,
+            _mod_time,
+            _mod_date,
+            crc,
+            compressed,
+            expanded,
+            name_length,
+            extra_length,
+        ) = _LOCAL_HEADER.unpack(header)
+        if signature != _LOCAL_HEADER_SIGNATURE:
+            raise PackageLimitError(f"ZIP member {info.filename!r} has an invalid header")
+        if flags != info.flag_bits or compression != info.compress_type:
+            raise PackageLimitError(
+                f"ZIP member {info.filename!r} has inconsistent local-header metadata"
+            )
+
+        raw_name = stream.read(name_length)
+        if len(raw_name) != name_length:
+            raise PackageLimitError(f"ZIP member {info.filename!r} has a truncated name")
+        try:
+            local_name = raw_name.decode(
+                "utf-8"
+                if flags & _FLAG_UTF8_NAME
+                else (getattr(self._zip_file, "metadata_encoding", None) or "cp437")
+            )
+        except UnicodeDecodeError as exc:
+            raise PackageLimitError(
+                f"ZIP member {info.filename!r} has an invalid encoded name"
+            ) from exc
+        if local_name != info.orig_filename:
+            raise PackageLimitError(
+                f"ZIP member {info.filename!r} has conflicting local and central names"
+            )
+
+        if flags & _FLAG_DATA_DESCRIPTOR:
+            valid_crc = crc in (0, info.CRC)
+            valid_compressed = compressed in (0, info.compress_size, 0xFFFFFFFF)
+            valid_expanded = expanded in (0, info.file_size, 0xFFFFFFFF)
+        else:
+            valid_crc = crc == info.CRC
+            valid_compressed = compressed in (info.compress_size, 0xFFFFFFFF)
+            valid_expanded = expanded in (info.file_size, 0xFFFFFFFF)
+        if not (valid_crc and valid_compressed and valid_expanded):
+            raise PackageLimitError(
+                f"ZIP member {info.filename!r} has inconsistent local size or CRC metadata"
+            )
+
+        data_start = info.header_offset + _LOCAL_HEADER.size + name_length + extra_length
+        data_end = data_start + info.compress_size
+        if data_start > boundary or data_end > boundary:
+            raise PackageLimitError(f"ZIP member {info.filename!r} overlaps another ZIP record")
+        self._validate_data_descriptor(info, data_end, boundary)
+        return data_start
+
+    def _validate_data_descriptor(self, info: ZipInfo, data_end: int, boundary: int) -> None:
+        stream = self._zip_file.fp
+        if stream is None:
+            raise PackageLimitError("ZIP package stream is closed")
+        descriptor_size = boundary - data_end
+        if not info.flag_bits & _FLAG_DATA_DESCRIPTOR:
+            if descriptor_size:
+                raise PackageLimitError(
+                    f"ZIP member {info.filename!r} has undeclared trailing data"
+                )
+            return
+        if descriptor_size not in (12, 16, 20, 24):
+            raise PackageLimitError(f"ZIP member {info.filename!r} has an invalid data descriptor")
+
+        stream.seek(data_end, os.SEEK_SET)
+        descriptor = stream.read(descriptor_size)
+        if len(descriptor) != descriptor_size:
+            raise PackageLimitError(f"ZIP member {info.filename!r} has a truncated data descriptor")
+        has_signature = descriptor_size in (16, 24)
+        if has_signature:
+            if descriptor[:4] != b"PK\x07\x08":
+                raise PackageLimitError(
+                    f"ZIP member {info.filename!r} has an invalid data descriptor"
+                )
+            descriptor = descriptor[4:]
+        if len(descriptor) == 12:
+            crc, compressed, expanded = struct.unpack("<III", descriptor)
+        else:
+            crc, compressed, expanded = struct.unpack("<IQQ", descriptor)
+        if (crc, compressed, expanded) != (
+            info.CRC,
+            info.compress_size,
+            info.file_size,
+        ):
+            raise PackageLimitError(
+                f"ZIP member {info.filename!r} has inconsistent data-descriptor metadata"
+            )
+
+    def _inflate_member(
+        self, info: ZipInfo, data_start: int, actual_total: int
+    ) -> Tuple[bytes, int]:
+        stream = self._zip_file.fp
+        if stream is None:
+            raise PackageLimitError("ZIP package stream is closed")
+        stream.seek(data_start, os.SEEK_SET)
+
+        chunks: List[bytes] = []
+        actual_size = 0
+        crc = 0
+        member_limit = self._limit_for(info.filename)
+
+        def consume(data: bytes) -> None:
+            nonlocal actual_size, actual_total, crc
+            if not data:
+                return
+            actual_size += len(data)
+            actual_total += len(data)
+            if actual_size > member_limit:
+                raise PackageLimitError(
+                    f"ZIP member {info.filename!r} actual expanded size exceeds the "
+                    f"{member_limit}-byte limit"
+                )
+            if actual_total > MAX_TOTAL_EXPANDED_BYTES:
+                raise PackageLimitError(
+                    "ZIP actual total expanded size exceeds the "
+                    f"{MAX_TOTAL_EXPANDED_BYTES}-byte limit"
+                )
+            _enforce_ratio(info.filename, actual_size, info.compress_size, actual=True)
+            crc = zlib.crc32(data, crc)
+            chunks.append(data)
+
+        remaining = info.compress_size
+        if info.compress_type == ZIP_STORED:
+            while remaining:
+                raw = stream.read(min(_READ_CHUNK_BYTES, remaining))
+                if not raw:
+                    raise PackageLimitError(
+                        f"ZIP member {info.filename!r} has truncated stored data"
+                    )
+                remaining -= len(raw)
+                consume(raw)
+        else:
+            decompressor = zlib.decompressobj(-zlib.MAX_WBITS)
+            try:
+                while remaining:
+                    raw = stream.read(min(_READ_CHUNK_BYTES, remaining))
+                    if not raw:
+                        raise PackageLimitError(
+                            f"ZIP member {info.filename!r} has truncated compressed data"
+                        )
+                    remaining -= len(raw)
+                    pending = raw
+                    while pending:
+                        if decompressor.eof:
+                            raise PackageLimitError(
+                                f"ZIP member {info.filename!r} has trailing compressed data"
+                            )
+                        output = decompressor.decompress(
+                            pending,
+                            self._next_output_size(member_limit, actual_size, actual_total),
+                        )
+                        pending = decompressor.unconsumed_tail
+                        consume(output)
+                        if decompressor.unused_data:
+                            raise PackageLimitError(
+                                f"ZIP member {info.filename!r} has trailing compressed data"
+                            )
+
+                while not decompressor.eof:
+                    output = decompressor.decompress(
+                        b"", self._next_output_size(member_limit, actual_size, actual_total)
+                    )
+                    consume(output)
+                    if not output:
+                        break
+            except zlib.error as exc:
+                raise PackageLimitError(
+                    f"ZIP member {info.filename!r} has invalid deflate data"
+                ) from exc
+            if not decompressor.eof:
+                raise PackageLimitError(
+                    f"ZIP member {info.filename!r} compressed data ends before deflate EOF"
+                )
+
+        if actual_size != info.file_size:
+            raise PackageLimitError(
+                f"ZIP member {info.filename!r} actual expanded size {actual_size} bytes "
+                f"does not match declared size {info.file_size} bytes"
+            )
+        if crc & 0xFFFFFFFF != info.CRC:
+            raise PackageLimitError(f"ZIP member {info.filename!r} fails its CRC check")
+        return b"".join(chunks), actual_total
+
+    @staticmethod
+    def _next_output_size(member_limit: int, member_size: int, total_size: int) -> int:
+        member_remaining = member_limit - member_size + 1
+        total_remaining = MAX_TOTAL_EXPANDED_BYTES - total_size + 1
+        return max(1, min(_READ_CHUNK_BYTES, member_remaining, total_remaining))
+
+
+def _parse_content_types(data: bytes) -> Tuple[Dict[str, str], Dict[str, str]]:
+    try:
+        root = etree.fromstring(data, _CONTENT_TYPES_PARSER)
+    except etree.XMLSyntaxError as exc:
+        raise PackageLimitError("[Content_Types].xml is malformed") from exc
+    docinfo = root.getroottree().docinfo
+    if docinfo.doctype or docinfo.internalDTD is not None:
+        raise PackageLimitError("[Content_Types].xml contains a prohibited DTD")
+    if root.tag != _CONTENT_TYPES_TAG:
+        raise PackageLimitError("[Content_Types].xml has an unexpected root element")
+
+    defaults: Dict[str, str] = {}
+    overrides: Dict[str, str] = {}
+    for element in root:
+        if not isinstance(element.tag, str):
+            continue
+        if element.tag == _DEFAULT_TAG:
+            extension = element.get("Extension")
+            content_type = element.get("ContentType")
+            if (
+                not extension
+                or "." in extension
+                or "/" in extension
+                or extension != extension.strip()
+                or not content_type
+                or content_type != content_type.strip()
+            ):
+                raise PackageLimitError(
+                    "[Content_Types].xml contains an invalid Default declaration"
+                )
+            key = extension.lower()
+            if key in defaults:
+                raise PackageLimitError(
+                    "[Content_Types].xml contains an ambiguous Default declaration"
+                )
+            defaults[key] = content_type
+            continue
+        if element.tag == _OVERRIDE_TAG:
+            part_name = element.get("PartName")
+            content_type = element.get("ContentType")
+            if (
+                not part_name
+                or not part_name.startswith("/")
+                or part_name == "/"
+                or part_name != part_name.strip()
+                or not content_type
+                or content_type != content_type.strip()
+            ):
+                raise PackageLimitError(
+                    "[Content_Types].xml contains an invalid Override declaration"
+                )
+            key = part_name.casefold()
+            if key in overrides:
+                raise PackageLimitError(
+                    "[Content_Types].xml contains an ambiguous Override declaration"
+                )
+            overrides[key] = content_type
+            continue
+        raise PackageLimitError(
+            "[Content_Types].xml contains an unsupported declaration"
+        )
+    return defaults, overrides
+
+
+def _is_xml_content_type(content_type: str) -> bool:
+    media_type = content_type.partition(";")[0].strip().lower()
+    return media_type in ("application/xml", "text/xml") or media_type.endswith("+xml")
+
+
+def _member_limit(name: str) -> int:
+    lower_name = name.lower()
+    if lower_name.endswith(".xml") or lower_name.endswith(".rels"):
+        return MAX_XML_MEMBER_BYTES
+    return MAX_BINARY_MEMBER_BYTES
+
+
+def _enforce_ratio(name: str, expanded: int, compressed: int, *, actual: bool = False) -> None:
+    if expanded == 0:
+        return
+    if compressed <= 0 or expanded > compressed * MAX_COMPRESSION_RATIO:
+        qualifier = "actual " if actual else ""
+        raise PackageLimitError(
+            f"ZIP member {name!r} {qualifier}compression ratio exceeds "
+            f"the {MAX_COMPRESSION_RATIO}:1 limit"
+        )
+
+
+def _validate_member_name(name: str) -> None:
+    if not name:
+        raise PackageLimitError("ZIP contains an empty member name")
+    if name != unicodedata.normalize("NFC", name):
+        raise PackageLimitError(f"ZIP member name {name!r} is not Unicode-normalized")
+    if name.startswith("/") or name.endswith("/") or "\\" in name:
+        raise PackageLimitError(f"ZIP member name {name!r} is noncanonical")
+    if "?" in name or "#" in name:
+        raise PackageLimitError(f"ZIP member name {name!r} contains a URI query or fragment")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in name):
+        raise PackageLimitError(f"ZIP member name {name!r} contains a control character")
+
+    segments = name.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        raise PackageLimitError(f"ZIP member name {name!r} has a noncanonical path segment")
+    first_segment = segments[0]
+    if len(first_segment) >= 2 and first_segment[0].isalpha() and first_segment[1] == ":":
+        raise PackageLimitError(f"ZIP member name {name!r} has a drive-qualified path")
+
+    index = 0
+    while index < len(name):
+        if name[index] != "%":
+            index += 1
+            continue
+        if index + 2 >= len(name) or any(
+            char not in _HEX_DIGITS for char in name[index + 1 : index + 3]
+        ):
+            raise PackageLimitError(f"ZIP member name {name!r} has a noncanonical percent escape")
+        value = int(name[index + 1 : index + 3], 16)
+        if value in _URI_UNRESERVED or value in (0x00, 0x2F, 0x5C, 0x7F) or value < 0x20:
+            raise PackageLimitError(f"ZIP member name {name!r} has an unsafe percent escape")
+        index += 3

@@ -31,7 +31,7 @@ DEFAULT_BULLET_HANGING_INDENT = Emu(171450)
 
 
 def _require_xml_encodable(value: str, name: str) -> None:
-    """Raise |ValueError| when `value` cannot be written into XML (e.g. lone surrogates).
+    """Raise |ValueError| when `value` cannot be represented in XML 1.0.
 
     Part of validate-fully-then-mutate: a string that passes isinstance checks but explodes
     at serialization time would otherwise leave a half-mutated tree behind.
@@ -40,6 +40,16 @@ def _require_xml_encodable(value: str, name: str) -> None:
         value.encode("utf-8")
     except UnicodeEncodeError:
         raise ValueError("%s contains characters not encodable in XML: %r" % (name, value))
+    if any(
+        not (
+            ch in "\t\n\r"
+            or "\x20" <= ch <= "\ud7ff"
+            or "\ue000" <= ch <= "\ufffd"
+            or "\U00010000" <= ch <= "\U0010ffff"
+        )
+        for ch in value
+    ):
+        raise ValueError("%s contains characters not permitted in XML 1.0: %r" % (name, value))
 
 
 class BulletFormat(object):

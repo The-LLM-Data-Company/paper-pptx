@@ -195,7 +195,9 @@ def _validate_find_replace(find, replace) -> None:
 
 def _iter_story_trees(prs, include_notes) -> "Iterator[Tuple[str, object]]":
     """Yield (partname, spTree) for every slide (and notes slide when asked), deck order."""
-    for slide in prs.slides:
+    from pptx.errors import materialize_slides
+
+    for slide in materialize_slides(prs, "replace_text"):
         yield str(slide.part.partname), slide._element.spTree
         if include_notes and slide.has_notes_slide:
             notes_part = slide.part.part_related_by(

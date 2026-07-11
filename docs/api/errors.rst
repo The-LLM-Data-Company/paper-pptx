@@ -17,6 +17,9 @@ python-pptx.
 .. autoexception:: PaperRefusal
    :show-inheritance:
 
+.. autoexception:: PackageLimitError
+   :show-inheritance:
+
 .. autoexception:: AmbiguousTargetError
    :show-inheritance:
 

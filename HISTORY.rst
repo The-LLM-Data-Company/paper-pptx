@@ -3,6 +3,19 @@
 Release History
 ---------------
 
+paper-pptx 0.1.1 (unreleased)
+++++++++++++++++++++++++++++++++
+
+- Add bounded, unambiguous ZIP intake and atomic ordinary path saves.
+- Harden composition, formatting resolution, package diffing, and stale-proxy handling.
+- Add an install doctor, reproducible release artifacts, and a full required CI gate.
+
+paper-pptx 0.1.0 (2026-07-10)
+++++++++++++++++++++++++++++++++
+
+- Initial paper-pptx release, based on python-pptx 1.0.2.
+- Add safe inspection, editing, composition, scrubbing, and deck-diff APIs.
+
 1.0.2 (2024-08-07)
 ++++++++++++++++++
 

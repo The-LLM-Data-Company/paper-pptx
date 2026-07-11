@@ -13,13 +13,13 @@ Orphans - source placeholders with no destination match - follow `orphan_policy`
 "refuse" (default; typed, atomic) or "bake": the placeholder becomes a free shape with
 its effective formatting written explicitly (geometry materialized from inheritance, each
 run's resolved size/name/color/emphasis made local) so the text keeps its look without a
-binding. Bake never copies merge-of-inheritance guesses: only values the resolver actually
-resolved are baked; unresolved values are left as-is and still show up in the report if
-their resolution shifted.
+binding. Bake writes only values the resolver can localize exactly. Color-transform
+recipes are preserved; unsupported script-specific formatting refuses before mutation.
 """
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -192,31 +192,55 @@ def rebind_layout(
                 "placeholder %r has no resolvable geometry (no a:xfrm anywhere in its "
                 "inheritance chain); baking would place it unpredictably" % shape.name
             )
+        if shape.has_text_frame:
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    effective = run.effective_font()
+                    unsafe_name = any(
+                        "non-Latin" in step.detail for step in effective.name.provenance
+                    )
+                    unsafe_color = any(
+                        "unapplied transforms" in step.detail
+                        for step in effective.color_rgb.provenance
+                    ) and effective.color_rgb.bake_color_xml is None
+                    if unsafe_name or unsafe_color:
+                        raise UnsupportedStructureError(
+                            "placeholder %r has unresolved text formatting; baking would "
+                            "change its appearance" % shape.name
+                        )
 
     before_state = _resolution_state(slide)
-
-    # -- mutate: bake orphans first (they must resolve under the SOURCE layout) -----------
-    baked_names = []
-    for shape in orphan_shapes:
-        _bake_placeholder(shape)
-        baked_names.append(shape.name)
-
-    for shape in slide_phs:
-        target = mapping[source_idx_of[id(shape)]]
-        if target is None:
-            continue  # -- already baked to a free shape above
-        target_type, target_idx = target
-        ph = shape.element.ph
-        ph.type = target_type
-        ph.idx = target_idx
-
     slide_part = slide.part
-    for rId, rel in list(slide_part.rels.items()):
-        if not rel.is_external and rel.reltype == RT.SLIDE_LAYOUT:
-            slide_part.drop_rel(rId)
-    slide_part.relate_to(target_layout.part, RT.SLIDE_LAYOUT)
+    element_snapshot = copy.deepcopy(slide._element)
+    rels_snapshot = dict(slide_part.rels._rels)
 
-    after_state = _resolution_state(slide)
+    try:
+        # -- mutate: bake orphans first (they must resolve under the SOURCE layout) --------
+        baked_names = []
+        for shape in orphan_shapes:
+            _bake_placeholder(shape)
+            baked_names.append(shape.name)
+
+        for shape in slide_phs:
+            target = mapping[source_idx_of[id(shape)]]
+            if target is None:
+                continue  # -- already baked to a free shape above
+            target_type, target_idx = target
+            ph = shape.element.ph
+            ph.type = target_type
+            ph.idx = target_idx
+
+        for rId, rel in list(slide_part.rels.items()):
+            if not rel.is_external and rel.reltype == RT.SLIDE_LAYOUT:
+                slide_part.drop_rel(rId)
+        slide_part.relate_to(target_layout.part, RT.SLIDE_LAYOUT)
+
+        after_state = _resolution_state(slide)
+    except BaseException:
+        _restore_element(slide._element, element_snapshot)
+        slide_part.rels._rels.clear()
+        slide_part.rels._rels.update(rels_snapshot)
+        raise
 
     return RebindReport(
         source_layout=str(source_layout.part.partname),
@@ -408,6 +432,15 @@ def _bake_placeholder(shape) -> None:
                     from pptx.dml.color import RGBColor
 
                     run.font.color.rgb = RGBColor.from_string(effective.color_rgb.value)
+                elif effective.color_rgb.bake_color_xml is not None:
+                    from pptx.dml.color import RGBColor
+                    from pptx.oxml import parse_xml
+
+                    color = parse_xml(effective.color_rgb.bake_color_xml)
+                    run.font.color.rgb = RGBColor.from_string(color.get("val"))
+                    target = run._r.get_or_add_rPr().find(qn("a:solidFill"))[0]
+                    for transform in color:
+                        target.append(copy.deepcopy(transform))
                 for emphasis in ("bold", "italic"):
                     effective_value = getattr(effective, emphasis)
                     if (
@@ -430,3 +463,15 @@ def _bake_placeholder(shape) -> None:
 
     ph = shape.element.ph
     ph.getparent().remove(ph)
+
+
+def _restore_element(target, snapshot) -> None:
+    """Restore `target` in place so existing slide proxies remain usable."""
+    target.attrib.clear()
+    target.attrib.update(snapshot.attrib)
+    target.text = snapshot.text
+    target.tail = snapshot.tail
+    for child in list(target):
+        target.remove(child)
+    for child in snapshot:
+        target.append(copy.deepcopy(child))

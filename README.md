@@ -50,6 +50,11 @@ it raises a typed `PaperRefusal` from `pptx.errors` and leaves the document byte
 unchanged in memory and on disk. Callers can catch `PaperRefusal` separately from programmer
 errors, which remain plain `ValueError` or `TypeError`.
 
+Package intake rejects duplicate, noncanonical, encrypted, unsupported, or resource-exhausting
+ZIP members before parsing XML. Saving to a filesystem path writes a sibling temporary package
+and atomically replaces the destination only after the ZIP is complete, preserving an existing
+destination's permission bits.
+
 ## Example
 
 Import a slide from one deck into another, then confirm the change with an independent diff:
@@ -85,7 +90,7 @@ preserves the millions of existing snippets and model priors that use
 
 - GitHub repository / PyPI distribution: **`paper-pptx`**
 - Python import: **`pptx`**
-- Fork sentinel: `pptx.__paper_version__ = "0.1.0"`
+- Fork sentinel: `pptx.__paper_version__ = "0.1.1"`
 - Upstream base: python-pptx `v1.0.2` (git tag `paper-base`)
 
 New upstream releases are merged, never rebased, so the fork retains its history and
@@ -99,10 +104,18 @@ Install from PyPI:
 pip install paper-pptx
 ```
 
+`paper-pptx` and `python-pptx` both install the `pptx` import package and cannot safely
+coexist. Replace an upstream installation explicitly:
+
+```bash
+pip uninstall -y python-pptx paper-pptx
+pip install paper-pptx
+```
+
 Verify the install:
 
 ```bash
-python -c "import pptx; print(pptx.__paper_version__)"
+paper-pptx-doctor
 ```
 
 ## Documentation
@@ -116,11 +129,12 @@ inherited from python-pptx and covers the shared foundation.
 
 - Upstream's pytest and behave suites run on every change to check compatibility with existing
   behavior.
-- A frozen, hash-pinned fixture corpus under `tests/paper/fixtures/` includes files from real
-  third-party producers, with provenance labels, rather than only self-generated fixtures.
+- A frozen, hash-pinned fixture corpus includes self-generated decks and LibreOffice round-trips
+  with hash-pinned provenance sidecars. PowerPoint- and Google-authored fixtures are still
+  pending.
 - The contract harness saves and reopens before asserting, enforces an exact changed-part budget
-  and refusal atomicity, runs a headless LibreOffice load smoke, and validates every emitted XML
-  fragment against its schema.
+  and refusal atomicity, and validates selected paragraph, text-body, and table fragments against
+  their schemas. Release verification installs LibreOffice and requires its load smoke.
 
 ## License
 

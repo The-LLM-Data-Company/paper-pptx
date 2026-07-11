@@ -17,6 +17,8 @@ an *inheritance-reconciliation* problem with three explicit modes:
 The source presentation remains unchanged. Charts travel with their embedded workbooks, media is
 always copied across packages, and relationships that cannot be resolved refuse
 (|RelationshipPolicyError|).
+Source and destination slide dimensions must match exactly. Import refuses rather than silently
+rescaling or clipping content.
 
 The entry points are methods on |Presentation|; see :meth:`.Presentation.import_slide` and
 :meth:`.Presentation.append_deck`. This page documents the report they return.

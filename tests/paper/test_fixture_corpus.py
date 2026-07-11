@@ -45,7 +45,7 @@ def _ground_truth(relpath):
 
 
 def test_manifest_lists_exactly_the_fixture_files():
-    assert sorted(corpus.manifest_entries()) == ALL_RELPATHS, (
+    assert sorted(corpus.manifest_entries()) == corpus.iter_manifest_relpaths(), (
         "MANIFEST.sha256 out of sync with the fixture files on disk"
     )
 
@@ -55,13 +55,13 @@ def test_every_fixture_lives_in_a_known_provenance_bucket():
     assert not unknown, "fixtures outside the pinned provenance buckets: %r" % unknown
 
 
-@pytest.mark.parametrize("relpath", ALL_RELPATHS)
+@pytest.mark.parametrize("relpath", corpus.iter_manifest_relpaths())
 def test_fixture_hash_matches_manifest(relpath):
     expected = corpus.manifest_entries()[relpath]
     actual = corpus.sha256_of(corpus.fixture_path(relpath))
     assert actual == expected, (
-        "fixture %s hash changed; fixtures are frozen - a changed fixture requires a new "
-        "manifest entry and sidecar in a reviewed PR" % relpath
+        "fixture file %s hash changed; fixture binaries and sidecars are frozen and require "
+        "a reviewed manifest update" % relpath
     )
 
 

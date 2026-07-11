@@ -109,6 +109,22 @@ def test_delete_refuses_foreign_and_grouped_shapes_atomically():
     )
 
 
+def test_delete_refuses_dangling_shape_relationship_before_removal():
+    from pptx.errors import UnsupportedStructureError
+    from pptx.oxml.ns import qn
+
+    prs = _open(GAUNTLET)
+    shape = prs.slides[0].shapes[0]
+    shape._element.set(qn("r:id"), "rId404")
+
+    raised = assert_refusal_atomic(
+        prs,
+        lambda p: p.slides[0].shapes.delete(shape),
+        UnsupportedStructureError,
+    )
+    assert "rId404" in str(raised)
+
+
 # ------------------------------------------------------------------------------------- move
 
 
@@ -291,6 +307,16 @@ def test_chart_by_name_is_group_aware_since_v01():
     group._element.append(chart_frame._element)  # -- move the chart into the group
     chart = prs.slides[0].shapes.chart_by_name("clone_fixture_chart")
     assert [series.name for series in chart.series] == ["Q1", "Q2"]
+
+
+def test_add_copy_refuses_a_deleted_shape_proxy():
+    prs = _open("self_generated/minimal_clean.pptx")
+    slide = prs.slides[0]
+    shape = slide.shapes[0]
+    slide.shapes.delete(shape)
+
+    with pytest.raises(TargetNotFoundError, match="stale"):
+        slide.shapes.add_copy(shape)
 
 
 # ------------------------------------------------------------------------------- lo_smoke

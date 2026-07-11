@@ -215,6 +215,49 @@ def test_lone_surrogate_strings_are_rejected_before_any_mutation():
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
 
 
+@pytest.mark.parametrize(
+    ("categories", "series", "number_format"),
+    [
+        (["bad\x01category"], [("name", (1,))], None),
+        (["category"], [("bad\x01name", (1,))], None),
+        (["category"], [("name", (1,))], "bad\x01format"),
+    ],
+)
+def test_xml_1_0_control_characters_are_rejected_before_mutation(
+    categories, series, number_format
+):
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    before = save_to_bytes(prs)
+    with pytest.raises(ValueError, match="XML 1.0"):
+        chart.replace_data_safe(categories, series, number_format=number_format)
+    assert_changed_parts(before, save_to_bytes(prs))
+
+
+def test_excel_series_capacity_is_rejected_before_mutation():
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    before = save_to_bytes(prs)
+    too_many = [("s%d" % idx, (idx,)) for idx in range(16_384)]
+    with pytest.raises(ValueError, match="data-column limit"):
+        chart.replace_data_safe(["category"], too_many)
+    assert_changed_parts(before, save_to_bytes(prs))
+
+
+def test_workbook_commit_failure_rolls_chart_and_workbook_back(monkeypatch):
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    before = save_to_bytes(prs)
+
+    def fail_update(self, blob):
+        raise RuntimeError("forced workbook failure")
+
+    monkeypatch.setattr(type(chart._workbook), "update_from_xlsx_blob", fail_update)
+    with pytest.raises(RuntimeError, match="forced workbook failure"):
+        chart.replace_data_safe(["x"], [("series", (1,))])
+    assert_changed_parts(before, save_to_bytes(prs))
+
+
 def test_default_number_format_path_round_trips():
     prs = _open(CHART_NOTES)
     chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
