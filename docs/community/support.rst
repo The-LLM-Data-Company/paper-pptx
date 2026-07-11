@@ -1,16 +1,11 @@
 Support
 =======
 
-We'd love to hear from you if you like |pp|, want a new feature, find a bug,
-need help using it, or just have a word of encouragement.
+Use the paper-pptx issue tracker for bugs, compatibility reports, and feature requests.
 
-The **mailing list** for |pp| is python-pptx@googlegroups.com
+Questions about inherited python-pptx behavior can still use the upstream project resources.
 
-The **issue tracker** is on github at `scanny/python-pptx`_.
+The **paper-pptx issue tracker** is on GitHub at `paper-pptx issues`_.
 
-Feature requests are best broached initially on the mailing list, they can be
-added to the issue tracker once we've clarified the best approach,
-particularly the appropriate API signature.
-
-.. _`scanny/python-pptx`:
-   https://github.com/scanny/python-pptx
+.. _`paper-pptx issues`:
+   https://github.com/The-LLM-Data-Company/paper-pptx/issues

@@ -8,6 +8,7 @@ vs diff of input/output) live with the standing eval jobs in test_walkthrough_*.
 
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
@@ -105,6 +106,27 @@ def test_diff_is_deterministic_across_runs():
     assert first == second
 
 
+def test_package_changes_make_metadata_only_edit_nonempty():
+    changed = Presentation(_path("self_generated/minimal_clean.pptx"))
+    changed.core_properties.author = "Different author"
+    report = diff_decks(_path("self_generated/minimal_clean.pptx"), changed, detail="full")
+    assert not report.is_empty
+    assert [delta.partname for delta in report.package_changes] == [
+        "/docProps/core.xml"
+    ]
+
+
+def test_package_changes_make_z_order_only_edit_nonempty():
+    changed = Presentation(_path("self_generated/gauntlet.pptx"))
+    slide = changed.slides[2]
+    slide.shapes.move(slide.shapes[0], len(slide.shapes) - 1)
+    report = diff_decks(_path("self_generated/gauntlet.pptx"), changed, detail="full")
+    assert not report.is_empty
+    assert "/ppt/slides/slide3.xml" in {
+        delta.partname for delta in report.package_changes
+    }
+
+
 # ------------------------------------------------------------------------------ detail levels
 
 
@@ -196,6 +218,28 @@ def test_unnamed_shape_fallback_keys_are_deterministic():
         report = diff_decks(_path("self_generated/minimal_clean.pptx"), str(out))
     change = report.slide_changes[0]
     assert set(change.shapes_added) == {"sp#2", "sp#3"}  # -- synthetic keys, stable
+
+
+def test_user_shape_name_cannot_collide_with_a_fallback_key():
+    base = Presentation(_path("self_generated/minimal_clean.pptx"))
+    slide = base.slides[0]
+    named = slide.shapes.add_textbox(0, 0, 914400, 914400)
+    named.name = "sp#1"
+    for left in (914400, 1828800):
+        duplicate = slide.shapes.add_textbox(left, 0, 914400, 914400)
+        duplicate.name = "Duplicate"
+    stream = io.BytesIO()
+    base.save(stream)
+    changed = Presentation(io.BytesIO(stream.getvalue()))
+    changed.slides[0].shapes.shape_by_name("sp#1").left += 100
+
+    report = diff_decks(base, changed)
+    geometry = [
+        delta
+        for change in report.slide_changes
+        for delta in change.geometry_changes
+    ]
+    assert any(delta["shape"] == "sp#1" for delta in geometry)
 
 
 # ------------------------------------------------------------- regressions

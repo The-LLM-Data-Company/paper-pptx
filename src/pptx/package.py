@@ -232,6 +232,7 @@ class _MediaParts(object):
 
 import io as _io  # noqa: E402
 import os as _os  # noqa: E402
+import stat as _stat  # noqa: E402
 import tempfile as _tempfile  # noqa: E402
 import zipfile as _zipfile  # noqa: E402
 from dataclasses import dataclass as _dataclass  # noqa: E402
@@ -499,11 +500,23 @@ def _atomic_write_bytes(data: bytes, out_path: str) -> None:
 
 def _atomic_write(write, out_path: str) -> None:
     """Run `write(file_handle)` against a temp file, then move it into place atomically."""
-    out_dir = _os.path.dirname(_os.path.abspath(str(out_path)))
+    destination = _os.path.abspath(str(out_path))
+    out_dir = _os.path.dirname(destination)
+    existing_mode = (
+        _stat.S_IMODE(_os.stat(destination).st_mode) if _os.path.exists(destination) else None
+    )
     fd, temp_path = _tempfile.mkstemp(suffix=".pptx.partial", dir=out_dir)
     try:
         with _os.fdopen(fd, "wb") as handle:
             write(handle)
+        if existing_mode is not None:
+            _os.chmod(temp_path, existing_mode)
+        else:
+            # -- mkstemp creates 0600; a NEW destination must get the mode a plain
+            # -- open() would have given it, or downstream readers lose access
+            active_umask = _os.umask(0)
+            _os.umask(active_umask)
+            _os.chmod(temp_path, 0o666 & ~active_umask)
         _os.replace(temp_path, str(out_path))
     except BaseException:
         if _os.path.exists(temp_path):

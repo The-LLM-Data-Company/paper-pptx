@@ -15,6 +15,7 @@ from lxml import etree
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.errors import UnsupportedStructureError
 from pptx.inspect import content_hash, effective_font, inspect_text
 from pptx.util import Emu
@@ -143,6 +144,24 @@ def test_direct_srgb_color_supplies_immediately():
     assert _supplied_levels(font.color_rgb) == ["run rPr"]
 
 
+@pytest.mark.parametrize("color_tag", ["srgbClr", "schemeClr"])
+def test_transformed_color_is_unresolved_instead_of_reporting_base_rgb(color_tag):
+    prs = _open("self_generated/minimal_clean.pptx")
+    box = prs.slides[0].shapes.add_textbox(0, 0, 914400, 914400)
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text = "transformed"
+    rPr = run._r.get_or_add_rPr()
+    solidFill = etree.SubElement(rPr, "{%s}solidFill" % _A)
+    color = etree.SubElement(solidFill, "{%s}%s" % (_A, color_tag))
+    color.set("val", "804020" if color_tag == "srgbClr" else "accent1")
+    etree.SubElement(color, "{%s}lumMod" % _A).set("val", "50000")
+
+    effective = run.effective_font().color_rgb
+    assert not effective.resolved
+    assert effective.value is None
+    assert any("unapplied transforms" in step.detail for step in effective.provenance)
+
+
 # ----------------------------------------------------- non-placeholder + honesty cases
 
 
@@ -157,6 +176,30 @@ def test_plain_textbox_resolves_via_presentation_default_text_style():
         "000000",
     )
     assert _supplied_levels(font.size) == ["presentation defaultTextStyle lvl1"]
+
+
+def test_autoshape_fontref_supplies_theme_font_and_text_color():
+    prs = _open("self_generated/minimal_clean.pptx")
+    shape = prs.slides[0].shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, 914400, 914400)
+    shape.text = "font ref"
+    font = shape.text_frame.paragraphs[0].runs[0].effective_font()
+    assert font.name.value == "Calibri"
+    assert font.color_rgb.value == "FFFFFF"
+    assert "shape fontRef" in [step.level for step in font.name.provenance]
+
+
+def test_non_latin_run_does_not_report_the_latin_typeface_as_effective():
+    prs = _open("self_generated/minimal_clean.pptx")
+    box = prs.slides[0].shapes.add_textbox(0, 0, 914400, 914400)
+    run = box.text_frame.paragraphs[0].add_run()
+    run.text = "日本語"
+    run.font.name = "Arial"
+    etree.SubElement(run._r.get_or_add_rPr(), "{%s}ea" % _A).set("typeface", "Yu Mincho")
+
+    name = run.effective_font().name
+    assert not name.resolved
+    assert name.value is None
+    assert "non-Latin" in name.provenance[-1].detail
 
 
 def test_gradient_text_fill_reports_unresolved_not_a_guess():

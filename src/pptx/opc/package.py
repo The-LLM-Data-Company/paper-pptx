@@ -7,6 +7,10 @@ presentations to and from a .pptx file.
 from __future__ import annotations
 
 import collections
+import os
+import stat
+import tempfile
+from contextlib import suppress
 from typing import IO, TYPE_CHECKING, DefaultDict, Iterator, Mapping, Set, cast
 
 from pptx.opc.constants import RELATIONSHIP_TARGET_MODE as RTM
@@ -153,7 +157,40 @@ class OpcPackage(_RelatableMixin):
 
         `file` can be either a path to a file (a string) or a file-like object.
         """
-        PackageWriter.write(pkg_file, self._rels, tuple(self.iter_parts()))
+        parts = tuple(self.iter_parts())
+        if isinstance(pkg_file, (str, os.PathLike)):
+            self._save_path_atomically(os.fspath(pkg_file), parts)
+            return
+        PackageWriter.write(pkg_file, self._rels, parts)
+
+    def _save_path_atomically(self, path: str, parts: tuple[Part, ...]) -> None:
+        """Serialize beside `path` and replace it only after a complete successful write."""
+        destination = os.path.abspath(path)
+        directory = os.path.dirname(destination)
+        existing_mode = (
+            stat.S_IMODE(os.stat(destination).st_mode) if os.path.exists(destination) else None
+        )
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".%s." % os.path.basename(destination), suffix=".partial", dir=directory
+        )
+        os.close(descriptor)
+        try:
+            PackageWriter.write(temporary, self._rels, parts)
+            if existing_mode is not None:
+                os.chmod(temporary, existing_mode)
+            else:
+                # -- mkstemp creates 0600; a NEW destination must get the mode a plain
+                # -- open() would have given it, or downstream readers lose access
+                active_umask = os.umask(0)
+                os.umask(active_umask)
+                os.chmod(temporary, 0o666 & ~active_umask)
+            with open(temporary, "rb") as stream:
+                os.fsync(stream.fileno())
+            os.replace(temporary, destination)
+        except BaseException:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary)
+            raise
 
     def _load(self) -> Self:
         """Return the package after loading all parts and relationships."""
@@ -248,20 +285,50 @@ class _PackageLoader:
 
         def load_rels(source_partname: PackURI, rels: CT_Relationships):
             """Populate `xml_rels` dict by traversing relationships depth-first."""
+            from pptx.errors import PackageLimitError
+
             xml_rels[source_partname] = rels
             visited_partnames.add(source_partname)
             base_uri = source_partname.baseURI
+
+            rIds = [rel.rId for rel in rels.relationship_lst]
+            duplicate_rIds = sorted({rId for rId in rIds if rIds.count(rId) > 1})
+            if duplicate_rIds:
+                raise PackageLimitError(
+                    "relationship part for %s contains duplicate ids: %s"
+                    % (source_partname, ", ".join(duplicate_rIds))
+                )
 
             # --- recursion stops when there are no unvisited partnames in rels ---
             for rel in rels.relationship_lst:
                 if rel.targetMode == RTM.EXTERNAL:
                     continue
                 target_partname = PackURI.from_rel_ref(base_uri, rel.target_ref)
+                if self._pkg_file is not None and target_partname not in self._package_reader:
+                    raise PackageLimitError(
+                        "relationship %s from %s targets missing part %s"
+                        % (rel.rId, source_partname, target_partname)
+                    )
                 if target_partname in visited_partnames:
                     continue
                 load_rels(target_partname, self._xml_rels_for(target_partname))
 
         load_rels(PACKAGE_URI, self._xml_rels_for(PACKAGE_URI))
+        physical_names = None if self._pkg_file is None else self._package_reader.partnames
+        if physical_names is not None:
+            physical_parts = {
+                partname
+                for partname in physical_names
+                if partname != CONTENT_TYPES_URI and not partname.membername.endswith(".rels")
+            }
+            unreachable = sorted(physical_parts - (visited_partnames - {PACKAGE_URI}))
+            if unreachable:
+                from pptx.errors import PackageLimitError
+
+                raise PackageLimitError(
+                    "ZIP package contains unreachable parts that ordinary save would drop: %s"
+                    % ", ".join(str(partname) for partname in unreachable)
+                )
         return xml_rels
 
     def _xml_rels_for(self, partname: PackURI) -> CT_Relationships:

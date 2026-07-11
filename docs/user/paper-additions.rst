@@ -8,6 +8,9 @@ renamed; the import name stays ``pptx``. ``from pptx import Presentation`` and e
 existing call keep working unchanged. The added APIs cover four groups of operations:
 **perceive**, **edit**, **compose**, and **verify**.
 
+Do not install ``paper-pptx`` alongside ``python-pptx``: both distributions own the same
+``pptx`` import package. Uninstall the upstream distribution before installing this fork.
+
 This page summarizes the added APIs. Each capability's exact signatures, return types, and refusal
 conditions live on the API pages linked throughout (and are collected under *paper-pptx
 additions* in the :ref:`API Documentation <api>` table of contents).
@@ -23,7 +26,7 @@ typed refusal and leaves the document byte-for-byte unchanged in memory and on d
 indicates that the operation was not applied.
 
 The refusals form a small hierarchy rooted at |PaperRefusal| (see :ref:`errors_api`):
-|TargetNotFoundError|, |AmbiguousTargetError|, |UnsupportedStructureError|,
+|PackageLimitError|, |TargetNotFoundError|, |AmbiguousTargetError|, |UnsupportedStructureError|,
 |RelationshipPolicyError|, |BoundaryViolationError|, and |StaleAnchorError|. Programmer mistakes
 (a bad type, an out-of-range index) stay plain ``ValueError`` / ``TypeError``. Callers can catch
 ``PaperRefusal`` separately::
@@ -36,6 +39,10 @@ The refusals form a small hierarchy rooted at |PaperRefusal| (see :ref:`errors_a
         prs.slides.clone(3)                 # slide contains an embedded OLE object
     except PaperRefusal as exc:
         ...                                 # document is untouched; handle or report exc
+
+Normal package intake uses the same refusal boundary. It rejects ambiguous or unsafe ZIP
+members before parsing XML. A path-based ``save()`` writes beside the destination and replaces
+it atomically only after serialization succeeds; stream saves retain normal stream semantics.
 
 
 Perceive a deck
@@ -113,7 +120,7 @@ you can read and freeze with :meth:`~pptx.text.text.TextFrame.normalize_autofit`
 leave absent notes parts absent; :meth:`~pptx.shapes.picture.Picture.replace_image` that swaps
 pixels while keeping position, size, and crop byte-exact (optionally across formats); and
 :meth:`~pptx.chart.chart.Chart.replace_data_safe`, which validates before it touches anything and
-handles the workbook-less charts that Google Slides and LibreOffice produce.
+handles workbook-less charts, including those in the LibreOffice fixture corpus.
 
 **Package comparison and narrow saves** (:ref:`package_api`).
 :func:`~pptx.package.diff_package` reports what changed between two files, part by part, using

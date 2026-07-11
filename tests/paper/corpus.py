@@ -47,6 +47,16 @@ def iter_fixture_relpaths() -> List[str]:
     )
 
 
+def iter_manifest_relpaths() -> List[str]:
+    """Return every fixture binary and sidecar path covered by the frozen manifest."""
+    return sorted(
+        p.relative_to(FIXTURES_DIR).as_posix()
+        for suffix in ("*.pptx", "*.json")
+        for p in FIXTURES_DIR.rglob(suffix)
+        if p.parent != FIXTURES_DIR
+    )
+
+
 def fixture_path(relpath: str) -> Path:
     """Return the absolute path of the fixture at bucket-relative `relpath`."""
     return FIXTURES_DIR / relpath

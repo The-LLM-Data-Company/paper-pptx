@@ -7,13 +7,15 @@ Deck diff (``pptx.diff``)
 slides added, removed, or **moved** (matched by permanent slide id, so a reorder is reported as a
 move rather than delete-plus-add) and the shape, text, chart-data, image, and notes changes within
 matched slides. At ``detail="full"`` it also reports per-run effective-value shifts via the
-resolver.
+resolver. Schema version 2 also includes ``package_changes``, an authoritative semantic diff of
+every serialized package member. That package-level list prevents metadata, relationship,
+ordering, field, crop, or media changes from disappearing when no specialized slide facet applies.
 
-Release job evaluations compare each import / rebind / refresh operation report with
-``diff_decks(input, output)`` and require them to agree.
+Contract tests compare operation reports with ``diff_decks(input, output)`` for representative
+import, rebind, and refresh workflows.
 
-Matching uses the permanent slide id, which serves lineage-derived decks (v4 saved from v3). Decks
-rebuilt from scratch get fresh ids and will not match.
+Matching uses the permanent slide id, which serves lineage-derived decks (v4 saved from v3).
+Independently built decks can reuse the same numeric ids and are outside that matching contract.
 
 .. currentmodule:: pptx.diff
 

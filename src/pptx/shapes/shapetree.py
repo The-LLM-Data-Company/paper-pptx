@@ -658,10 +658,12 @@ class SlideShapes(_BaseGroupShapes):
         before anything changes. A shape from another presentation raises
         |TargetNotFoundError|.
         """
+        from pptx._ownership import require_shape_attached
         from pptx.errors import RelationshipPolicyError, TargetNotFoundError
         from pptx.opc.constants import RELATIONSHIP_TYPE as RT
         from pptx.slideops import _copy_chart_part, _rewrite_r_references, _validate_chart_rels
 
+        require_shape_attached(shape)
         source_element = shape._element
         source_part = shape.part
         if source_part.package is not self.part.package:
@@ -758,7 +760,7 @@ class SlideShapes(_BaseGroupShapes):
         this collection — including a shape inside a group — raises |TargetNotFoundError|
         (delete the group, or ungroup first).
         """
-        from pptx.errors import TargetNotFoundError
+        from pptx.errors import TargetNotFoundError, UnsupportedStructureError
 
         element = getattr(shape, "_element", None)
         if element is None or element.getparent() is not self._spTree:
@@ -767,6 +769,12 @@ class SlideShapes(_BaseGroupShapes):
                 " must be deleted with their group)" % getattr(shape, "name", shape)
             )
         subtree_rIds = _subtree_rIds(element)
+        missing_rIds = sorted(rId for rId in subtree_rIds if rId not in self.part.rels)
+        if missing_rIds:
+            raise UnsupportedStructureError(
+                "shape %r references missing relationships: %s"
+                % (getattr(shape, "name", shape), ", ".join(missing_rIds))
+            )
         self._spTree.remove(element)
         for rId in sorted(subtree_rIds):
             if not _part_references_rId(self.part._element, rId):

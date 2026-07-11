@@ -22,7 +22,13 @@ from pptx.errors import (
 )
 
 from . import corpus
-from .contract import assert_changed_parts, save_reopen, save_to_bytes, zip_member_map
+from .contract import (
+    assert_changed_parts,
+    assert_refusal_atomic,
+    save_reopen,
+    save_to_bytes,
+    zip_member_map,
+)
 from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
 from .lo import lo_load_smoke
 from .relint import dangling_relationship_targets, missing_relationship_references
@@ -533,3 +539,108 @@ def test_imported_deck_loads_in_libreoffice(mode, tmp_path):
     out = tmp_path / ("import_%s.pptx" % mode)
     dest.save(str(out))
     lo_load_smoke(out, tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["adopt_theme", "keep_appearance", "bake"])
+def test_mismatched_slide_size_refuses_atomically(mode):
+    dest = _open(ALPHA)
+    source = _open(BETA)
+    source.slide_width = source.slide_width + 1
+
+    raised = assert_refusal_atomic(
+        dest,
+        lambda p: p.import_slide(source, 0, mode=mode),
+        UnsupportedStructureError,
+    )
+    assert "slide sizes differ" in str(raised)
+
+
+def test_late_import_failure_restores_the_complete_destination(monkeypatch):
+    import pptx.rebind as rebind_module
+
+    dest = _open(ALPHA)
+    source = _open(BETA)
+    original = rebind_module._resolution_state
+    calls = 0
+
+    def fail_after_enrollment(slide):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise UnsupportedStructureError("forced late import failure")
+        return original(slide)
+
+    monkeypatch.setattr(rebind_module, "_resolution_state", fail_after_enrollment)
+    raised = assert_refusal_atomic(
+        dest,
+        lambda p: p.import_slide(source, 0, mode="keep_appearance"),
+        UnsupportedStructureError,
+    )
+    assert "forced late import failure" in str(raised)
+
+
+def test_import_rewrites_relationship_ids_in_generic_xml_support_parts():
+    from lxml import etree
+    from PIL import Image
+
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    from pptx.opc.package import Part
+    from pptx.opc.packuri import PackURI
+    from pptx.oxml.ns import qn
+    from pptx.util import Inches
+
+    source = _open("self_generated/minimal_clean.pptx")
+    dest = _open("self_generated/minimal_clean.pptx")
+    image_stream = io.BytesIO()
+    Image.new("RGB", (2, 2), (1, 2, 3)).save(image_stream, format="PNG")
+    image_stream.seek(0)
+    picture = source.slides[0].shapes.add_picture(
+        image_stream, Inches(1), Inches(1), Inches(1), Inches(1)
+    )
+    image_part = source.slides[0].part.related_part(picture._pic.blip_rId)
+
+    generic = Part(
+        PackURI("/ppt/diagrams/data99.xml"),
+        "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml",
+        source.part.package,
+        (
+            '<dgm xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/'
+            'relationships" r:embed="rId2"/>'
+        ).encode(),
+    )
+    generic.rels._add_relationship(RT.IMAGE, image_part)
+    generic.rels._add_relationship(RT.IMAGE, image_part)
+    source.slides[0].part.relate_to(
+        generic,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData",
+    )
+
+    dest.import_slide(source, 0, mode="keep_appearance")
+    copied = next(
+        part
+        for part in dest.part.package.iter_parts()
+        if str(part.partname).startswith("/ppt/diagrams/data")
+    )
+    rewritten_rId = etree.fromstring(copied.blob).get(qn("r:embed"))
+    assert rewritten_rId in copied.rels
+    assert len(copied.rels) == 1
+
+
+def test_support_fingerprint_preserves_relationship_target_binding():
+    from pptx.compose import _fingerprint
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    from pptx.opc.package import Part
+    from pptx.opc.packuri import PackURI
+
+    package = _open("self_generated/minimal_clean.pptx").part.package
+    first = Part(PackURI("/ppt/media/a.bin"), "application/octet-stream", package, b"A")
+    second = Part(PackURI("/ppt/media/b.bin"), "application/octet-stream", package, b"B")
+    blob = b'<x r:a="rId1" r:b="rId2" xmlns:r="urn:r"/>'
+    left = Part(PackURI("/ppt/diagrams/left.xml"), "application/xml", package, blob)
+    right = Part(PackURI("/ppt/diagrams/right.xml"), "application/xml", package, blob)
+    left.rels._add_relationship(RT.IMAGE, first)
+    left.rels._add_relationship(RT.IMAGE, second)
+    right.rels._add_relationship(RT.IMAGE, second)
+    right.rels._add_relationship(RT.IMAGE, first)
+
+    assert _fingerprint(left) != _fingerprint(right)

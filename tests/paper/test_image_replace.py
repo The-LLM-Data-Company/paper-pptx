@@ -14,7 +14,7 @@ from lxml import etree
 from PIL import Image as PILImage
 
 from pptx import Presentation
-from pptx.errors import PaperRefusal, UnsupportedStructureError
+from pptx.errors import PaperRefusal, TargetNotFoundError, UnsupportedStructureError
 
 from . import corpus
 from .contract import (
@@ -226,6 +226,19 @@ def test_allow_format_change_rejects_non_bool():
     prs = _open(GAUNTLET)
     with pytest.raises(ValueError):
         _cropped_picture(prs).replace_image(io.BytesIO(_png_bytes()), allow_format_change=1)
+
+
+def test_replace_image_refuses_a_deleted_picture_without_adding_relationships():
+    prs = _open(GAUNTLET)
+    slide = prs.slides[2]
+    picture = _cropped_picture(prs)
+    slide.shapes.delete(picture)
+    relationships_before = tuple(slide.part.rels)
+
+    with pytest.raises(TargetNotFoundError, match="stale"):
+        picture.replace_image(io.BytesIO(_png_bytes()))
+
+    assert tuple(slide.part.rels) == relationships_before
 
 
 def test_replace_keeps_relationship_alive_for_sibling_picture_sharing_it():

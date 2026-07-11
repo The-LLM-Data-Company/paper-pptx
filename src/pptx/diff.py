@@ -7,11 +7,11 @@ redline - assembled from the permanent slide ids, the visibility-complete text l
 the effective-value resolver, and the kernel's semantic XML comparison.
 
 The matching contract, declared honestly: slides match by their PERMANENT slide id,
-which serves lineage-derived decks (v4 saved from v3 - the actual use case). Decks
-rebuilt from scratch get fresh ids and will not match; a content-fingerprint fallback is
-a possible future option, not a promise here. One documented hazard: deleting the max-id
-slide then adding a new one recycles the id (upstream allocates max+1), which id-based
-matching reads as one edited slide - order add-before-delete when building lineage.
+which serves lineage-derived decks (v4 saved from v3 - the actual use case). Independently
+built decks can reuse the same numeric ids, so unrelated decks are outside this matching
+contract. One documented hazard: deleting the max-id slide then adding a new one recycles
+the id (upstream allocates max+1), which id-based matching reads as one edited slide -
+order add-before-delete when building lineage.
 
 Report-only: no annotated-copy rendering, no visual diffing, no similarity scoring -
 those are harness products built ON this report.
@@ -20,11 +20,12 @@ those are harness products built ON this report.
 from __future__ import annotations
 
 import hashlib
+import io
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 SCHEMA_NAME = "paper-deck-diff"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _DETAIL_LEVELS = ("structure", "text", "full")
 
@@ -111,6 +112,7 @@ class DeckDiff:
     slides_removed: Tuple[SlideRef, ...] = ()
     slides_moved: Tuple[MovedSlide, ...] = ()
     slide_changes: Tuple[SlideChange, ...] = field(default_factory=tuple)
+    package_changes: tuple = field(default_factory=tuple)
 
     @property
     def is_empty(self) -> bool:
@@ -119,6 +121,7 @@ class DeckDiff:
             or self.slides_removed
             or self.slides_moved
             or self.slide_changes
+            or self.package_changes
         )
 
     def to_dict(self) -> dict:
@@ -130,6 +133,7 @@ class DeckDiff:
             "slides_removed": [ref.to_dict() for ref in self.slides_removed],
             "slides_moved": [move.to_dict() for move in self.slides_moved],
             "slide_changes": [change.to_dict() for change in self.slide_changes],
+            "package_changes": [change.to_dict() for change in self.package_changes],
         }
 
 
@@ -142,9 +146,10 @@ def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
     series/category, notes), "full" (+ per-run effective-value shifts via the resolver
     - expensive on large decks, deliberately opt-in).
 
-    Matching is by permanent slide id (lineage-derived decks). One declared hazard:
-    slide ids allocate as max+1, so deleting the highest-id slide and then adding a new
-    one RECYCLES the id, and this diff will read that delete-plus-add as one edited
+    Matching is by permanent slide id and is intended for lineage-derived decks.
+    Independently built decks can reuse ids and are outside this contract. One declared
+    hazard: slide ids allocate as max+1, so deleting the highest-id slide and then adding
+    a new one RECYCLES the id, and this diff will read that delete-plus-add as one edited
     slide - order add-before-delete when producing lineage decks you intend to diff.
     """
     if detail not in _DETAIL_LEVELS:
@@ -155,6 +160,7 @@ def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
 
     prs_a = _open_deck(path_a)
     prs_b = _open_deck(path_b)
+    package_changes = _package_changes(prs_a, prs_b)
 
     order_a = [(slide.slide_id, slide) for slide in materialize_slides(prs_a, "diff_decks")]
     order_b = [(slide.slide_id, slide) for slide in materialize_slides(prs_b, "diff_decks")]
@@ -198,7 +204,20 @@ def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
         slides_removed=slides_removed,
         slides_moved=slides_moved,
         slide_changes=tuple(changes),
+        package_changes=package_changes,
     )
+
+
+def _package_changes(prs_a, prs_b) -> tuple:
+    """Return semantic package deltas for the serialized in-memory presentations."""
+    from pptx.package import _diff_maps, _read_zip_map_from_bytes
+
+    buffers = []
+    for prs in (prs_a, prs_b):
+        buffer = io.BytesIO()
+        prs.save(buffer)
+        buffers.append(_read_zip_map_from_bytes(buffer.getvalue(), "diff_decks input"))
+    return _diff_maps(buffers[0], buffers[1], "before", "after").deltas
 
 
 def _open_deck(source):
@@ -260,7 +279,7 @@ def _title_of(slide) -> "Optional[str]":
 # ---------------------------------------------------------------------- within one slide
 
 
-def _shape_keys(slide) -> "Dict[str, object]":
+def _shape_keys(slide) -> dict:
     """Deterministic shape key map: unique name, else `<kind>#<ordinal>` (declared
     fallback for unnamed shapes; duplicate names get the synthetic key too - honest
     ambiguity handling rather than a guess)."""
@@ -275,36 +294,41 @@ def _shape_keys(slide) -> "Dict[str, object]":
         ordinal = kind_counters.get(kind, 0)
         kind_counters[kind] = ordinal + 1
         if name and names.count(name) == 1:
-            keyed[name] = shape
+            keyed[("name", name)] = shape
         else:
-            keyed["%s#%d" % (kind, ordinal)] = shape
+            keyed[("fallback", kind, ordinal)] = shape
     return keyed
+
+
+def _shape_key_text(key) -> str:
+    return key[1] if key[0] == "name" else "%s#%d" % (key[1], key[2])
 
 
 def _diff_slide(slide_id, slide_a, slide_b, detail) -> SlideChange:
     shapes_a = _shape_keys(slide_a)
     shapes_b = _shape_keys(slide_b)
-    shapes_added = tuple(sorted(set(shapes_b) - set(shapes_a)))
-    shapes_removed = tuple(sorted(set(shapes_a) - set(shapes_b)))
+    shapes_added = tuple(_shape_key_text(key) for key in sorted(set(shapes_b) - set(shapes_a)))
+    shapes_removed = tuple(_shape_key_text(key) for key in sorted(set(shapes_a) - set(shapes_b)))
 
     geometry_changes: "List[dict]" = []
     images_replaced: "List[str]" = []
     chart_changes: "List[dict]" = []
     for key in sorted(set(shapes_a) & set(shapes_b)):
         shape_a, shape_b = shapes_a[key], shapes_b[key]
+        key_text = _shape_key_text(key)
         for facet in ("left", "top", "width", "height", "rotation"):
             value_a = getattr(shape_a, facet, None)
             value_b = getattr(shape_b, facet, None)
             if value_a != value_b:
                 geometry_changes.append(
-                    {"shape": key, "facet": facet, "before": value_a, "after": value_b}
+                    {"shape": key_text, "facet": facet, "before": value_a, "after": value_b}
                 )
         if _image_hash(shape_a) is not None and _image_hash(shape_a) != _image_hash(shape_b):
-            images_replaced.append(key)
+            images_replaced.append(key_text)
         if detail in ("text", "full") and getattr(shape_a, "has_chart", False) and getattr(
             shape_b, "has_chart", False
         ):
-            chart_changes.extend(_diff_chart(key, shape_a.chart, shape_b.chart))
+            chart_changes.extend(_diff_chart(key_text, shape_a.chart, shape_b.chart))
 
     text_changes: "List[dict]" = []
     notes_change = None
@@ -378,14 +402,28 @@ def _diff_chart(key, chart_a, chart_b) -> "List[dict]":
         deltas.append(
             {"chart": key, "categories_before": categories_a, "categories_after": categories_b}
         )
-    for series_name in sorted(set(series_a) | set(series_b)):
-        if series_name not in series_a:
-            deltas.append({"chart": key, "series_added": series_name})
+    identity_a = [(item[0], item[1], item[2]) for item in series_a]
+    identity_b = [(item[0], item[1], item[2]) for item in series_b]
+    if identity_a != identity_b:
+        deltas.append(
+            {
+                "chart": key,
+                "series_order_before": [item[2] for item in series_a],
+                "series_order_after": [item[2] for item in series_b],
+            }
+        )
+    for index in range(max(len(series_a), len(series_b))):
+        if index >= len(series_a):
+            deltas.append({"chart": key, "series_added": series_b[index][2]})
             continue
-        if series_name not in series_b:
-            deltas.append({"chart": key, "series_removed": series_name})
+        if index >= len(series_b):
+            deltas.append({"chart": key, "series_removed": series_a[index][2]})
             continue
-        values_a, values_b = series_a[series_name], series_b[series_name]
+        _, _, series_name_a, values_a = series_a[index]
+        _, _, series_name_b, values_b = series_b[index]
+        series_name = series_name_b
+        if series_name_a != series_name_b:
+            continue
         length = max(len(values_a), len(values_b))
         for index in range(length):
             value_a = values_a[index] if index < len(values_a) else None
@@ -410,10 +448,12 @@ def _diff_chart(key, chart_a, chart_b) -> "List[dict]":
 
 def _chart_data(chart):
     categories = [str(category) for category in chart.plots[0].categories]
-    series = {}
-    for plot in chart.plots:
-        for one_series in plot.series:
-            series[one_series.name] = tuple(one_series.values)
+    series = []
+    for plot_index, plot in enumerate(chart.plots):
+        for series_index, one_series in enumerate(plot.series):
+            series.append(
+                (plot_index, series_index, one_series.name, tuple(one_series.values))
+            )
     return categories, series
 
 

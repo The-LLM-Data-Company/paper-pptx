@@ -20,7 +20,7 @@ import sys
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 sys.path.insert(0, os.path.abspath(".."))
 
-from pptx import __version__  # noqa: E402
+from pptx import __paper_version__  # noqa: E402
 
 
 # -- Allow nonlocal image URI's to accommodate travis-ci status image -------
@@ -76,9 +76,9 @@ copyright = u"2012-2024 Steve Canny (python-pptx); 2026 Paper Instruments, Inc. 
 # built documents.
 #
 # The short X.Y version.
-version = __version__
+version = __paper_version__
 # The full version, including alpha/beta/rc tags.
-release = __version__
+release = __paper_version__
 
 # A string of reStructuredText that will be included at the end of every source
 # file that is read. This is the right place to add substitutions that should
@@ -371,6 +371,8 @@ rst_epilog = """
 .. paper-pptx additions -- fork types referenced by the added APIs' docstrings.
 
 .. |PaperRefusal| replace:: :exc:`.PaperRefusal`
+
+.. |PackageLimitError| replace:: :exc:`.PackageLimitError`
 
 .. |AmbiguousTargetError| replace:: :exc:`.AmbiguousTargetError`
 

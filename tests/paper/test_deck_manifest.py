@@ -103,3 +103,11 @@ def test_manifest_payload_carries_pinned_schema():
     assert payload["schema"] == "paper-deck-manifest"
     assert payload["version"] == 1
     assert payload["slide_width"] == 9144000
+
+
+def test_manifest_refuses_broken_slide_relationship_graph_with_typed_error():
+    from pptx.errors import UnsupportedStructureError
+
+    prs = _open("self_generated/corrupt_dangling_sldid.pptx")
+    with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
+        inspect_deck(prs)

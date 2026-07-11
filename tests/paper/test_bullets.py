@@ -222,6 +222,8 @@ def test_set_none_touches_no_margins():
         lambda b: b.set_character(size_percent=0.755),  # -- schema admits whole percents only
         lambda b: b.set_character("bad\udc80char"),  # -- lone surrogate: unserializable
         lambda b: b.set_numbered(font_name="bad\udc80font"),
+        lambda b: b.set_character("bad\x01char"),
+        lambda b: b.set_numbered(font_name="bad\x01font"),
     ],
 )
 def test_bad_arguments_raise_valueerror_and_leave_the_tree_untouched(bad_call):
