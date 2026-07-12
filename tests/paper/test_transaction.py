@@ -5,11 +5,14 @@ from __future__ import annotations
 import io
 
 import pytest
+from lxml import etree
 
 from pptx import Presentation
 from pptx._transaction import PackageTransaction
 from pptx.errors import UnsupportedStructureError
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.opc.package import Part, XmlPart
+from pptx.opc.packuri import PackURI
 from pptx.util import Inches
 
 from .contract import save_to_bytes, zip_member_map
@@ -98,3 +101,28 @@ def test_successful_transaction_commits_a_reopenable_candidate():
     reopened = Presentation(io.BytesIO(save_to_bytes(prs)))
     assert shape.text == "After"
     assert reopened.slides[0].shapes[-1].text == "After"
+
+
+def test_failure_restores_custom_xml_nodes_and_binary_payloads():
+    prs = Presentation()
+    package = prs.part.package
+    binary = Part(
+        PackURI("/custom/payload.bin"), "application/octet-stream", package, b"original"
+    )
+    root = etree.fromstring(b"<paper-state><child/></paper-state>")
+    child = root[0]
+    xml = XmlPart(PackURI("/custom/state.xml"), "application/xml", package, root)
+    package.relate_to(binary, "https://paper.example/relationships/binary")
+    package.relate_to(xml, "https://paper.example/relationships/xml")
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        with PackageTransaction(package):
+            binary._blob = b"dirty"
+            root.set("dirty", "1")
+            root.remove(child)
+            raise RuntimeError("forced failure")
+
+    assert binary.blob == b"original"
+    assert xml._element is root
+    assert root.get("dirty") is None
+    assert root[0] is child
