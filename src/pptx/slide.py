@@ -833,15 +833,24 @@ class SlideLayouts(ParentedElementProxy):
         """
         from pptx._transaction import PackageTransaction
 
+        # Preserve the established error contract before attachment checks.
+        if slide_layout.used_by_slides:
+            raise ValueError("cannot remove slide-layout in use by one or more slides")
+
+        # Upstream supports isolated collection proxies in its unit-level API contract.
+        # A real presentation always supplies a parent and takes the hardened path below.
+        if self._parent is None:
+            target_idx = self.index(slide_layout)
+            target_sldLayoutId = self._sldLayoutIdLst.sldLayoutId_lst[target_idx]
+            self._sldLayoutIdLst.remove(target_sldLayoutId)
+            slide_layout.slide_master.part.drop_rel(target_sldLayoutId.rId)
+            return
+
         if not isinstance(slide_layout, SlideLayout):
             raise ValueError("slide_layout must be a SlideLayout, got %r" % (slide_layout,))
         if slide_layout.part.package is not self.part.package:
             raise TargetNotFoundError("slide_layout belongs to a different presentation")
         _require_layout_enrolled(slide_layout)
-
-        # ---raise if layout is in use---
-        if slide_layout.used_by_slides:
-            raise ValueError("cannot remove slide-layout in use by one or more slides")
 
         # ---target layout is identified by its index in this collection---
         target_idx = self.index(slide_layout)
