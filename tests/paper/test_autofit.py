@@ -12,7 +12,7 @@ import pytest
 
 from pptx import Presentation
 from pptx.enum.text import MSO_AUTO_SIZE
-from pptx.errors import PaperRefusal, UnsupportedStructureError
+from pptx.errors import PaperRefusal, TargetNotFoundError, UnsupportedStructureError
 from pptx.util import Pt
 
 from . import corpus
@@ -37,6 +37,30 @@ def _autofit_frame(prs):
 
 def _open(relpath):
     return Presentation(str(corpus.fixture_path(relpath)))
+
+
+def test_normalize_autofit_refuses_a_text_frame_on_a_deleted_shape():
+    prs = _open(NONE)
+    slide = prs.slides[0]
+    shape = next(shape for shape in slide.shapes if shape.name == "autofit_box")
+    text_frame = shape.text_frame
+    slide.shapes.delete(shape)
+
+    with pytest.raises(TargetNotFoundError, match="text frame is stale"):
+        text_frame.normalize_autofit()
+
+
+def test_normalize_autofit_refuses_a_text_frame_on_a_removed_layout():
+    prs = Presentation()
+    master = prs.slide_masters[0]
+    layout = master.slide_layouts[1]
+    text_frame = next(
+        shape for shape in layout.shapes if shape.has_text_frame
+    ).text_frame
+    master.slide_layouts.remove(layout)
+
+    with pytest.raises(TargetNotFoundError, match="text frame is stale"):
+        text_frame.normalize_autofit()
 
 
 # ------------------------------------------------------------------------- reading details

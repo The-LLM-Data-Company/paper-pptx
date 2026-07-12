@@ -16,7 +16,7 @@ from datetime import datetime
 import pytest
 
 from pptx import Presentation
-from pptx.errors import PaperRefusal, UnsupportedStructureError
+from pptx.errors import PaperRefusal, TargetNotFoundError, UnsupportedStructureError
 
 from . import corpus
 from .contract import (
@@ -109,6 +109,37 @@ def test_apply_has_exact_slide_only_budget():
         save_to_bytes(prs),
         expect_changed=["ppt/slides/slide%d.xml" % n for n in (1, 2, 3, 4)],
     )
+
+
+def test_apply_to_all_rolls_back_a_late_slide_write(monkeypatch):
+    import pptx.hf as hf_module
+
+    prs = _open(GAUNTLET)
+    before = save_to_bytes(prs)
+    real_apply = hf_module._apply_to_slide
+    calls = 0
+
+    def fail_after_second_slide(*args, **kwargs):
+        nonlocal calls
+        real_apply(*args, **kwargs)
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("forced late footer failure")
+
+    monkeypatch.setattr(hf_module, "_apply_to_slide", fail_after_second_slide)
+    with pytest.raises(RuntimeError, match="forced late footer failure"):
+        prs.apply_footers(footer="Rollback", slide_number=True, now=NOW)
+
+    assert_changed_parts(before, save_to_bytes(prs))
+
+
+def test_per_slide_apply_refuses_a_publicly_deleted_slide_before_arguments():
+    prs = _open(MINIMAL)
+    slide = prs.slides[0]
+    prs.slides.delete(slide)
+
+    with pytest.raises(TargetNotFoundError, match="slide is stale"):
+        slide.apply_footers(footer="")
 
 
 def test_reapplying_same_state_is_a_complete_noop():

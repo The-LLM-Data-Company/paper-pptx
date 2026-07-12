@@ -60,9 +60,10 @@ class BulletFormat(object):
     effective-style inspection API to see what actually renders).
     """
 
-    def __init__(self, p: CT_TextParagraph):
+    def __init__(self, p: CT_TextParagraph, part=None):
         super(BulletFormat, self).__init__()
         self._p = p
+        self._part = part
 
     @property
     def type(self) -> PP_BULLET_TYPE | None:
@@ -131,14 +132,16 @@ class BulletFormat(object):
         `font_name` sets a bullet-specific typeface (`a:buFont`); `size_percent` scales the
         bullet relative to the text size (fraction, 0.25–4.0).
         """
+        self._require_attached()
         if not isinstance(char, str) or len(char) == 0:
             raise ValueError("char must be a non-empty str, got %r" % (char,))
         _require_xml_encodable(char, "char")
         self._validate_common(font_name, size_percent, left_margin, hanging_indent)
-        pPr = self._p.get_or_add_pPr()
-        self._remove_buBlip(pPr)
-        pPr.get_or_change_to_buChar().char = char
-        self._apply_common(pPr, font_name, size_percent, left_margin, hanging_indent)
+        with self._transaction():
+            pPr = self._p.get_or_add_pPr()
+            self._remove_buBlip(pPr)
+            pPr.get_or_change_to_buChar().char = char
+            self._apply_common(pPr, font_name, size_percent, left_margin, hanging_indent)
 
     def set_numbered(
         self,
@@ -155,26 +158,46 @@ class BulletFormat(object):
         `scheme` is an ECMA-376 auto-number token like "arabicPeriod" or "romanUcParenR";
         an unknown token raises |ValueError|. Numbering restarts at `start_at`.
         """
+        self._require_attached()
         if isinstance(start_at, bool):
             raise ValueError("start_at must be a positive int, got %r" % (start_at,))
         ST_TextAutonumberScheme.validate(scheme)
         ST_TextBulletStartAtNum.validate(start_at)
         self._validate_common(font_name, size_percent, left_margin, hanging_indent)
-        pPr = self._p.get_or_add_pPr()
-        self._remove_buBlip(pPr)
-        buAutoNum = pPr.get_or_change_to_buAutoNum()
-        buAutoNum.type = scheme
-        buAutoNum.startAt = start_at
-        self._apply_common(pPr, font_name, size_percent, left_margin, hanging_indent)
+        with self._transaction():
+            pPr = self._p.get_or_add_pPr()
+            self._remove_buBlip(pPr)
+            buAutoNum = pPr.get_or_change_to_buAutoNum()
+            buAutoNum.type = scheme
+            buAutoNum.startAt = start_at
+            self._apply_common(pPr, font_name, size_percent, left_margin, hanging_indent)
 
     def set_none(self) -> None:
         """Set an explicit "no bullet" (`a:buNone`), overriding any inherited bullet.
 
         Margins, bullet font, and bullet size attributes are left untouched.
         """
-        pPr = self._p.get_or_add_pPr()
-        self._remove_buBlip(pPr)
-        pPr.get_or_change_to_buNone()
+        self._require_attached()
+        with self._transaction():
+            pPr = self._p.get_or_add_pPr()
+            self._remove_buBlip(pPr)
+            pPr.get_or_change_to_buNone()
+
+    def _require_attached(self) -> None:
+        if self._part is None:
+            return
+        from pptx._ownership import require_element_attached
+
+        require_element_attached(self._p, self._part, argument="paragraph")
+
+    def _transaction(self):
+        if self._part is None:
+            from contextlib import nullcontext
+
+            return nullcontext()
+        from pptx._transaction import PackageTransaction
+
+        return PackageTransaction(self._part.package, self)
 
     @staticmethod
     def _remove_buBlip(pPr) -> None:

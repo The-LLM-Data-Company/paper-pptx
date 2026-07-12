@@ -427,6 +427,49 @@ def test_column_surgery_refuses_a_ragged_table_before_mutation():
     assert table._tbl.xml == before
 
 
+@pytest.mark.parametrize(
+    ("operation", "notification"),
+    [
+        (lambda table: table.insert_row(2), "notify_height_changed"),
+        (lambda table: table.delete_row(1), "notify_height_changed"),
+        (lambda table: table.insert_column(2), "notify_width_changed"),
+        (lambda table: table.delete_column(1), "notify_width_changed"),
+    ],
+)
+def test_table_surgery_rolls_back_late_extent_failure(monkeypatch, operation, notification):
+    from pptx.table import Table
+
+    prs = _open(GAUNTLET)
+    table = _gauntlet_table(prs)
+    rows = table.rows
+    columns = table.columns
+    before = save_to_bytes(prs)
+
+    def fail_extent_update(self):
+        raise RuntimeError("forced late table failure")
+
+    monkeypatch.setattr(Table, notification, fail_extent_update)
+    with pytest.raises(RuntimeError, match="forced late table failure"):
+        operation(table)
+
+    assert_changed_parts(before, save_to_bytes(prs))
+    assert table.rows is rows
+    assert table.columns is columns
+
+
+def test_table_surgery_refuses_a_table_on_a_deleted_shape():
+    from pptx.errors import TargetNotFoundError
+
+    prs = _open(GAUNTLET)
+    slide = prs.slides[2]
+    shape = slide.shapes.shape_by_name("gauntlet_table")
+    table = shape.table
+    slide.shapes.delete(shape)
+
+    with pytest.raises(TargetNotFoundError, match="table shape is stale"):
+        table.insert_row(0)
+
+
 # --------------------------------------------------------------------------------- lo_smoke
 
 

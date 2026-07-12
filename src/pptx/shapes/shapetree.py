@@ -658,11 +658,12 @@ class SlideShapes(_BaseGroupShapes):
         before anything changes. A shape from another presentation raises
         |TargetNotFoundError|.
         """
-        from pptx._ownership import require_shape_attached
+        from pptx._ownership import require_shape_attached, require_shape_tree_attached
         from pptx.errors import RelationshipPolicyError, TargetNotFoundError
         from pptx.opc.constants import RELATIONSHIP_TYPE as RT
         from pptx.slideops import _copy_chart_part, _rewrite_r_references, _validate_chart_rels
 
+        require_shape_tree_attached(self)
         require_shape_attached(shape)
         source_element = shape._element
         source_part = shape.part
@@ -706,22 +707,26 @@ class SlideShapes(_BaseGroupShapes):
             cNvPr.set("id", str(next_id))
             next_id += 1
 
-        rId_mapping = {}
-        allocated: set = set()
-        for old_rId, action, rel in plan:
-            if action == "external":
-                rId_mapping[old_rId] = self.part.rels.get_or_add_ext_rel(
-                    rel.reltype, rel.target_ref
-                )
-            elif action == "share":
-                rId_mapping[old_rId] = self.part.relate_to(rel.target_part, rel.reltype)
-            else:  # -- chart: deep copy with workbook/style parts
-                rId_mapping[old_rId] = self.part.relate_to(
-                    _copy_chart_part(rel.target_part, allocated), rel.reltype
-                )
-        _rewrite_r_references(new_element, rId_mapping)
-        self._spTree.append(new_element)
-        return self._shape_factory(new_element)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self, shape):
+            rId_mapping = {}
+            allocated: set = set()
+            for old_rId, action, rel in plan:
+                if action == "external":
+                    rId_mapping[old_rId] = self.part.rels.get_or_add_ext_rel(
+                        rel.reltype, rel.target_ref
+                    )
+                elif action == "share":
+                    rId_mapping[old_rId] = self.part.relate_to(rel.target_part, rel.reltype)
+                else:  # -- chart: deep copy with workbook/style parts
+                    rId_mapping[old_rId] = self.part.relate_to(
+                        _copy_chart_part(rel.target_part, allocated), rel.reltype
+                    )
+            _rewrite_r_references(new_element, rId_mapping)
+            self._spTree.append(new_element)
+            copied_shape = self._shape_factory(new_element)
+        return copied_shape
 
     def chart_by_name(self, name: str):
         """Return the |Chart| held by the shape on this slide named `name`.
@@ -760,7 +765,10 @@ class SlideShapes(_BaseGroupShapes):
         this collection — including a shape inside a group — raises |TargetNotFoundError|
         (delete the group, or ungroup first).
         """
+        from pptx._ownership import require_shape_tree_attached
         from pptx.errors import TargetNotFoundError, UnsupportedStructureError
+
+        require_shape_tree_attached(self)
 
         element = getattr(shape, "_element", None)
         if element is None or element.getparent() is not self._spTree:
@@ -775,10 +783,13 @@ class SlideShapes(_BaseGroupShapes):
                 "shape %r references missing relationships: %s"
                 % (getattr(shape, "name", shape), ", ".join(missing_rIds))
             )
-        self._spTree.remove(element)
-        for rId in sorted(subtree_rIds):
-            if not _part_references_rId(self.part._element, rId):
-                self.part.drop_rel(rId)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self, shape):
+            self._spTree.remove(element)
+            for rId in sorted(subtree_rIds):
+                if not _part_references_rId(self.part._element, rId):
+                    self.part.drop_rel(rId)
 
     def move(self, shape, to_index: int) -> None:
         """Move `shape` to 0-based `to_index` in this collection's z-order.
@@ -787,7 +798,10 @@ class SlideShapes(_BaseGroupShapes):
         the same order this collection iterates. `to_index` outside range raises
         |ValueError|; a shape not directly in this collection raises |TargetNotFoundError|.
         """
+        from pptx._ownership import require_shape_tree_attached
         from pptx.errors import TargetNotFoundError
+
+        require_shape_tree_attached(self)
 
         element = getattr(shape, "_element", None)
         members = list(self._iter_member_elms())
@@ -804,11 +818,14 @@ class SlideShapes(_BaseGroupShapes):
             raise ValueError(
                 "to_index must be an int in range 0..%d, got %r" % (len(members) - 1, to_index)
             )
-        members.remove(element)
-        if to_index >= len(members):
-            members[-1].addnext(element)
-        else:
-            members[to_index].addprevious(element)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self, shape):
+            members.remove(element)
+            if to_index >= len(members):
+                members[-1].addnext(element)
+            else:
+                members[to_index].addprevious(element)
 
     def picture_by_name(self, name: str):
         """Return the |Picture| on this slide named `name` (group-aware).

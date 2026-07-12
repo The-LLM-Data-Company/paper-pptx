@@ -13,6 +13,7 @@ from lxml import etree
 
 from pptx import Presentation
 from pptx.enum.text import PP_BULLET_TYPE
+from pptx.errors import TargetNotFoundError
 from pptx.text.bullet import BulletFormat
 from pptx.util import Emu
 
@@ -41,6 +42,47 @@ def _bullet_choice_children(paragraph):
         return []
     tags = {"{%s}buNone" % _A, "{%s}buChar" % _A, "{%s}buAutoNum" % _A}
     return [child for child in pPr if child.tag in tags]
+
+
+def test_bullet_setter_refuses_a_paragraph_on_a_deleted_slide():
+    prs = _open_minimal()
+    slide = prs.slides[0]
+    bullet = slide.shapes[0].text_frame.paragraphs[0].bullet
+    prs.slides.delete(slide)
+
+    with pytest.raises(TargetNotFoundError, match="paragraph is stale"):
+        bullet.set_character()
+
+
+def test_bullet_setter_refuses_a_paragraph_on_a_removed_layout():
+    prs = Presentation()
+    master = prs.slide_masters[0]
+    layout = master.slide_layouts[1]
+    shape = next(shape for shape in layout.shapes if shape.has_text_frame)
+    bullet = shape.text_frame.paragraphs[0].bullet
+    master.slide_layouts.remove(layout)
+
+    with pytest.raises(TargetNotFoundError, match="paragraph is stale"):
+        bullet.set_none()
+
+
+def test_bullet_write_rolls_back_a_late_common_format_failure(monkeypatch):
+    prs = _open_minimal()
+    paragraph = _add_box_with_text(prs).text_frame.paragraphs[0]
+    bullet = paragraph.bullet
+    before = snapshot_parts(prs)
+    original = BulletFormat._apply_common
+
+    def fail_after_common(self, *args):
+        original(self, *args)
+        raise RuntimeError("forced late bullet failure")
+
+    monkeypatch.setattr(BulletFormat, "_apply_common", fail_after_common)
+    with pytest.raises(RuntimeError, match="forced late bullet failure"):
+        bullet.set_character("-", font_name="Arial", size_percent=0.75)
+
+    assert snapshot_parts(prs) == before
+    assert paragraph.bullet is bullet
 
 
 # ----------------------------------------------------------------------- reading local state

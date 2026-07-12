@@ -190,6 +190,9 @@ class TextFrame(Subshape):
         below the floor are raised to it. Validation completes fully before the first write
         (a refusal leaves the frame byte-identical).
         """
+        from pptx._ownership import require_element_attached
+
+        require_element_attached(self._txBody, self.part, argument="text frame")
         scale = self.font_scale
         reduction = self.line_space_reduction
         scale = 100.0 if scale is None else scale
@@ -249,30 +252,32 @@ class TextFrame(Subshape):
                         % (reduction, para_idx, shape_name)
                     )
 
-        # -- mutation pass --
-        if scale != 100.0:
-            for rPr in self._iter_explicitly_sized_rPrs():
-                rPr.sz = max(100, int(round(rPr.sz * scale / 100.0)))
-            for r, resolved_centipoints in resolved_run_sizes.items():
-                r.get_or_add_rPr().sz = max(
-                    100, int(round(resolved_centipoints * scale / 100.0))
-                )
-        if reduction != 0.0:
-            for paragraph in self.paragraphs:
-                spacing = paragraph.line_spacing
-                factor = (100.0 - reduction) / 100.0
-                if isinstance(spacing, Length):
-                    paragraph.line_spacing = Centipoints(
-                        int(round(spacing.centipoints * factor))
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            if scale != 100.0:
+                for rPr in self._iter_explicitly_sized_rPrs():
+                    rPr.sz = max(100, int(round(rPr.sz * scale / 100.0)))
+                for r, resolved_centipoints in resolved_run_sizes.items():
+                    r.get_or_add_rPr().sz = max(
+                        100, int(round(resolved_centipoints * scale / 100.0))
                     )
-                else:
-                    paragraph.line_spacing = spacing * factor
-        if min_font_size is not None:
-            floor_centipoints = Emu(min_font_size).centipoints
-            for rPr in self._iter_explicitly_sized_rPrs():
-                if rPr.sz < floor_centipoints:
-                    rPr.sz = floor_centipoints
-        self.auto_size = MSO_AUTO_SIZE.NONE
+            if reduction != 0.0:
+                for paragraph in self.paragraphs:
+                    spacing = paragraph.line_spacing
+                    factor = (100.0 - reduction) / 100.0
+                    if isinstance(spacing, Length):
+                        paragraph.line_spacing = Centipoints(
+                            int(round(spacing.centipoints * factor))
+                        )
+                    else:
+                        paragraph.line_spacing = spacing * factor
+            if min_font_size is not None:
+                floor_centipoints = Emu(min_font_size).centipoints
+                for rPr in self._iter_explicitly_sized_rPrs():
+                    if rPr.sz < floor_centipoints:
+                        rPr.sz = floor_centipoints
+            self.auto_size = MSO_AUTO_SIZE.NONE
 
     def _resolve_run_size(self, r):
         """Return `r`'s effective font size in centipoints via the inheritance walk, or None.
@@ -676,7 +681,12 @@ class _Paragraph(Subshape):
     def _add_field(self, field_type: str, cached_text: str) -> None:
         import uuid
 
-        self._p.add_fld("{%s}" % str(uuid.uuid4()).upper(), field_type, cached_text)
+        from pptx._ownership import require_element_attached
+        from pptx._transaction import PackageTransaction
+
+        require_element_attached(self._p, self.part, argument="paragraph")
+        with PackageTransaction(self.part.package, self):
+            self._p.add_fld("{%s}" % str(uuid.uuid4()).upper(), field_type, cached_text)
 
     def add_run(self) -> _Run:
         """Return a new run appended to the runs in this paragraph."""
@@ -705,7 +715,7 @@ class _Paragraph(Subshape):
         (|None| means inherited); setters write real `a:buChar`/`a:buAutoNum`/`a:buNone`
         bullets with hanging-indent geometry.
         """
-        return BulletFormat(self._p)
+        return BulletFormat(self._p, self.part)
 
     def clear(self):
         """Remove all content from this paragraph.

@@ -9,6 +9,7 @@ import pytest
 from lxml import etree
 
 from pptx import Presentation
+from pptx.errors import TargetNotFoundError
 from pptx.inspect import inspect_text
 from pptx.util import Emu
 
@@ -37,6 +38,30 @@ def _footer_box(prs):
 
 
 # ------------------------------------------------------------------------------ a:fld fields
+
+
+def test_field_setter_refuses_a_deleted_paragraph_proxy():
+    prs = _open(MINIMAL)
+    slide = prs.slides[0]
+    shape = _footer_box(prs)
+    paragraph = shape.text_frame.paragraphs[0]
+    slide.shapes.delete(shape)
+
+    with pytest.raises(TargetNotFoundError, match="paragraph is stale"):
+        paragraph.add_slide_number_field()
+
+
+def test_field_setter_refuses_a_paragraph_on_a_removed_layout():
+    prs = Presentation()
+    master = prs.slide_masters[0]
+    layout = master.slide_layouts[1]
+    paragraph = next(
+        shape for shape in layout.shapes if shape.has_text_frame
+    ).text_frame.paragraphs[0]
+    master.slide_layouts.remove(layout)
+
+    with pytest.raises(TargetNotFoundError, match="paragraph is stale"):
+        paragraph.add_slide_number_field()
 
 
 def test_slide_number_field_round_trips_with_exact_budget():

@@ -125,6 +125,44 @@ def test_delete_refuses_dangling_shape_relationship_before_removal():
     assert "rId404" in str(raised)
 
 
+@pytest.mark.parametrize("operation", ["delete", "move", "add_copy"])
+def test_shape_mutators_refuse_a_publicly_deleted_target_slide(operation):
+    prs = Presentation()
+    target_slide = prs.slides.add_slide(prs.slide_layouts[6])
+    target_shape = target_slide.shapes.add_textbox(0, 0, Emu(914400), Emu(914400))
+    target_shapes = target_slide.shapes
+    source_slide = prs.slides.add_slide(prs.slide_layouts[6])
+    source_shape = source_slide.shapes.add_textbox(0, 0, Emu(914400), Emu(914400))
+    prs.slides.delete(target_slide)
+
+    with pytest.raises(TargetNotFoundError, match="target shape tree is stale"):
+        if operation == "delete":
+            target_shapes.delete(target_shape)
+        elif operation == "move":
+            target_shapes.move(target_shape, 0)
+        else:
+            target_shapes.add_copy(source_shape)
+
+
+def test_delete_rolls_back_when_relationship_cleanup_fails(monkeypatch):
+    prs = _open(GAUNTLET)
+    slide = prs.slides[2]
+    shape = slide.shapes.shape_by_name("real_bullet_box")
+    before = save_to_bytes(prs)
+
+    def fail_drop_rel(rId):
+        raise RuntimeError("forced relationship cleanup failure")
+
+    shape.text_frame.paragraphs[0].add_run().hyperlink.address = "https://example.com"
+    before = save_to_bytes(prs)
+    monkeypatch.setattr(slide.part, "drop_rel", fail_drop_rel)
+    with pytest.raises(RuntimeError, match="forced relationship cleanup failure"):
+        slide.shapes.delete(shape)
+
+    assert_changed_parts(before, save_to_bytes(prs))
+    assert shape._element.getparent() is slide.shapes._spTree
+
+
 # ------------------------------------------------------------------------------------- move
 
 

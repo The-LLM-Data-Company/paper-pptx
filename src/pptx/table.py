@@ -76,10 +76,13 @@ class Table(object):
         if conflicts:
             self._refuse_merge_conflict("deleting column %d" % col_idx, conflicts)
 
-        self._tbl.tblGrid.remove(self._tbl.tblGrid.gridCol_lst[col_idx])
-        for tr in self._tbl.tr_lst:
-            tr.remove(tr.tc_lst[col_idx])
-        self.notify_width_changed()
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            self._tbl.tblGrid.remove(self._tbl.tblGrid.gridCol_lst[col_idx])
+            for tr in self._tbl.tr_lst:
+                tr.remove(tr.tc_lst[col_idx])
+            self.notify_width_changed()
 
     def delete_row(self, row_idx: int) -> None:
         """Remove the row at 0-based `row_idx`, cells included.
@@ -108,8 +111,11 @@ class Table(object):
         if conflicts:
             self._refuse_merge_conflict("deleting row %d" % row_idx, conflicts)
 
-        self._tbl.remove(self._tbl.tr_lst[row_idx])
-        self.notify_height_changed()
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            self._tbl.remove(self._tbl.tr_lst[row_idx])
+            self.notify_height_changed()
 
     @property
     def first_col(self) -> bool:
@@ -187,11 +193,15 @@ class Table(object):
         new_width = Emu(width) if width is not None else Emu(
             self._tbl.tblGrid.gridCol_lst[neighbor_idx].w
         )
-        gridCol = self._tbl.tblGrid.insert_gridCol_at(after + 1, new_width)
-        for tr in self._tbl.tr_lst:
-            tr.insert_tc_at(after + 1)
-        self.notify_width_changed()
-        return _Column(gridCol, self.columns)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            gridCol = self._tbl.tblGrid.insert_gridCol_at(after + 1, new_width)
+            for tr in self._tbl.tr_lst:
+                tr.insert_tc_at(after + 1)
+            self.notify_width_changed()
+            column = _Column(gridCol, self.columns)
+        return column
 
     def insert_row(self, after: int, *, copy_format_from: int | None = None) -> _Row:
         """Insert a new empty row immediately after 0-based row `after`; return it.
@@ -231,18 +241,22 @@ class Table(object):
             0 if after == -1 else after
         )
         template_tr = self._tbl.tr_lst[template_idx]
-        tr = self._tbl.insert_tr_at(after + 1, Emu(template_tr.h))
-        for col_idx in range(len(self._tbl.tblGrid.gridCol_lst)):
-            tc = tr.add_tc()
-            if copy_format_from is not None:
-                template_tcPr = template_tr.tc_lst[col_idx].tcPr
-                if template_tcPr is not None:
-                    existing_tcPr = tc.tcPr
-                    if existing_tcPr is not None:
-                        tc.remove(existing_tcPr)
-                    tc.append(deepcopy(template_tcPr))
-        self.notify_height_changed()
-        return _Row(tr, self.rows)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            tr = self._tbl.insert_tr_at(after + 1, Emu(template_tr.h))
+            for col_idx in range(len(self._tbl.tblGrid.gridCol_lst)):
+                tc = tr.add_tc()
+                if copy_format_from is not None:
+                    template_tcPr = template_tr.tc_lst[col_idx].tcPr
+                    if template_tcPr is not None:
+                        existing_tcPr = tc.tcPr
+                        if existing_tcPr is not None:
+                            tc.remove(existing_tcPr)
+                        tc.append(deepcopy(template_tcPr))
+            self.notify_height_changed()
+            row = _Row(tr, self.rows)
+        return row
 
     def iter_cells(self) -> Iterator[_Cell]:
         """Generate _Cell object for each cell in this table.

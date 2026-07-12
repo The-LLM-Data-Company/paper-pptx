@@ -68,6 +68,9 @@ def apply_presentation_footers(
     now: "Optional[datetime]" = None,
 ) -> None:
     """Apply the complete footer state to every slide (the dialog's "Apply to All")."""
+    from pptx._ownership import require_element_attached
+
+    require_element_attached(prs._element, prs.part, argument="presentation")
     _validate_arguments(footer, slide_number, date_format, fixed_date, now)
     if not isinstance(skip_title_slides, bool):
         raise ValueError("skip_title_slides must be True or False")
@@ -87,11 +90,16 @@ def apply_presentation_footers(
         if not all_off:
             _validate_slide_furniture(slide, footer, slide_number, date_format, fixed_date)
 
-    for slide, number, all_off in plans:
-        if all_off:
-            _apply_to_slide(slide, number, None, False, None, None, now)
-        else:
-            _apply_to_slide(slide, number, footer, slide_number, date_format, fixed_date, now)
+    from pptx._transaction import PackageTransaction
+
+    with PackageTransaction(prs.part.package, prs, *(slide for slide, _, _ in plans)):
+        for slide, number, all_off in plans:
+            if all_off:
+                _apply_to_slide(slide, number, None, False, None, None, now)
+            else:
+                _apply_to_slide(
+                    slide, number, footer, slide_number, date_format, fixed_date, now
+                )
 
 
 def apply_slide_footers(
@@ -104,11 +112,17 @@ def apply_slide_footers(
     now: "Optional[datetime]" = None,
 ) -> None:
     """Apply the complete footer state to one slide (the dialog's per-slide "Apply")."""
+    from pptx._ownership import require_element_attached
+
+    require_element_attached(slide._element, slide.part, argument="slide")
     _validate_arguments(footer, slide_number, date_format, fixed_date, now)
     prs = slide.part.package.presentation_part.presentation
     number = _first_slide_number(prs) + prs.slides.index(slide)
     _validate_slide_furniture(slide, footer, slide_number, date_format, fixed_date)
-    _apply_to_slide(slide, number, footer, slide_number, date_format, fixed_date, now)
+    from pptx._transaction import PackageTransaction
+
+    with PackageTransaction(slide.part.package, slide):
+        _apply_to_slide(slide, number, footer, slide_number, date_format, fixed_date, now)
 
 
 # ------------------------------------------------------------------------------ validation
