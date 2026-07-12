@@ -90,7 +90,7 @@ preserves the millions of existing snippets and model priors that use
 
 - GitHub repository / PyPI distribution: **`paper-pptx`**
 - Python import: **`pptx`**
-- Fork sentinel: `pptx.__paper_version__ = "0.1.1"`
+- Fork sentinel: `pptx.__paper_version__ = "0.1.2"`
 - Upstream base: python-pptx `v1.0.2` (git tag `paper-base`)
 
 New upstream releases are merged, never rebased, so the fork retains its history and
