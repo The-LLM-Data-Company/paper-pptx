@@ -368,6 +368,27 @@ def test_notes_master_retained_reports_false_when_none_exists():
     assert report.notes_master_retained is False
 
 
+def test_late_report_failure_restores_live_scrub_state(monkeypatch):
+    import pptx.scrub as scrub_module
+
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[6])
+    core = prs.core_properties
+    core.author = "Original author"
+    before = zip_member_map(save_to_bytes(prs))
+
+    def fail_report(*args, **kwargs):
+        raise RuntimeError("forced report failure")
+
+    monkeypatch.setattr(scrub_module, "ScrubReport", fail_report)
+    with pytest.raises(RuntimeError, match="forced report failure"):
+        prs.scrub(metadata=True)
+
+    assert prs.core_properties is core
+    assert core.author == "Original author"
+    assert zip_member_map(save_to_bytes(prs)) == before
+
+
 # --------------------------------------------------------------------------------- lo_smoke
 
 

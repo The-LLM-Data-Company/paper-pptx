@@ -112,6 +112,35 @@ def scrub_presentation(
     unreachable_media: bool = False,
     embedded_fonts: bool = False,
 ) -> ScrubReport:
+    """Perform the toggled scrub passes as one refusal-atomic operation."""
+    from pptx._transaction import PackageTransaction
+
+    with PackageTransaction(prs.part.package, prs):
+        return _scrub_presentation(
+            prs,
+            notes=notes,
+            comments=comments,
+            metadata=metadata,
+            hidden_slides=hidden_slides,
+            unused_layouts=unused_layouts,
+            unused_masters=unused_masters,
+            unreachable_media=unreachable_media,
+            embedded_fonts=embedded_fonts,
+        )
+
+
+def _scrub_presentation(
+    prs: "Presentation",
+    *,
+    notes: bool = False,
+    comments: bool = False,
+    metadata: bool = False,
+    hidden_slides: bool = False,
+    unused_layouts: bool = False,
+    unused_masters: bool = False,
+    unreachable_media: bool = False,
+    embedded_fonts: bool = False,
+) -> ScrubReport:
     """Perform the toggled scrub passes on `prs` and return the |ScrubReport|."""
     toggles = {
         "notes": notes,
