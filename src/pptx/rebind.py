@@ -391,7 +391,10 @@ def _resolution_state(slide):
     for block in inspect_text(slide).blocks:
         ordinal = block_ordinals.get(block.shape_id, 0)
         block_ordinals[block.shape_id] = ordinal + 1
-        for run_index, run in enumerate(block.runs):
+        literal_runs = [
+            run for run in block.runs if run.field_type is None and run.text != "\v"
+        ]
+        for run_index, run in enumerate(literal_runs):
             font = run.font
             key = (block.shape_id, ordinal, run_index)
             values = (

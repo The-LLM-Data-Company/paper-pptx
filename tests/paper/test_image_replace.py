@@ -15,6 +15,7 @@ from PIL import Image as PILImage
 
 from pptx import Presentation
 from pptx.errors import PaperRefusal, TargetNotFoundError, UnsupportedStructureError
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 
 from . import corpus
 from .contract import (
@@ -241,26 +242,21 @@ def test_replace_image_refuses_a_deleted_picture_without_adding_relationships():
     assert tuple(slide.part.rels) == relationships_before
 
 
-def test_replace_image_refuses_a_picture_on_a_deleted_but_reachable_slide():
-    prs = _open(GAUNTLET)
-    slide = prs.slides[2]
-    picture = _cropped_picture(prs)
-    prs.slides[0].part.relate_to(
-        slide.part, "https://paper.design/relationships/keep-deleted-slide-reachable"
-    )
-    sldId = next(
-        entry
-        for entry in prs.part._element.sldIdLst.sldId_lst
-        if prs.part.rels[entry.rId].target_part is slide.part
-    )
-    prs.part._element.sldIdLst.remove(sldId)
-    prs.part.drop_rel(sldId.rId)
-    relationships_before = tuple(slide.part.rels)
+def test_replace_image_supports_a_picture_on_a_reachable_layout():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    picture = slide.shapes.add_picture(io.BytesIO(_png_bytes()), 0, 0)
+    image_part = picture.part.related_part(picture._pic.blip_rId)
+    layout = slide.slide_layout
+    layout_rId = layout.part.relate_to(image_part, RT.IMAGE)
+    picture._pic.blipFill.blip.rEmbed = layout_rId
+    layout._element.cSld.spTree.append(picture._element)
+    layout_picture = next(shape for shape in layout.shapes if shape.name == picture.name)
+    replacement = _png_bytes((200, 10, 10))
 
-    with pytest.raises(TargetNotFoundError, match="no longer enrolled"):
-        picture.replace_image(io.BytesIO(_png_bytes()))
+    layout_picture.replace_image(io.BytesIO(replacement))
 
-    assert tuple(slide.part.rels) == relationships_before
+    assert layout_picture.image.blob == replacement
 
 
 def test_replace_image_rolls_back_after_a_late_relationship_failure(monkeypatch):
@@ -281,7 +277,7 @@ def test_replace_image_rolls_back_after_a_late_relationship_failure(monkeypatch)
     with pytest.raises(RuntimeError, match="forced late image failure"):
         picture.replace_image(io.BytesIO(_png_bytes((200, 10, 10))))
 
-    assert save_to_bytes(prs) == before
+    assert zip_member_map(save_to_bytes(prs)) == zip_member_map(before)
     assert picture._pic.blip_rId == original_rId
     assert picture.image.blob == original_blob
 

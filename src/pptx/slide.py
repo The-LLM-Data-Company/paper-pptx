@@ -574,6 +574,19 @@ class Slides(ParentedElementProxy):
                     for rel in target.part.rels.values()
                     if not rel.is_external and rel.reltype == RT.NOTES_SLIDE
                 }
+                for notes_part in notes_owners:
+                    shared_notes = [
+                        (owner, notes_rId)
+                        for owner, notes_rId, _ in _inbound_relationships(
+                            self.part.package, notes_part
+                        )
+                        if owner is not target.part
+                    ]
+                    if shared_notes:
+                        raise UnsupportedStructureError(
+                            "slide deletion refused: its notes part is shared by another "
+                            "reachable package part"
+                        )
                 aliases = [
                     (owner, alias_rId)
                     for owner, alias_rId, _ in _inbound_relationships(
@@ -681,9 +694,10 @@ class HeaderFooters(object):
     master; the schema default is visible). Assigning |None| removes the attribute.
     """
 
-    def __init__(self, slide_elm):
+    def __init__(self, owner):
         super(HeaderFooters, self).__init__()
-        self._element = slide_elm
+        self._owner = owner
+        self._element = owner._element
 
     @property
     def slide_number_visible(self) -> bool | None:
@@ -716,14 +730,21 @@ class HeaderFooters(object):
         self._set_flag("dt", value)
 
     def _set_flag(self, attr_name: str, value: "bool | None") -> None:
-        if value is None:
-            hf = self._element.hf
-            if hf is not None:
-                setattr(hf, attr_name, None)
-            return
-        if not isinstance(value, bool):
+        from pptx._ownership import require_element_attached
+        from pptx._transaction import PackageTransaction
+
+        require_element_attached(
+            self._element, self._owner.part, argument="header/footer flags"
+        )
+        if not isinstance(value, bool) and value is not None:
             raise ValueError("visibility must be True, False, or None, got %r" % (value,))
-        setattr(self._element.get_or_add_hf(), attr_name, value)
+        with PackageTransaction(self._owner.part.package, self, self._owner):
+            if value is None:
+                hf = self._element.hf
+                if hf is not None:
+                    setattr(hf, attr_name, None)
+                return
+            setattr(self._element.get_or_add_hf(), attr_name, value)
 
 
 class SlideLayout(_BaseSlide):
@@ -737,7 +758,7 @@ class SlideLayout(_BaseSlide):
     @property
     def header_footers(self) -> HeaderFooters:
         """|HeaderFooters| flags for this layout (paper-pptx addition)."""
-        return HeaderFooters(self._element)
+        return HeaderFooters(self)
 
     def iter_cloneable_placeholders(self) -> Iterator[LayoutPlaceholder]:
         """Generate layout-placeholders on this slide-layout that should be cloned to a new slide.
@@ -893,7 +914,7 @@ class SlideMaster(_BaseMaster):
     @property
     def header_footers(self) -> HeaderFooters:
         """|HeaderFooters| flags for this master (paper-pptx addition)."""
-        return HeaderFooters(self._element)
+        return HeaderFooters(self)
 
     @lazyproperty
     def slide_layouts(self) -> SlideLayouts:

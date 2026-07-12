@@ -283,7 +283,6 @@ def _package_changes(source_a, prs_a, source_b, prs_b) -> tuple:
 
 def _source_package_map(source, prs, label: str) -> dict:
     """Read a path/stream package exactly; serialize only Presentation proxies."""
-    from pptx.errors import UnsupportedStructureError
     from pptx.package import _read_zip_map, _read_zip_map_from_bytes
     from pptx.presentation import Presentation as _PresentationProxy
 
@@ -297,14 +296,41 @@ def _source_package_map(source, prs, label: str) -> dict:
     position = source.tell()
     try:
         source.seek(0)
-        data = source.read()
-        if not isinstance(data, bytes):
-            raise UnsupportedStructureError(
-                "diff_decks refused: %s input stream must return bytes" % label
-            )
+        data = _read_stream_package_bytes(source, label)
         return _read_zip_map_from_bytes(data, "%s input" % label)
     finally:
         source.seek(position)
+
+
+def _read_stream_package_bytes(source, label: str) -> bytes:
+    """Read a package stream in bounded chunks with typed I/O failures."""
+    from pptx._zipguard import MAX_COMPRESSED_BYTES
+    from pptx.errors import PackageLimitError, UnsupportedStructureError
+
+    chunks = []
+    total = 0
+    try:
+        while True:
+            chunk = source.read(min(1024 * 1024, MAX_COMPRESSED_BYTES - total + 1))
+            if not isinstance(chunk, bytes):
+                raise UnsupportedStructureError(
+                    "diff_decks refused: %s input stream must return bytes" % label
+                )
+            if not chunk:
+                return b"".join(chunks)
+            total += len(chunk)
+            if total > MAX_COMPRESSED_BYTES:
+                raise PackageLimitError(
+                    "diff_decks refused: %s input stream exceeds the compressed package limit"
+                    % label
+                )
+            chunks.append(chunk)
+    except (PackageLimitError, UnsupportedStructureError):
+        raise
+    except (OSError, TypeError, ValueError) as exc:
+        raise UnsupportedStructureError(
+            "diff_decks refused: cannot read %s input stream (%s)" % (label, exc)
+        ) from exc
 
 
 def _open_deck(source):
@@ -568,8 +594,8 @@ def _diff_text(slide_a, slide_b) -> "List[dict]":
         block_b = blocks_b.get(key)
         text_a = block_a.text if block_a is not None else None
         text_b = block_b.text if block_b is not None else None
-        fields_a = block_a.fields if block_a is not None else ()
-        fields_b = block_b.fields if block_b is not None else ()
+        fields_a = _field_markers(block_a)
+        fields_b = _field_markers(block_b)
         if text_a != text_b or fields_a != fields_b:
             reference = block_b if block_b is not None else block_a
             change = {
@@ -580,10 +606,30 @@ def _diff_text(slide_a, slide_b) -> "List[dict]":
                 "after": text_b,
             }
             if fields_a != fields_b:
-                change["field_types_before"] = list(fields_a)
-                change["field_types_after"] = list(fields_b)
+                change["field_types_before"] = [field_type for _, field_type in fields_a]
+                change["field_types_after"] = [field_type for _, field_type in fields_b]
+                change["fields_before"] = [
+                    {"offset": offset, "type": field_type} for offset, field_type in fields_a
+                ]
+                change["fields_after"] = [
+                    {"offset": offset, "type": field_type} for offset, field_type in fields_b
+                ]
             changes.append(change)
     return changes
+
+
+def _field_markers(block) -> tuple:
+    """Return field types positioned in visible literal text, independent of run splitting."""
+    if block is None:
+        return ()
+    offset = 0
+    markers = []
+    for run in block.runs:
+        if run.field_type is not None:
+            markers.append((offset, run.field_type))
+        else:
+            offset += len(run.text)
+    return tuple(markers)
 
 
 def _notes_text(slide) -> "Optional[str]":

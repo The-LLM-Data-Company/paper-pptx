@@ -181,6 +181,23 @@ def test_seekable_stream_positions_survive_success_and_failure():
     assert unreadable.tell() == 3
 
 
+def test_exact_package_stream_read_failure_is_typed_and_restores_position():
+    class FailingExactRead(io.BytesIO):
+        def read(self, size=-1):
+            if self.tell() == 0 and size == 1024 * 1024:
+                raise OSError("forced exact-map read failure")
+            return super().read(size)
+
+    data = corpus.fixture_path("self_generated/minimal_clean.pptx").read_bytes()
+    source = FailingExactRead(data)
+    source.seek(17)
+
+    with pytest.raises(UnsupportedStructureError, match="cannot read before input stream"):
+        diff_decks(source, _path("self_generated/minimal_clean.pptx"))
+
+    assert source.tell() == 17
+
+
 # ------------------------------------------------------------------------------ detail levels
 
 
@@ -348,6 +365,32 @@ def test_field_type_change_is_reported_when_visible_text_is_unchanged():
     assert change["before"] == change["after"] == ""
     assert change["field_types_before"] == ["slidenum"]
     assert change["field_types_after"] == ["datetime1"]
+
+
+def test_field_movement_is_reported_without_false_formatting_shifts():
+    before = Presentation()
+    slide = before.slides.add_slide(before.slide_layouts[6])
+    paragraph = slide.shapes.add_textbox(0, 0, 914400, 914400).text_frame.paragraphs[0]
+    first = paragraph.add_run()
+    first.text = "Page "
+    first.font.bold = True
+    paragraph.add_slide_number_field()
+    paragraph.add_run().text = " of total"
+    stream = io.BytesIO()
+    before.save(stream)
+    after = Presentation(io.BytesIO(stream.getvalue()))
+    changed_paragraph = after.slides[0].shapes[0].text_frame.paragraphs[0]._p
+    field = changed_paragraph.find(qn("a:fld"))
+    changed_paragraph.remove(field)
+    pPr = changed_paragraph.find(qn("a:pPr"))
+    changed_paragraph.insert(1 if pPr is not None else 0, field)
+
+    report = diff_decks(before, after, detail="full")
+    change = report.slide_changes[0].text_changes[0]
+
+    assert change["fields_before"] == [{"offset": 5, "type": "slidenum"}]
+    assert change["fields_after"] == [{"offset": 0, "type": "slidenum"}]
+    assert report.slide_changes[0].effective_shifts == ()
 
 
 def test_full_detail_sees_emphasis_shifts():

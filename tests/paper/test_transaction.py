@@ -18,6 +18,19 @@ from pptx.util import Inches
 from .contract import save_to_bytes, zip_member_map
 
 
+class _MutatingBlobPart(Part):
+    """Custom part whose serialization mutates an unrelated live XML tree."""
+
+    def __init__(self, partname, content_type, package, blob, target_root):
+        super().__init__(partname, content_type, package, blob)
+        self._target_root = target_root
+
+    @property
+    def blob(self):
+        self._target_root.set("validation-dirty", "1")
+        return self._blob
+
+
 def _presentation_with_textbox(text="Before"):
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[6])
@@ -101,6 +114,40 @@ def test_successful_transaction_commits_a_reopenable_candidate():
     reopened = Presentation(io.BytesIO(save_to_bytes(prs)))
     assert shape.text == "After"
     assert reopened.slides[0].shapes[-1].text == "After"
+
+
+def test_candidate_without_presentation_root_refuses_and_rolls_back():
+    prs = Presentation()
+    package = prs.part.package
+    office_rId = next(
+        rId for rId, rel in package._rels.items() if rel.reltype == RT.OFFICE_DOCUMENT
+    )
+    office_part = package._rels[office_rId].target_part
+
+    with pytest.raises(UnsupportedStructureError, match="not a reopenable"):
+        with PackageTransaction(package):
+            package.drop_rel(office_rId)
+
+    assert package._rels[office_rId].target_part is office_part
+    Presentation(io.BytesIO(save_to_bytes(prs)))
+
+
+def test_successful_validation_restores_serialization_side_effects():
+    prs = Presentation()
+    root = prs.part._element
+    custom = _MutatingBlobPart(
+        PackURI("/custom/mutating.bin"),
+        "application/octet-stream",
+        prs.part.package,
+        b"payload",
+        root,
+    )
+    prs.part.package.relate_to(custom, "https://paper.example/relationships/mutating")
+
+    with PackageTransaction(prs.part.package):
+        pass
+
+    assert root.get("validation-dirty") is None
 
 
 def test_failure_restores_custom_xml_nodes_and_binary_payloads():

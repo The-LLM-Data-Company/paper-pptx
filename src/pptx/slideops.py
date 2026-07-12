@@ -74,6 +74,16 @@ class _CopySession(set):
         root = _xml_root(copied_part)
         if root is None:
             return
+        self.remap_element(root)
+        if not isinstance(copied_part, XmlPart):
+            from lxml import etree
+
+            copied_part.blob = etree.tostring(
+                root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
+
+    def remap_element(self, root) -> None:
+        """Apply this copy session's document-wide identity plan to an XML subtree."""
         for element in root.iter():
             if element.tag == _A16_CREATION_ID:
                 _replace_identity_attribute(element, "id", self._a16_mapping)
@@ -84,12 +94,6 @@ class _CopySession(set):
                 _replace_identity_attribute(element, "pred", self._a16_mapping)
             elif element.tag == _A_FIELD and element.get("id"):
                 element.set("id", self._fresh_guid())
-        if not isinstance(copied_part, XmlPart) and root is not None:
-            from lxml import etree
-
-            copied_part.blob = etree.tostring(
-                root, xml_declaration=True, encoding="UTF-8", standalone=True
-            )
 
     def _fresh_guid(self) -> str:
         while True:

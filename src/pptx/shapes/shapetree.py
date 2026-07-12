@@ -661,7 +661,12 @@ class SlideShapes(_BaseGroupShapes):
         from pptx._ownership import require_shape_attached, require_shape_tree_attached
         from pptx.errors import RelationshipPolicyError, TargetNotFoundError
         from pptx.opc.constants import RELATIONSHIP_TYPE as RT
-        from pptx.slideops import _copy_chart_part, _rewrite_r_references, _validate_chart_rels
+        from pptx.slideops import (
+            _copy_chart_part,
+            _CopySession,
+            _rewrite_r_references,
+            _validate_chart_rels,
+        )
 
         require_shape_tree_attached(self)
         require_shape_attached(shape)
@@ -707,11 +712,23 @@ class SlideShapes(_BaseGroupShapes):
             cNvPr.set("id", str(next_id))
             next_id += 1
 
+        copied_sources = [source_part]
+        for _, action, rel in plan:
+            if action != "chart":
+                continue
+            copied_sources.append(rel.target_part)
+            copied_sources.extend(
+                child.target_part
+                for child in rel.target_part.rels.values()
+                if not child.is_external
+            )
+        allocated = _CopySession(self.part.package, copied_sources)
+        allocated.remap_element(new_element)
+
         from pptx._transaction import PackageTransaction
 
         with PackageTransaction(self.part.package, self, shape):
             rId_mapping = {}
-            allocated: set = set()
             for old_rId, action, rel in plan:
                 if action == "external":
                     rId_mapping[old_rId] = self.part.rels.get_or_add_ext_rel(

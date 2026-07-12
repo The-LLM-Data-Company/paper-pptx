@@ -71,8 +71,8 @@ _SAFE_REPLACE_CHART_TYPES = frozenset(
 
 
 def _require_chart_attached(chart) -> None:
-    """Refuse a chart proxy detached from its live root or enrolled slide shape."""
-    from pptx.errors import TargetNotFoundError, materialize_slides
+    """Require exactly one reachable graphic-frame reference to this live chart part."""
+    from pptx.errors import TargetNotFoundError, UnsupportedStructureError
     from pptx.opc.constants import RELATIONSHIP_TYPE as RT
     from pptx.oxml.ns import qn
 
@@ -80,18 +80,27 @@ def _require_chart_attached(chart) -> None:
         raise TargetNotFoundError(
             "chart is stale: its XML root is no longer the live chart-part root"
         )
-    presentation = chart.part.package.presentation_part.presentation
-    for slide in materialize_slides(presentation, "replace_data_safe"):
-        for chart_ref in slide.part._element.iter(qn("c:chart")):
+    references = []
+    for owner in chart.part.package.iter_parts():
+        root = getattr(owner, "_element", None)
+        if root is None:
+            continue
+        for chart_ref in root.iter(qn("c:chart")):
             rId = chart_ref.get(qn("r:id"))
-            if not rId or rId not in slide.part.rels:
+            if not rId or rId not in owner.rels:
                 continue
-            rel = slide.part.rels[rId]
+            rel = owner.rels[rId]
             if not rel.is_external and rel.reltype == RT.CHART and rel.target_part is chart.part:
-                return
-    raise TargetNotFoundError(
-        "chart is stale: its chart part is no longer owned by a chart shape on an enrolled slide"
-    )
+                references.append((owner, chart_ref))
+    if not references:
+        raise TargetNotFoundError(
+            "chart is stale: its chart part is no longer referenced by a reachable chart shape"
+        )
+    if len(references) > 1:
+        raise UnsupportedStructureError(
+            "chart part is shared by multiple reachable chart shapes; replacing data would "
+            "silently change every shape that shares it"
+        )
 
 
 def _require_unshared_workbook(chart_part, xlsx_part) -> None:

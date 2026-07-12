@@ -130,8 +130,44 @@ def test_replace_data_safe_refuses_a_workbook_shared_by_another_reachable_chart(
     with pytest.raises(UnsupportedStructureError, match="workbook is shared"):
         chart.replace_data_safe(["new"], [("series", (9,))])
 
-    assert save_to_bytes(prs) == before
+    assert zip_member_map(save_to_bytes(prs)) == zip_member_map(before)
     assert other._workbook.xlsx_part is shared_workbook
+
+
+def test_replace_data_safe_refuses_a_chart_part_shared_by_two_shapes():
+    prs = _open(CHART_NOTES)
+    source_slide = prs.slides[0]
+    chart_shape = source_slide.shapes.shape_by_name(CHART_NAME)
+    chart = chart_shape.chart
+    other_slide = prs.slides.add_slide(prs.slide_layouts[6])
+    copied_frame = copy.deepcopy(chart_shape._element)
+    copied_frame.nvGraphicFramePr.cNvPr.set("id", "999")
+    copied_frame.nvGraphicFramePr.cNvPr.set("name", "Shared chart view")
+    rId = other_slide.part.relate_to(chart.part, RT.CHART)
+    copied_frame.find(".//%s" % qn("c:chart")).set(qn("r:id"), rId)
+    other_slide._element.cSld.spTree.append(copied_frame)
+
+    with pytest.raises(UnsupportedStructureError, match="shared by multiple"):
+        chart.replace_data_safe(["new"], [("series", (9,))])
+
+
+def test_replace_data_safe_supports_a_chart_on_a_reachable_layout():
+    prs = _open(CHART_NOTES)
+    slide = prs.slides[0]
+    chart_shape = slide.shapes.shape_by_name(CHART_NAME)
+    chart_part = chart_shape.chart.part
+    chart_ref = chart_shape._element.find(".//%s" % qn("c:chart"))
+    old_rId = chart_ref.get(qn("r:id"))
+    layout = slide.slide_layout
+    layout_rId = layout.part.relate_to(chart_part, RT.CHART)
+    chart_ref.set(qn("r:id"), layout_rId)
+    layout._element.cSld.spTree.append(chart_shape._element)
+    slide.part.drop_rel(old_rId)
+    layout_chart = next(shape.chart for shape in layout.shapes if shape.has_chart)
+
+    layout_chart.replace_data_safe(["new"], [("series", (9,))])
+
+    assert tuple(layout_chart.series[0].values) == (9.0,)
 
 
 def test_replace_data_safe_refuses_a_stale_chart_root():

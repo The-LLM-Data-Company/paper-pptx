@@ -37,6 +37,17 @@ def _footer_box(prs):
     return box
 
 
+def test_header_footer_flags_refuse_after_layout_removal():
+    prs = Presentation()
+    layout = prs.slide_layouts[0]
+    master = layout.slide_master
+    flags = layout.header_footers
+    master.slide_layouts.remove(layout)
+
+    with pytest.raises(TargetNotFoundError, match="stale"):
+        flags.footer_visible = False
+
+
 # ------------------------------------------------------------------------------ a:fld fields
 
 

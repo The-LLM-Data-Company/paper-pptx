@@ -16,7 +16,13 @@ from lxml import etree
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
-from pptx.errors import PaperRefusal, RelationshipPolicyError, TargetNotFoundError
+from pptx.errors import (
+    PaperRefusal,
+    RelationshipPolicyError,
+    TargetNotFoundError,
+    UnsupportedStructureError,
+)
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.slide import SlideClonePolicy
 from pptx.util import Inches
 
@@ -41,6 +47,20 @@ _RELS_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 
 def _open(relpath):
     return Presentation(str(corpus.fixture_path(relpath)))
+
+
+def test_delete_refuses_when_another_slide_shares_the_notes_part():
+    prs = Presentation()
+    first = prs.slides.add_slide(prs.slide_layouts[6])
+    second = prs.slides.add_slide(prs.slide_layouts[6])
+    notes_part = first.notes_slide.part
+    second.part.relate_to(notes_part, RT.NOTES_SLIDE)
+    before = zip_member_map(save_to_bytes(prs))
+
+    with pytest.raises(UnsupportedStructureError, match="notes part is shared"):
+        prs.slides.delete(first)
+
+    assert zip_member_map(save_to_bytes(prs)) == before
 
 
 def _assert_relationship_integrity(pptx_bytes):

@@ -705,12 +705,18 @@ def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
             for p in txBody.findall(qn("a:p")):
                 runs = tuple(
                     InspectedRun(
-                        "" if item.tag == qn("a:fld") else _run_text(item),
+                        (
+                            ""
+                            if item.tag == qn("a:fld")
+                            else "\v"
+                            if item.tag == qn("a:br")
+                            else _run_text(item)
+                        ),
                         _blind_font("table-cell"),
                         (item.get("type") or "") if item.tag == qn("a:fld") else None,
                     )
                     for item in p
-                    if item.tag in (qn("a:r"), qn("a:fld"))
+                    if item.tag in (qn("a:r"), qn("a:fld"), qn("a:br"))
                 )
                 _append_block(
                     blocks, partname, owner, p, runs, None, "table-cell", cell_detail, True
@@ -724,12 +730,18 @@ def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
             for p in txBody.findall(qn("a:p")):
                 runs = tuple(
                     InspectedRun(
-                        "" if item.tag == qn("a:fld") else _run_text(item),
+                        (
+                            ""
+                            if item.tag == qn("a:fld")
+                            else "\v"
+                            if item.tag == qn("a:br")
+                            else _run_text(item)
+                        ),
                         resolver.effective_font(item, owner),
                         (item.get("type") or "") if item.tag == qn("a:fld") else None,
                     )
                     for item in p
-                    if item.tag in (qn("a:r"), qn("a:fld"))
+                    if item.tag in (qn("a:r"), qn("a:fld"), qn("a:br"))
                 )
                 _append_block(
                     blocks, partname, owner, p, runs, placeholder_type, kind,
@@ -1056,7 +1068,7 @@ class _FontResolver(object):
             ]
         schemeClr = style_ref.find(qn("a:schemeClr"))
         if schemeClr is not None:
-            resolved = self._resolve_scheme_color(schemeClr.get("val"), [])
+            resolved = self._resolve_scheme_color(schemeClr.get("val"), [], partname)
             rgb = resolved.value if resolved.resolved else None
             return rgb, [
                 ProvenanceStep(
@@ -1093,13 +1105,13 @@ class _FontResolver(object):
                 )
             )
             if len(schemeClr):
-                base = self._resolve_scheme_color(schemeClr.get("val"), steps)
+                base = self._resolve_scheme_color(schemeClr.get("val"), steps, partname)
                 if not base.resolved or base.value is None:
                     return base
                 return self._transformed_color_value(
                     schemeClr, str(base.value), list(base.provenance)
                 )
-            return self._resolve_scheme_color(schemeClr.get("val"), steps)
+            return self._resolve_scheme_color(schemeClr.get("val"), steps, partname)
         steps.append(
             ProvenanceStep(
                 label,
@@ -1382,13 +1394,13 @@ class _FontResolver(object):
                     )
                 )
                 if len(schemeClr):
-                    base = self._resolve_scheme_color(schemeClr.get("val"), steps)
+                    base = self._resolve_scheme_color(schemeClr.get("val"), steps, partname)
                     if not base.resolved or base.value is None:
                         return base
                     return self._transformed_color_value(
                         schemeClr, str(base.value), list(base.provenance)
                     )
-                return self._resolve_scheme_color(schemeClr.get("val"), steps)
+                return self._resolve_scheme_color(schemeClr.get("val"), steps, partname)
             steps.append(
                 ProvenanceStep(
                     label,
@@ -1403,8 +1415,8 @@ class _FontResolver(object):
             return EffectiveValue(None, None, False, tuple(steps))
         return EffectiveValue(None, None, False, tuple(steps))
 
-    def _resolve_scheme_color(self, token, steps) -> EffectiveValue:
-        slot, map_step = self._map_scheme_token(token)
+    def _resolve_scheme_color(self, token, steps, source_partname) -> EffectiveValue:
+        slot, map_step = self._map_scheme_token(token, source_partname)
         steps.append(map_step)
         if slot is None:
             return EffectiveValue(None, None, False, tuple(steps))
@@ -1448,9 +1460,9 @@ class _FontResolver(object):
         )
         return EffectiveValue(rgb, None, rgb is not None, tuple(steps))
 
-    def _map_scheme_token(self, token):
+    def _map_scheme_token(self, token, source_partname):
         """Return (theme-slot, ProvenanceStep) for schemeClr `token`."""
-        override = self._clrMapOvr_mapping()
+        override = self._clrMapOvr_mapping(source_partname)
         if override is not None:
             mapping, source_label, source_part = override
         else:
@@ -1473,9 +1485,21 @@ class _FontResolver(object):
             source_label, source_part, "unmappable scheme color token %r" % token, False
         )
 
-    def _clrMapOvr_mapping(self):
-        """Return (mapping, label, partname) from the slide's clrMapOvr, or None to defer."""
-        clrMapOvr = self._slide_part._element.find(qn("p:clrMapOvr"))
+    def _clrMapOvr_mapping(self, source_partname):
+        """Return the color-map override belonging to the property source part."""
+        layout_partname = str(self._layout.part.partname)
+        master_partname = str(self._master.part.partname)
+        if source_partname == master_partname:
+            return None
+        if source_partname == layout_partname:
+            root = self._layout._element
+            label = "layout clrMapOvr"
+            partname = layout_partname
+        else:
+            root = self._slide_part._element
+            label = "slide clrMapOvr"
+            partname = str(self._slide_part.partname)
+        clrMapOvr = root.find(qn("p:clrMapOvr"))
         if clrMapOvr is None:
             return None
         overrideClrMapping = clrMapOvr.find(qn("a:overrideClrMapping"))
@@ -1483,8 +1507,8 @@ class _FontResolver(object):
             return None  # -- a:masterClrMapping (or empty): defer to the master's clrMap
         return (
             dict(overrideClrMapping.attrib),
-            "slide clrMapOvr",
-            str(self._slide_part.partname),
+            label,
+            partname,
         )
 
     # ------------------------------------------------------------------------- helpers

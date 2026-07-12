@@ -27,6 +27,7 @@ BRANDED = "self_generated/branded_template.pptx"
 CLRMAP = "self_generated/clrmap_remap.pptx"
 GAUNTLET = "self_generated/gauntlet.pptx"
 _A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_P = "http://schemas.openxmlformats.org/presentationml/2006/main"
 
 
 def _open(relpath):
@@ -60,6 +61,38 @@ def test_placeholder_inheritance_requires_an_exact_layout_idx_match():
 
     with pytest.raises(UnsupportedStructureError, match="requires an exact idx match"):
         title.text_frame.paragraphs[0].runs[0].effective_font()
+
+
+def test_layout_color_map_override_applies_to_layout_inherited_color():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[0])
+    title = slide.shapes.title
+    paragraph = title.text_frame.paragraphs[0]
+    paragraph.clear()
+    run = paragraph.add_run()
+    run.text = "Layout-mapped color"
+    layout = slide.slide_layout
+    layout_title = layout.placeholders.get(idx=title.placeholder_format.idx)
+    lst_style = layout_title._element.find("{%s}txBody/{%s}lstStyle" % (_P, _A))
+    level_properties = etree.SubElement(lst_style, "{%s}lvl1pPr" % _A)
+    default_run_properties = etree.SubElement(level_properties, "{%s}defRPr" % _A)
+    solid_fill = etree.SubElement(default_run_properties, "{%s}solidFill" % _A)
+    etree.SubElement(solid_fill, "{%s}schemeClr" % _A).set("val", "tx1")
+    clr_map_override = layout._element.find("{%s}clrMapOvr" % _P)
+    if clr_map_override is None:
+        clr_map_override = etree.SubElement(layout._element, "{%s}clrMapOvr" % _P)
+    else:
+        clr_map_override.clear()
+    override = etree.SubElement(clr_map_override, "{%s}overrideClrMapping" % _A)
+    mapping = dict(prs.slide_masters[0].element.find("{%s}clrMap" % _P).attrib)
+    mapping["tx1"] = "accent3"
+    for key, value in mapping.items():
+        override.set(key, value)
+
+    effective = run.effective_font().color_rgb
+
+    assert effective.value == "9BBB59"
+    assert any(step.level == "layout clrMapOvr" for step in effective.provenance)
 
 
 def test_title_name_resolves_through_master_theme_reference():

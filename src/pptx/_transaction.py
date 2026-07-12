@@ -486,7 +486,7 @@ class PackageTransaction:
 
     def _validate_candidate(self) -> None:
         """Validate the complete candidate using the ordinary-save output contract."""
-        validation_state = _ValidationReadState(self, snapshot_all_xml=False)
+        validation_state = _ValidationReadState(self)
         self._stage_and_reopen_candidate()
         cleanup_failures = validation_state.restore(force_element_restore=False)
         if cleanup_failures:
@@ -499,13 +499,21 @@ class PackageTransaction:
             )
 
     def _stage_and_reopen_candidate(self) -> None:
-        """Serialize privately and validate the candidate through the ordinary loader."""
+        """Serialize privately and validate through the public presentation loader."""
         from io import BytesIO
+
+        from pptx.api import Presentation
+        from pptx.errors import UnsupportedStructureError
 
         candidate = BytesIO()
         self._package.save(candidate)
         candidate.seek(0)
-        type(self._package).open(candidate)
+        try:
+            Presentation(candidate)
+        except Exception as exc:
+            raise UnsupportedStructureError(
+                "transaction candidate is not a reopenable PowerPoint presentation (%s)" % exc
+            ) from exc
 
     def _validated_reachable_part_dicts(
         self, package_dict: dict

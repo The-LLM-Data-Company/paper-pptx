@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 
 import pytest
+from lxml import etree
 
 from pptx import Presentation
 from pptx.errors import (
@@ -204,6 +205,35 @@ def test_move_rejects_bad_indices_and_foreign_shapes():
 
 
 # --------------------------------------------------------------------------------- add_copy
+
+
+def test_add_copy_remaps_document_wide_shape_creation_identity():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    source = slide.shapes.add_textbox(0, 0, Emu(914400), Emu(914400))
+    cNvPr = source._element.find(
+        ".//{http://schemas.openxmlformats.org/presentationml/2006/main}cNvPr"
+    )
+    extLst = etree.SubElement(
+        cNvPr, "{http://schemas.openxmlformats.org/drawingml/2006/main}extLst"
+    )
+    ext = etree.SubElement(
+        extLst,
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}ext",
+        uri="{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}",
+    )
+    creation = etree.SubElement(
+        ext,
+        "{http://schemas.microsoft.com/office/drawing/2014/main}creationId",
+    )
+    creation.set("id", "{11111111-1111-1111-1111-111111111111}")
+
+    copied = slide.shapes.add_copy(source)
+
+    copied_creation = copied._element.find(
+        ".//{http://schemas.microsoft.com/office/drawing/2014/main}creationId"
+    )
+    assert copied_creation.get("id") != creation.get("id")
 
 
 def test_add_copy_of_chart_shape_deep_copies_chart_and_workbook():

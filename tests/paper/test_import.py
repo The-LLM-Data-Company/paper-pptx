@@ -20,6 +20,7 @@ from pptx.errors import (
     TargetNotFoundError,
     UnsupportedStructureError,
 )
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 
 from . import corpus
 from .contract import (
@@ -32,6 +33,22 @@ from .contract import (
 from .idlists import dangling_section_slide_ids, duplicate_section_slide_ids
 from .lo import lo_load_smoke
 from .relint import dangling_relationship_targets, missing_relationship_references
+
+
+def test_import_refuses_a_source_relationship_target_owned_by_another_package():
+    dest = Presentation()
+    dest.slides.add_slide(dest.slide_layouts[6])
+    source = _open("self_generated/minimal_clean.pptx")
+    foreign = _open("self_generated/gauntlet.pptx")
+    foreign_picture = foreign.slides[1].shapes.picture_by_name("gauntlet_img_1")
+    foreign_image = foreign_picture.part.related_part(foreign_picture._pic.blip_rId)
+    source.slides[0].part.relate_to(foreign_image, RT.IMAGE)
+    before = zip_member_map(save_to_bytes(dest))
+
+    with pytest.raises(RelationshipPolicyError, match="owned by another package"):
+        dest.import_slide(source, 0, mode="adopt_theme")
+
+    assert zip_member_map(save_to_bytes(dest)) == before
 
 ALPHA = "self_generated/template_alpha.pptx"
 BETA = "self_generated/template_beta.pptx"

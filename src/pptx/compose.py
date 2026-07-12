@@ -304,7 +304,9 @@ def _validated_transplant_plan(source_part, notes: bool):
         rel = source_part.rels[rId]
         if rel.is_external:
             plan.append((rId, "external", rel))
-        elif rel.reltype == RT.SLIDE_LAYOUT:
+            continue
+        _owned_source_target(source_part, rel, "slide import")
+        if rel.reltype == RT.SLIDE_LAYOUT:
             plan.append((rId, "layout", rel))
         elif rel.reltype in _MEDIA_RELTYPES:
             plan.append((rId, "media", rel))  # -- cross-package media ALWAYS copies
@@ -338,6 +340,7 @@ def _validate_dgm_rels(dgm_part) -> None:
     for rel in dgm_part.rels.values():
         if rel.is_external:
             continue
+        _owned_source_target(dgm_part, rel, "diagram import")
         if rel.reltype not in _MEDIA_RELTYPES:
             raise RelationshipPolicyError(
                 "SmartArt part %s has relationship type import does not support: %s"
@@ -414,6 +417,7 @@ def _validate_support_chain(source_layout) -> None:
         for rel in part.rels.values():
             if rel.is_external:
                 continue
+            _owned_source_target(part, rel, "support-chain import")
             if rel.reltype not in allowed:
                 raise RelationshipPolicyError(
                     "support part %s has relationship type import does not support: %s"
@@ -421,11 +425,29 @@ def _validate_support_chain(source_layout) -> None:
                 )
     theme_part = master_part.part_related_by(RT.THEME)
     for rel in theme_part.rels.values():
+        if not rel.is_external:
+            _owned_source_target(theme_part, rel, "theme import")
         if not rel.is_external and rel.reltype not in _MEDIA_RELTYPES:
             raise RelationshipPolicyError(
                 "theme part %s has relationship type import does not support: %s"
                 % (theme_part.partname, rel.reltype)
             )
+
+
+def _owned_source_target(owner_part, rel, context: str):
+    """Return an internal target only when it belongs to the source package."""
+    try:
+        target = rel.target_part
+    except (AssertionError, AttributeError, TypeError, ValueError) as exc:
+        raise RelationshipPolicyError(
+            "%s relationship %s has an invalid internal target" % (context, rel.rId)
+        ) from exc
+    if target.package is not owner_part.package:
+        raise RelationshipPolicyError(
+            "%s relationship %s targets a part owned by another package"
+            % (context, rel.rId)
+        )
+    return target
 
 
 def _resolved_run_values(shape) -> list:

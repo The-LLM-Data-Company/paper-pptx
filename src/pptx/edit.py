@@ -285,10 +285,14 @@ def _block_paragraph(prs, anchor: BlockAnchor):
 
 def _paragraph_text(p) -> str:
     """Concatenated `a:r` run text of `p` — same definition `inspect_text` hashes."""
-    return "".join(
-        (r.find(qn("a:t")).text or "") if r.find(qn("a:t")) is not None else ""
-        for r in p.findall(qn("a:r"))
-    )
+    pieces = []
+    for child in p:
+        if child.tag == qn("a:r"):
+            text = child.find(qn("a:t"))
+            pieces.append((text.text or "") if text is not None else "")
+        elif child.tag == qn("a:br"):
+            pieces.append("\v")
+    return "".join(pieces)
 
 
 def _replace_in_paragraph(p, find: str, replace: str) -> int:
