@@ -113,6 +113,26 @@ def scrub_presentation(
     embedded_fonts: bool = False,
 ) -> ScrubReport:
     """Perform the toggled scrub passes as one refusal-atomic operation."""
+    toggles = {
+        "notes": notes,
+        "comments": comments,
+        "metadata": metadata,
+        "hidden_slides": hidden_slides,
+        "unused_layouts": unused_layouts,
+        "unused_masters": unused_masters,
+        "unreachable_media": unreachable_media,
+        "embedded_fonts": embedded_fonts,
+    }
+    _validate_toggles(toggles)
+    if not any(toggles.values()):
+        return ScrubReport(
+            notes_master_retained=any(
+                rel.reltype.endswith("/notesMaster")
+                for rel in prs.part.rels.values()
+                if not rel.is_external
+            )
+        )
+
     from pptx._transaction import PackageTransaction
 
     with PackageTransaction(prs.part.package, prs):
@@ -152,9 +172,7 @@ def _scrub_presentation(
         "unreachable_media": unreachable_media,
         "embedded_fonts": embedded_fonts,
     }
-    for name, value in toggles.items():
-        if not isinstance(value, bool):
-            raise ValueError("%s must be True or False, got %r" % (name, value))
+    _validate_toggles(toggles)
 
     from pptx.errors import UnsupportedStructureError, materialize_slides
 
@@ -413,3 +431,10 @@ def _scrub_presentation(
         parts_removed=tuple(sorted(parts_removed)),
         parts_modified=tuple(sorted(modified)),
     )
+
+
+def _validate_toggles(toggles: dict) -> None:
+    """Raise |ValueError| unless every scrub toggle is boolean."""
+    for name, value in toggles.items():
+        if not isinstance(value, bool):
+            raise ValueError("%s must be True or False, got %r" % (name, value))

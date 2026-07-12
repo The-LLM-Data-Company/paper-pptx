@@ -172,6 +172,7 @@ class OpcPackage(_RelatableMixin):
             PackageWriter.write(staged, self._rels, parts)
             staged.seek(0)
 
+            original_position = None
             try:
                 original_position = stream.tell()
                 stream.seek(0, os.SEEK_END)
@@ -186,13 +187,26 @@ class OpcPackage(_RelatableMixin):
                     raise OSError("could not snapshot complete destination stream")
                 truncate = stream.truncate
                 stream.seek(0)
-            except PackageLimitError:
+            except BaseException as setup_error:
+                if original_position is not None:
+                    try:
+                        stream.seek(original_position)
+                        if stream.tell() != original_position:
+                            raise OSError("destination stream did not restore its position")
+                    except BaseException as restore_error:
+                        raise RuntimeError(
+                            "package stream setup failed and the original position could not "
+                            "be restored"
+                        ) from restore_error
+                if isinstance(setup_error, PackageLimitError):
+                    raise
+                if isinstance(setup_error, (AttributeError, OSError, TypeError, ValueError)):
+                    raise UnsupportedStructureError(
+                        "saving to a stream requires readable, seekable, truncatable "
+                        "binary I/O (%s)"
+                        % setup_error
+                    ) from setup_error
                 raise
-            except (AttributeError, OSError, TypeError, ValueError) as exc:
-                raise UnsupportedStructureError(
-                    "saving to a stream requires readable, seekable, truncatable binary I/O (%s)"
-                    % exc
-                ) from exc
 
             try:
                 while True:

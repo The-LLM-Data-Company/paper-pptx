@@ -468,6 +468,23 @@ def test_unreadable_package_refuses_typed(tmp_path):
         diff_decks(str(garbage), _path(V1))
 
 
+def test_text_diff_refuses_notes_without_a_body_placeholder():
+    from pptx.enum.shapes import PP_PLACEHOLDER
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    notes_slide = slide.notes_slide
+    body = next(
+        shape
+        for shape in notes_slide.placeholders
+        if shape.placeholder_format.type == PP_PLACEHOLDER.BODY
+    )
+    body._element.getparent().remove(body._element)
+
+    with pytest.raises(UnsupportedStructureError, match="no body placeholder"):
+        diff_decks(prs, prs, detail="text")
+
+
 # ------------------------------------------------------------------ typed refusals on bad input
 
 

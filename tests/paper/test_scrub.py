@@ -126,6 +126,31 @@ def test_noop_scrub_changes_nothing():
     assert report.parts_modified == ()
 
 
+def test_noop_scrub_accepts_a_signed_deck_but_still_validates_toggles():
+    from pptx.opc.constants import CONTENT_TYPE as CT
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    from pptx.opc.package import Part
+    from pptx.opc.packuri import PackURI
+
+    prs = Presentation()
+    package = prs.part.package
+    signature_origin = Part(
+        PackURI("/_xmlsignatures/origin.sigs"),
+        CT.OPC_DIGITAL_SIGNATURE_ORIGIN,
+        package,
+        b"signed",
+    )
+    signature_rId = package.relate_to(signature_origin, RT.ORIGIN)
+
+    report = prs.scrub()
+
+    assert report.parts_removed == ()
+    assert report.parts_modified == ()
+    assert package._rels[signature_rId].target_part is signature_origin
+    with pytest.raises(ValueError, match="notes must be True or False"):
+        prs.scrub(notes=1)
+
+
 # ------------------------------------------------------------------- individual toggles
 
 

@@ -175,6 +175,52 @@ def test_stream_save_failure_restores_existing_bytes_and_position():
     assert destination.tell() == 7
 
 
+def test_oversized_stream_save_refusal_restores_position():
+    from pptx._zipguard import MAX_COMPRESSED_BYTES
+
+    class OversizedDestination(io.BytesIO):
+        def __init__(self, initial):
+            super().__init__(initial)
+            self._at_reported_end = False
+
+        def seek(self, offset, whence=os.SEEK_SET):
+            self._at_reported_end = whence == os.SEEK_END
+            return super().seek(offset, whence)
+
+        def tell(self):
+            if self._at_reported_end:
+                return MAX_COMPRESSED_BYTES + 1
+            return super().tell()
+
+    presentation = Presentation(_minimal_path())
+    original = b"ORIGINAL STREAM CONTENT"
+    destination = OversizedDestination(original)
+    destination.seek(7)
+
+    with pytest.raises(PackageLimitError, match="destination stream exceeds"):
+        presentation.save(destination)
+
+    assert destination.getvalue() == original
+    assert destination.tell() == 7
+
+
+def test_stream_snapshot_failure_restores_position():
+    class UnreadableDestination(io.BytesIO):
+        def read(self, size=-1):
+            raise OSError("forced snapshot read failure")
+
+    presentation = Presentation(_minimal_path())
+    original = b"ORIGINAL STREAM CONTENT"
+    destination = UnreadableDestination(original)
+    destination.seek(7)
+
+    with pytest.raises(PaperRefusal, match="readable, seekable, truncatable"):
+        presentation.save(destination)
+
+    assert destination.getvalue() == original
+    assert destination.tell() == 7
+
+
 def test_successful_path_save_preserves_existing_mode(tmp_path):
     presentation = Presentation(_minimal_path())
     destination = tmp_path / "existing.pptx"
