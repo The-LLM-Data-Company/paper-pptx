@@ -378,7 +378,7 @@ def _compute_mapping(slide_phs, target_layout, placeholder_map):
 # ------------------------------------------------------------------------ resolve and bake
 
 
-def _resolution_state(slide):
+def _resolution_state(slide, *, align_by_content: bool = False):
     """(comparable values, payload) per run, keyed (shape_id, block_ordinal, run_index).
 
     The key is shape-scoped so shapes appearing or disappearing elsewhere on the slide
@@ -391,12 +391,20 @@ def _resolution_state(slide):
     for block in inspect_text(slide).blocks:
         ordinal = block_ordinals.get(block.shape_id, 0)
         block_ordinals[block.shape_id] = ordinal + 1
-        literal_runs = [
-            run for run in block.runs if run.field_type is None and run.text != "\v"
+        runs = [run for run in block.runs if run.text != "\v"]
+        identities = [
+            ("field", run.field_type) if run.field_type is not None else ("text", run.text)
+            for run in runs
         ]
-        for run_index, run in enumerate(literal_runs):
+        for run_index, (run, identity) in enumerate(zip(runs, identities)):
+            if align_by_content and (not identity[1] or identities.count(identity) != 1):
+                continue
             font = run.font
-            key = (block.shape_id, ordinal, run_index)
+            key = (
+                (block.shape_id, ordinal, identity)
+                if align_by_content
+                else (block.shape_id, ordinal, run_index)
+            )
             values = (
                 font.size.value,
                 font.name.value,
@@ -405,22 +413,22 @@ def _resolution_state(slide):
                 font.italic.value if font.italic is not None else None,
                 font.underline.value if font.underline is not None else None,
             )
-            state[key] = (values, run.text, block.anchor.part, font.to_dict())
+            state[key] = (values, run.text, block.anchor.part, font.to_dict(), run_index)
     return state
 
 
 def _shifts_between(before_state, after_state) -> "Tuple[RunShift, ...]":
     shifts = []
     for key in sorted(set(before_state) & set(after_state)):
-        before_values, text, part, before_payload = before_state[key]
-        after_values, _, _, after_payload = after_state[key]
+        before_values, text, part, before_payload, run_index = before_state[key]
+        after_values, _, _, after_payload, _ = after_state[key]
         if before_values != after_values:
             shifts.append(
                 RunShift(
                     part=part,
                     shape_id=key[0],
                     block_ordinal=key[1],
-                    run_index=key[2],
+                    run_index=run_index,
                     text=text,
                     before=before_payload,
                     after=after_payload,

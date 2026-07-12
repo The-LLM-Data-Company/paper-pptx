@@ -393,6 +393,30 @@ def test_field_movement_is_reported_without_false_formatting_shifts():
     assert report.slide_changes[0].effective_shifts == ()
 
 
+def test_inserted_literal_run_does_not_create_false_formatting_shifts():
+    before = Presentation()
+    slide = before.slides.add_slide(before.slide_layouts[6])
+    paragraph = slide.shapes.add_textbox(0, 0, 914400, 914400).text_frame.paragraphs[0]
+    first = paragraph.add_run()
+    first.text = "A"
+    first.font.bold = True
+    paragraph.add_run().text = "B"
+    stream = io.BytesIO()
+    before.save(stream)
+    after = Presentation(io.BytesIO(stream.getvalue()))
+    changed = after.slides[0].shapes[0].text_frame.paragraphs[0]
+    inserted = changed.add_run()
+    inserted.text = "X"
+    inserted.font.italic = True
+    changed._p.remove(inserted._r)
+    first_run = changed._p.find(qn("a:r"))
+    first_run.addprevious(inserted._r)
+
+    report = diff_decks(before, after, detail="full")
+
+    assert report.slide_changes[0].effective_shifts == ()
+
+
 def test_full_detail_sees_emphasis_shifts():
     """Regression: bold/italic/underline participate in resolution-state
     comparison - a mutant dropping them must fail here."""

@@ -161,7 +161,62 @@ class OpcPackage(_RelatableMixin):
         if isinstance(pkg_file, (str, os.PathLike)):
             self._save_path_atomically(os.fspath(pkg_file), parts)
             return
-        PackageWriter.write(pkg_file, self._rels, parts)
+        self._save_stream_atomically(pkg_file, parts)
+
+    def _save_stream_atomically(self, stream: IO[bytes], parts: tuple[Part, ...]) -> None:
+        """Stage output and restore a seekable destination if publishing fails."""
+        from pptx._zipguard import MAX_COMPRESSED_BYTES
+        from pptx.errors import PackageLimitError, UnsupportedStructureError
+
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as staged:
+            PackageWriter.write(staged, self._rels, parts)
+            staged.seek(0)
+
+            try:
+                original_position = stream.tell()
+                stream.seek(0, os.SEEK_END)
+                original_size = stream.tell()
+                if original_size > MAX_COMPRESSED_BYTES:
+                    raise PackageLimitError(
+                        "existing package destination stream exceeds the compressed package limit"
+                    )
+                stream.seek(0)
+                original = stream.read(original_size)
+                if not isinstance(original, bytes) or len(original) != original_size:
+                    raise OSError("could not snapshot complete destination stream")
+                truncate = stream.truncate
+                stream.seek(0)
+            except PackageLimitError:
+                raise
+            except (AttributeError, OSError, TypeError, ValueError) as exc:
+                raise UnsupportedStructureError(
+                    "saving to a stream requires readable, seekable, truncatable binary I/O (%s)"
+                    % exc
+                ) from exc
+
+            try:
+                while True:
+                    chunk = staged.read(64 * 1024)
+                    if not chunk:
+                        break
+                    written = stream.write(chunk)
+                    if written is not None and written != len(chunk):
+                        raise OSError("destination stream performed a short write")
+                truncate()
+            except BaseException as publish_error:
+                try:
+                    stream.seek(0)
+                    written = stream.write(original)
+                    if written is not None and written != len(original):
+                        raise OSError("destination stream performed a short restore write")
+                    truncate()
+                    stream.seek(original_position)
+                except BaseException as restore_error:
+                    raise RuntimeError(
+                        "package stream write failed and the original destination could not "
+                        "be restored"
+                    ) from restore_error
+                raise publish_error
 
     def _save_path_atomically(self, path: str, parts: tuple[Part, ...]) -> None:
         """Serialize beside `path` and replace it only after a complete successful write."""

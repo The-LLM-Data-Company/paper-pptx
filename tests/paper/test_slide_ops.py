@@ -63,6 +63,34 @@ def test_delete_refuses_when_another_slide_shares_the_notes_part():
     assert zip_member_map(save_to_bytes(prs)) == before
 
 
+@pytest.mark.parametrize(("operation", "method_name"), [("move", "insert"), ("reorder", "append")])
+def test_slide_reordering_rolls_back_a_late_xml_failure(monkeypatch, operation, method_name):
+    prs = _open(GAUNTLET)
+    slides = prs.slides
+    before = zip_member_map(save_to_bytes(prs))
+    list_type = type(slides._sldIdLst)
+    original = getattr(list_type, method_name)
+    failed = False
+
+    def fail_after_write(element, *args):
+        nonlocal failed
+        result = original(element, *args)
+        if element is slides._sldIdLst and not failed:
+            failed = True
+            raise RuntimeError("forced late slide-order failure")
+        return result
+
+    monkeypatch.setattr(list_type, method_name, fail_after_write)
+    with pytest.raises(RuntimeError, match="forced late slide-order failure"):
+        if operation == "move":
+            slides.move(3, 0)
+        else:
+            slides.reorder([3, 2, 1, 0])
+
+    assert zip_member_map(save_to_bytes(prs)) == before
+    assert slides is prs.slides
+
+
 def _assert_relationship_integrity(pptx_bytes):
     zip_map = zip_member_map(pptx_bytes)
     assert dangling_relationship_targets(zip_map) == []

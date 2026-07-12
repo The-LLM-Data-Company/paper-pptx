@@ -627,8 +627,11 @@ class Slides(ParentedElementProxy):
             )
         current_index = self.index(target)
         sldId = self._sldIdLst.sldId_lst[current_index]
-        self._sldIdLst.remove(sldId)
-        self._sldIdLst.insert(to_index, sldId)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self, target):
+            self._sldIdLst.remove(sldId)
+            self._sldIdLst.insert(to_index, sldId)
 
     def reorder(self, new_order: Sequence[int]) -> None:
         """Permute the slide sequence: new position i shows the slide now at `new_order[i]`.
@@ -642,8 +645,11 @@ class Slides(ParentedElementProxy):
                 % (len(self), list(new_order))
             )
         current = list(self._sldIdLst.sldId_lst)
-        for index in new_order:
-            self._sldIdLst.append(current[index])  # -- re-appending moves the element
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            for index in new_order:
+                self._sldIdLst.append(current[index])  # -- re-appending moves the element
 
     def _resolve_slide(self, value: Slide | int) -> Slide:
         """Return the |Slide| in this collection for `value` (a Slide or 0-based index).

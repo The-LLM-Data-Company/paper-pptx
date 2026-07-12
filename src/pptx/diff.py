@@ -457,7 +457,8 @@ def _diff_slide(slide_id, slide_a, slide_b, detail) -> SlideChange:
         from pptx.rebind import _resolution_state, _shifts_between
 
         effective_shifts = _shifts_between(
-            _resolution_state(slide_a), _resolution_state(slide_b)
+            _resolution_state(slide_a, align_by_content=True),
+            _resolution_state(slide_b, align_by_content=True),
         )
 
     return SlideChange(

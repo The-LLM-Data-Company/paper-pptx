@@ -150,6 +150,31 @@ def test_path_save_failure_preserves_existing_file_and_mode(tmp_path, monkeypatc
     assert not list(tmp_path.glob(".existing.pptx.*.partial"))
 
 
+def test_stream_save_failure_restores_existing_bytes_and_position():
+    class FailingOnceStream(io.BytesIO):
+        def __init__(self, initial):
+            super().__init__(initial)
+            self._fail_next_write = True
+
+        def write(self, data):
+            if self._fail_next_write:
+                self._fail_next_write = False
+                super().write(data[: min(16, len(data))])
+                raise OSError("forced destination write failure")
+            return super().write(data)
+
+    presentation = Presentation(_minimal_path())
+    original = b"ORIGINAL STREAM CONTENT"
+    destination = FailingOnceStream(original)
+    destination.seek(7)
+
+    with pytest.raises(OSError, match="forced destination write failure"):
+        presentation.save(destination)
+
+    assert destination.getvalue() == original
+    assert destination.tell() == 7
+
+
 def test_successful_path_save_preserves_existing_mode(tmp_path):
     presentation = Presentation(_minimal_path())
     destination = tmp_path / "existing.pptx"
