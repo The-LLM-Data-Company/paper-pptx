@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -158,66 +159,152 @@ def diff_decks(path_a, path_b, *, detail: str = "structure") -> DeckDiff:
         )
     from pptx.errors import materialize_slides
 
-    prs_a = _open_deck(path_a)
-    prs_b = _open_deck(path_b)
-    package_changes = _package_changes(prs_a, prs_b)
+    stream_positions = _stream_positions(path_a, path_b)
+    try:
+        prs_a = _open_deck(path_a)
+        prs_b = _open_deck(path_b)
+        package_changes = _package_changes(path_a, prs_a, path_b, prs_b)
 
-    order_a = [(slide.slide_id, slide) for slide in materialize_slides(prs_a, "diff_decks")]
-    order_b = [(slide.slide_id, slide) for slide in materialize_slides(prs_b, "diff_decks")]
-    ids_a = [slide_id for slide_id, _ in order_a]
-    ids_b = [slide_id for slide_id, _ in order_b]
-    position_a = {slide_id: index for index, (slide_id, _) in enumerate(order_a)}
-    position_b = {slide_id: index for index, (slide_id, _) in enumerate(order_b)}
-    common = set(ids_a) & set(ids_b)
+        order_a = [(slide.slide_id, slide) for slide in materialize_slides(prs_a, "diff_decks")]
+        order_b = [(slide.slide_id, slide) for slide in materialize_slides(prs_b, "diff_decks")]
+        ids_a = [slide_id for slide_id, _ in order_a]
+        ids_b = [slide_id for slide_id, _ in order_b]
+        position_a = {slide_id: index for index, (slide_id, _) in enumerate(order_a)}
+        position_b = {slide_id: index for index, (slide_id, _) in enumerate(order_b)}
+        common = set(ids_a) & set(ids_b)
 
-    slides_added = tuple(
-        SlideRef(slide_id, position_b[slide_id], _title_of(slide))
-        for slide_id, slide in order_b
-        if slide_id not in common
-    )
-    slides_removed = tuple(
-        SlideRef(slide_id, position_a[slide_id], _title_of(slide))
-        for slide_id, slide in order_a
-        if slide_id not in common
-    )
+        slides_added = tuple(
+            SlideRef(slide_id, position_b[slide_id], _title_of(slide))
+            for slide_id, slide in order_b
+            if slide_id not in common
+        )
+        slides_removed = tuple(
+            SlideRef(slide_id, position_a[slide_id], _title_of(slide))
+            for slide_id, slide in order_a
+            if slide_id not in common
+        )
 
-    common_a = [slide_id for slide_id in ids_a if slide_id in common]
-    common_b = [slide_id for slide_id in ids_b if slide_id in common]
-    stationary = _longest_common_subsequence(common_a, common_b)
-    slides_moved = tuple(
-        MovedSlide(slide_id, position_a[slide_id], position_b[slide_id])
-        for slide_id in common_b  # -- destination order, deterministic
-        if slide_id not in stationary
-    )
+        common_a = [slide_id for slide_id in ids_a if slide_id in common]
+        common_b = [slide_id for slide_id in ids_b if slide_id in common]
+        stationary = _longest_common_subsequence(common_a, common_b)
+        slides_moved = tuple(
+            MovedSlide(slide_id, position_a[slide_id], position_b[slide_id])
+            for slide_id in common_b  # -- destination order, deterministic
+            if slide_id not in stationary
+        )
 
-    slide_a_by_id = dict(order_a)
-    slide_b_by_id = dict(order_b)
-    changes = []
-    for slide_id in common_b:
-        change = _diff_slide(slide_id, slide_a_by_id[slide_id], slide_b_by_id[slide_id], detail)
-        if not change.is_empty:
-            changes.append(change)
+        slide_a_by_id = dict(order_a)
+        slide_b_by_id = dict(order_b)
+        changes = []
+        for slide_id in common_b:
+            change = _diff_slide(
+                slide_id, slide_a_by_id[slide_id], slide_b_by_id[slide_id], detail
+            )
+            if not change.is_empty:
+                changes.append(change)
 
-    return DeckDiff(
-        detail=detail,
-        slides_added=slides_added,
-        slides_removed=slides_removed,
-        slides_moved=slides_moved,
-        slide_changes=tuple(changes),
-        package_changes=package_changes,
-    )
+        return DeckDiff(
+            detail=detail,
+            slides_added=slides_added,
+            slides_removed=slides_removed,
+            slides_moved=slides_moved,
+            slide_changes=tuple(changes),
+            package_changes=package_changes,
+        )
+    finally:
+        _restore_stream_positions(stream_positions)
 
 
-def _package_changes(prs_a, prs_b) -> tuple:
-    """Return semantic package deltas for the serialized in-memory presentations."""
-    from pptx.package import _diff_maps, _read_zip_map_from_bytes
+def _stream_positions(*sources):
+    """Capture supported stream positions so diffing is observationally read-only."""
+    from pptx.errors import UnsupportedStructureError
+    from pptx.presentation import Presentation as _PresentationProxy
 
-    buffers = []
-    for prs in (prs_a, prs_b):
+    positions = []
+    seen = set()
+    for source in sources:
+        if isinstance(source, (_PresentationProxy, str, bytes, os.PathLike)):
+            continue
+        if id(source) in seen:
+            continue
+        seen.add(id(source))
+        if not hasattr(source, "read"):
+            raise UnsupportedStructureError(
+                "diff_decks refused: inputs must be paths, Presentation objects, or "
+                "seekable binary streams"
+            )
+        try:
+            if hasattr(source, "seekable") and not source.seekable():
+                raise OSError("stream reports that it is not seekable")
+            position = source.tell()
+            if type(position) is not int or position < 0:
+                raise UnsupportedStructureError(
+                    "diff_decks refused: stream tell() must return a nonnegative integer"
+                )
+            source.seek(position)
+        except UnsupportedStructureError:
+            raise
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            raise UnsupportedStructureError(
+                "diff_decks refused: non-seekable input streams are unsupported (%s)" % exc
+            ) from exc
+        positions.append((source, position))
+    return tuple(positions)
+
+
+def _restore_stream_positions(stream_positions) -> None:
+    """Attempt every stream restore before reporting an aggregate typed failure."""
+    from pptx.errors import UnsupportedStructureError
+
+    failures = []
+    for index, (stream, position) in enumerate(stream_positions):
+        try:
+            stream.seek(position)
+            if stream.tell() != position:
+                raise OSError("stream did not restore to %d" % position)
+        except Exception as exc:  # noqa: BLE001 - aggregate all restore failures
+            failures.append((index, exc))
+    if failures:
+        index, exc = failures[0]
+        raise UnsupportedStructureError(
+            "diff_decks could not restore %d input stream position(s); first failure was "
+            "input %d (%s)" % (len(failures), index, type(exc).__name__)
+        ) from exc
+
+
+def _package_changes(source_a, prs_a, source_b, prs_b) -> tuple:
+    """Return semantic deltas from the exact supplied packages when recoverable."""
+    from pptx.package import _diff_maps
+
+    map_a = _source_package_map(source_a, prs_a, "before")
+    map_b = _source_package_map(source_b, prs_b, "after")
+    return _diff_maps(map_a, map_b, "before", "after").deltas
+
+
+def _source_package_map(source, prs, label: str) -> dict:
+    """Read a path/stream package exactly; serialize only Presentation proxies."""
+    from pptx.errors import UnsupportedStructureError
+    from pptx.package import _read_zip_map, _read_zip_map_from_bytes
+    from pptx.presentation import Presentation as _PresentationProxy
+
+    if isinstance(source, _PresentationProxy):
         buffer = io.BytesIO()
         prs.save(buffer)
-        buffers.append(_read_zip_map_from_bytes(buffer.getvalue(), "diff_decks input"))
-    return _diff_maps(buffers[0], buffers[1], "before", "after").deltas
+        return _read_zip_map_from_bytes(buffer.getvalue(), "%s normalized input" % label)
+    if isinstance(source, (str, bytes, os.PathLike)):
+        return _read_zip_map(os.fspath(source))
+
+    position = source.tell()
+    try:
+        source.seek(0)
+        data = source.read()
+        if not isinstance(data, bytes):
+            raise UnsupportedStructureError(
+                "diff_decks refused: %s input stream must return bytes" % label
+            )
+        return _read_zip_map_from_bytes(data, "%s input" % label)
+    finally:
+        source.seek(position)
 
 
 def _open_deck(source):
@@ -481,26 +568,25 @@ def _diff_text(slide_a, slide_b) -> "List[dict]":
         block_b = blocks_b.get(key)
         text_a = block_a.text if block_a is not None else None
         text_b = block_b.text if block_b is not None else None
-        if text_a != text_b:
+        fields_a = block_a.fields if block_a is not None else ()
+        fields_b = block_b.fields if block_b is not None else ()
+        if text_a != text_b or fields_a != fields_b:
             reference = block_b if block_b is not None else block_a
-            changes.append(
-                {
-                    "shape_id": key[0],
-                    "shape_name": reference.shape_name,
-                    "block_ordinal": key[1],
-                    "before": text_a,
-                    "after": text_b,
-                }
-            )
+            change = {
+                "shape_id": key[0],
+                "shape_name": reference.shape_name,
+                "block_ordinal": key[1],
+                "before": text_a,
+                "after": text_b,
+            }
+            if fields_a != fields_b:
+                change["field_types_before"] = list(fields_a)
+                change["field_types_after"] = list(fields_b)
+            changes.append(change)
     return changes
 
 
 def _notes_text(slide) -> "Optional[str]":
-    from pptx.errors import UnsupportedStructureError
-
     if not slide.has_notes_slide:
         return None
-    try:
-        return slide.read_notes_text()
-    except UnsupportedStructureError:  # pragma: no cover - notes part without a body
-        return None
+    return slide.read_notes_text()

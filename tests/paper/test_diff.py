@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import io
 import json
+import zipfile
 
 import pytest
+from lxml import etree
 
 from pptx import Presentation
 from pptx.diff import diff_decks
+from pptx.errors import UnsupportedStructureError
+from pptx.oxml.ns import qn
 
 from . import corpus
 
@@ -127,6 +131,56 @@ def test_package_changes_make_z_order_only_edit_nonempty():
     }
 
 
+@pytest.mark.parametrize("source_kind", ["path", "stream"])
+def test_package_changes_use_original_package_members(tmp_path, source_kind):
+    source = corpus.fixture_path("self_generated/minimal_clean.pptx")
+    modified = io.BytesIO()
+    with zipfile.ZipFile(source) as before, zipfile.ZipFile(modified, "w") as after:
+        for info in before.infolist():
+            data = before.read(info.filename)
+            if info.filename == "[Content_Types].xml":
+                root = etree.fromstring(data)
+                namespace = root.tag.partition("}")[0] + "}"
+                etree.SubElement(
+                    root,
+                    namespace + "Default",
+                    Extension="paper-unused",
+                    ContentType="application/x-paper-unused",
+                )
+                data = etree.tostring(root, xml_declaration=True, encoding="UTF-8")
+            after.writestr(info, data)
+    modified.seek(0)
+
+    if source_kind == "path":
+        changed_source = tmp_path / "unused-content-type.pptx"
+        changed_source.write_bytes(modified.getvalue())
+    else:
+        changed_source = modified
+
+    report = diff_decks(source, changed_source)
+    assert [delta.partname for delta in report.package_changes] == ["/[Content_Types].xml"]
+
+
+def test_seekable_stream_positions_survive_success_and_failure():
+    data = corpus.fixture_path("self_generated/minimal_clean.pptx").read_bytes()
+    before = io.BytesIO(data)
+    after = io.BytesIO(data)
+    before.seek(11)
+    after.seek(23)
+
+    assert diff_decks(before, after).is_empty
+    assert before.tell() == 11
+    assert after.tell() == 23
+
+    unreadable = io.BytesIO(b"not a presentation")
+    before.seek(17)
+    unreadable.seek(3)
+    with pytest.raises(UnsupportedStructureError, match="not a readable presentation"):
+        diff_decks(before, unreadable)
+    assert before.tell() == 17
+    assert unreadable.tell() == 3
+
+
 # ------------------------------------------------------------------------------ detail levels
 
 
@@ -160,6 +214,20 @@ def test_full_detail_reports_effective_shifts():
     assert {(s.text, s.before["size"]["value"], s.after["size"]["value"]) for s in shifts} == {
         (s.text, s.before["size"]["value"], s.after["size"]["value"])
         for s in rebind_report.run_shifts
+    }
+
+
+def test_diff_reports_geometry_changed_by_layout_rebind():
+    before = Presentation(_path("self_generated/minimal_clean.pptx"))
+    after = Presentation(_path("self_generated/minimal_clean.pptx"))
+    after.slides[0].rebind_layout(after.slide_layouts[1])
+
+    report = diff_decks(before, after, detail="structure")
+
+    geometry = report.slide_changes[0].geometry_changes
+    assert geometry
+    assert {change["facet"] for change in geometry} == {
+        "left", "top", "width", "height"
     }
 
 
@@ -259,6 +327,27 @@ def test_trailing_whitespace_edit_is_a_reported_text_change():
         for c in change.text_changes
     ]
     assert ("Trailing space ", "Trailing space") in deltas
+
+
+def test_field_type_change_is_reported_when_visible_text_is_unchanged():
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    paragraph = slide.shapes.add_textbox(
+        0, 0, 914400, 914400
+    ).text_frame.paragraphs[0]
+    paragraph.add_slide_number_field()
+    before = io.BytesIO()
+    prs.save(before)
+
+    changed = Presentation(io.BytesIO(before.getvalue()))
+    field = changed.slides[0].shapes[0].text_frame.paragraphs[0]._p.find(qn("a:fld"))
+    field.set("type", "datetime1")
+
+    report = diff_decks(io.BytesIO(before.getvalue()), changed, detail="text")
+    change = report.slide_changes[0].text_changes[0]
+    assert change["before"] == change["after"] == ""
+    assert change["field_types_before"] == ["slidenum"]
+    assert change["field_types_after"] == ["datetime1"]
 
 
 def test_full_detail_sees_emphasis_shifts():

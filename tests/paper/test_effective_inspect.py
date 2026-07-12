@@ -53,6 +53,15 @@ def test_title_size_resolves_through_layout_override():
     assert _supplied_levels(font.size) == ["layout placeholder lstStyle lvl1"]
 
 
+def test_placeholder_inheritance_requires_an_exact_layout_idx_match():
+    prs = _open(BRANDED)
+    title = prs.slides[0].shapes.title
+    title.element.ph.idx = 999
+
+    with pytest.raises(UnsupportedStructureError, match="requires an exact idx match"):
+        title.text_frame.paragraphs[0].runs[0].effective_font()
+
+
 def test_title_name_resolves_through_master_theme_reference():
     expected = _ground_truth(BRANDED)["expected_effective"]["title_run"]
     font = _open(BRANDED).slides[0].shapes.title.text_frame.paragraphs[0].runs[0].effective_font()

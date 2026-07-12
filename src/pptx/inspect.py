@@ -171,9 +171,13 @@ class BlockAnchor:
 class InspectedRun:
     text: str
     font: EffectiveFont
+    field_type: Optional[str] = None
 
     def to_dict(self) -> dict:
-        return {"text": self.text, "font": self.font.to_dict()}
+        payload = {"text": self.text, "font": self.font.to_dict()}
+        if self.field_type is not None:
+            payload["field_type"] = self.field_type
+        return payload
 
 
 @dataclass(frozen=True)
@@ -661,6 +665,12 @@ def _iter_container(container_elm, group_path):
         elif child.tag == qn("p:graphicFrame"):
             tbl = child.find(".//%s" % qn("a:tbl"))
             if tbl is None:
+                kind = (
+                    "chart"
+                    if child.find(".//%s" % qn("c:chart")) is not None
+                    else "graphic-frame"
+                )
+                yield kind, child, None, group_path, _cNvPr_name(child)
                 continue
             frame_name = _cNvPr_name(child)
             for row_index, tr in enumerate(tbl.findall(qn("a:tr"))):
@@ -674,7 +684,7 @@ def _iter_container(container_elm, group_path):
 def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
     """Append TextBlocks for every text body under `spTree` (see iter_text_bodies)."""
     for kind, owner, txBody, path, cell_detail in iter_text_bodies(spTree):
-        if kind == "alternate-content":
+        if kind in ("alternate-content", "chart", "graphic-frame"):
             cNvPr = owner.find(".//%s" % qn("p:cNvPr"))
             blocks.append(
                 TextBlock(
@@ -685,8 +695,8 @@ def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
                     level=0,
                     text="",
                     runs=(),
-                    container="alternate-content",
-                    container_detail="/".join(path) if path else None,
+                    container=kind,
+                    container_detail=cell_detail or ("/".join(path) if path else None),
                     blind=True,
                 )
             )
@@ -694,8 +704,13 @@ def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
         if kind == "table-cell":
             for p in txBody.findall(qn("a:p")):
                 runs = tuple(
-                    InspectedRun(_run_text(r), _blind_font("table-cell"))
-                    for r in p.findall(qn("a:r"))
+                    InspectedRun(
+                        "" if item.tag == qn("a:fld") else _run_text(item),
+                        _blind_font("table-cell"),
+                        (item.get("type") or "") if item.tag == qn("a:fld") else None,
+                    )
+                    for item in p
+                    if item.tag in (qn("a:r"), qn("a:fld"))
                 )
                 _append_block(
                     blocks, partname, owner, p, runs, None, "table-cell", cell_detail, True
@@ -708,8 +723,13 @@ def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
             container_detail = "/".join(path) if path else None
             for p in txBody.findall(qn("a:p")):
                 runs = tuple(
-                    InspectedRun(_run_text(r), resolver.effective_font(r, owner))
-                    for r in p.findall(qn("a:r"))
+                    InspectedRun(
+                        "" if item.tag == qn("a:fld") else _run_text(item),
+                        resolver.effective_font(item, owner),
+                        (item.get("type") or "") if item.tag == qn("a:fld") else None,
+                    )
+                    for item in p
+                    if item.tag in (qn("a:r"), qn("a:fld"))
                 )
                 _append_block(
                     blocks, partname, owner, p, runs, placeholder_type, kind,
@@ -720,13 +740,13 @@ def _walk_container(spTree, group_path, partname, resolver, blocks) -> None:
 def _append_block(
     blocks, partname, shape_elm, p, runs, placeholder_type, container, container_detail, blind
 ) -> None:
-    text = "".join(inspected.text for inspected in runs)
+    text = "".join(inspected.text for inspected in runs if inspected.field_type is None)
     pPr = p.find(qn("a:pPr"))
     level = int(pPr.get("lvl", "0")) if pPr is not None else 0
     cNvPr = shape_elm.find(".//%s" % qn("p:cNvPr"))
     # -- fields (a:fld) are recognized by type but excluded from text/hash: their display
     # -- text is volatile (PowerPoint re-renders it), so hashing it would rot anchors
-    fields = tuple(fld.get("type") or "" for fld in p.findall(qn("a:fld")))
+    fields = tuple(run.field_type for run in runs if run.field_type is not None)
     blocks.append(
         TextBlock(
             anchor=BlockAnchor(partname, len(blocks), content_hash(text)),
@@ -806,7 +826,7 @@ class _FontResolver(object):
         chain = list(self._chain(r, p, sp, level))
         return EffectiveFont(
             size=self._resolve_size(chain),
-            name=self._resolve_name(chain, _run_text(r)),
+            name=self._resolve_name(chain, "" if r.tag == qn("a:fld") else _run_text(r)),
             color_rgb=self._resolve_color(chain, sp),
             bold=self._resolve_flag(chain, "b", "bold"),
             italic=self._resolve_flag(chain, "i", "italic"),
@@ -850,22 +870,15 @@ class _FontResolver(object):
 
     def _placeholder_chain(self, sp, level):
         idx, ph_type = sp.ph_idx, sp.ph_type
-        layout_ph = self._layout.placeholders.get(idx=idx)
-        if layout_ph is None:
-            layout_ph = next(
-                (ph for ph in self._layout.placeholders if ph.element.ph_type == ph_type),
-                None,
-            )
+        layout_ph = self._layout_placeholder(idx, ph_type)
         yield (
             "layout placeholder lstStyle lvl%d" % (level + 1),
             str(self._layout.part.partname),
             self._ph_lstStyle_defRPr(layout_ph, level),
         )
 
-        master_ph_type = (
-            PP_PLACEHOLDER.TITLE if ph_type in _TITLE_FAMILY else PP_PLACEHOLDER.BODY
-        )
-        master_ph = self._master.placeholders.get(master_ph_type)
+        master_ph_type = self._master_placeholder_type(ph_type)
+        master_ph = self._master_placeholder(master_ph_type)
         yield (
             "master placeholder lstStyle lvl%d" % (level + 1),
             str(self._master.part.partname),
@@ -892,25 +905,14 @@ class _FontResolver(object):
         ph = sp.find(qn("p:nvSpPr") + "/" + qn("p:nvPr") + "/" + qn("p:ph"))
         if ph is not None:
             idx, ph_type = sp.ph_idx, sp.ph_type
-            layout_ph = self._layout.placeholders.get(idx=idx)
-            if layout_ph is None:
-                layout_ph = next(
-                    (
-                        candidate
-                        for candidate in self._layout.placeholders
-                        if candidate.element.ph_type == ph_type
-                    ),
-                    None,
-                )
+            layout_ph = self._layout_placeholder(idx, ph_type)
             yield (
                 "layout placeholder lstStyle lvl%d" % (level + 1),
                 str(self._layout.part.partname),
                 self._ph_lstStyle_pPr(layout_ph, level),
             )
-            master_ph_type = (
-                PP_PLACEHOLDER.TITLE if ph_type in _TITLE_FAMILY else PP_PLACEHOLDER.BODY
-            )
-            master_ph = self._master.placeholders.get(master_ph_type)
+            master_ph_type = self._master_placeholder_type(ph_type)
+            master_ph = self._master_placeholder(master_ph_type)
             yield (
                 "master placeholder lstStyle lvl%d" % (level + 1),
                 str(self._master.part.partname),
@@ -1131,6 +1133,72 @@ class _FontResolver(object):
         if ph_type in _BODY_FAMILY:
             return "bodyStyle", txStyles.bodyStyle if txStyles is not None else None
         return "otherStyle", txStyles.otherStyle if txStyles is not None else None
+
+    def _layout_placeholder(self, idx, ph_type):
+        """Return only the exact-idx layout placeholder used by PowerPoint inheritance."""
+        if idx == 4294967295:
+            return None
+        matches = [
+            placeholder
+            for placeholder in self._layout.placeholders
+            if placeholder.element.ph_idx == idx
+        ]
+        if len(matches) > 1:
+            def inheritance_type(placeholder_type):
+                if placeholder_type in _TITLE_FAMILY:
+                    return "title"
+                if placeholder_type in _BODY_FAMILY:
+                    return "body"
+                return placeholder_type
+
+            typed_matches = [
+                placeholder
+                for placeholder in matches
+                if inheritance_type(placeholder.element.ph_type)
+                == inheritance_type(ph_type)
+            ]
+            if len(typed_matches) == 1:
+                matches = typed_matches
+        if len(matches) > 1:
+            raise UnsupportedStructureError(
+                "layout %s has %d placeholders with idx %d; effective formatting "
+                "inheritance is ambiguous"
+                % (self._layout.part.partname, len(matches), idx)
+            )
+        if matches:
+            return matches[0]
+        raise UnsupportedStructureError(
+            "slide placeholder idx %d (type %s) has no layout placeholder with the same "
+            "idx; PowerPoint placeholder inheritance requires an exact idx match"
+            % (idx, ph_type.name)
+        )
+
+    def _master_placeholder(self, ph_type):
+        matches = [
+            placeholder
+            for placeholder in self._master.placeholders
+            if placeholder.element.ph_type == ph_type
+        ]
+        if len(matches) > 1:
+            raise UnsupportedStructureError(
+                "slide master %s has %d placeholders of type %s; effective formatting "
+                "inheritance is ambiguous"
+                % (self._master.part.partname, len(matches), ph_type.name)
+            )
+        return matches[0] if matches else None
+
+    @staticmethod
+    def _master_placeholder_type(ph_type):
+        if ph_type in _TITLE_FAMILY:
+            return PP_PLACEHOLDER.TITLE
+        if ph_type in (
+            PP_PLACEHOLDER.DATE,
+            PP_PLACEHOLDER.FOOTER,
+            PP_PLACEHOLDER.HEADER,
+            PP_PLACEHOLDER.SLIDE_NUMBER,
+        ):
+            return ph_type
+        return PP_PLACEHOLDER.BODY
 
     @staticmethod
     def _ph_lstStyle_defRPr(placeholder_proxy, level):
