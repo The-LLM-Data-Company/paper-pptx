@@ -391,12 +391,16 @@ def _resolution_state(slide, *, align_by_content: bool = False):
     for block in inspect_text(slide).blocks:
         ordinal = block_ordinals.get(block.shape_id, 0)
         block_ordinals[block.shape_id] = ordinal + 1
-        runs = [run for run in block.runs if run.text != "\v"]
+        indexed_runs = [
+            (run_index, run)
+            for run_index, run in enumerate(block.runs)
+            if run.text != "\v"
+        ]
         identities = [
             ("field", run.field_type) if run.field_type is not None else ("text", run.text)
-            for run in runs
+            for _, run in indexed_runs
         ]
-        for run_index, (run, identity) in enumerate(zip(runs, identities)):
+        for (run_index, run), identity in zip(indexed_runs, identities):
             if align_by_content and (not identity[1] or identities.count(identity) != 1):
                 continue
             font = run.font

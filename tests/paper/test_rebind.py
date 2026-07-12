@@ -114,6 +114,18 @@ def test_rebind_report_is_deterministic():
     assert report_a == report_b
 
 
+def test_rebind_report_run_indices_include_hard_line_breaks():
+    prs = _open(GAUNTLET)
+    body = next(shape for shape in prs.slides[0].shapes if shape.element.ph_idx == 1)
+    body.text_frame.paragraphs[0].text = "Before\vAfter"
+
+    report = prs.slides[0].rebind_layout(prs.slide_layouts[3])
+
+    shifts = {shift.text: shift for shift in report.run_shifts}
+    assert shifts["Before"].run_index == 0
+    assert shifts["After"].run_index == 2
+
+
 # ------------------------------------------------------------------------------ orphans
 
 
