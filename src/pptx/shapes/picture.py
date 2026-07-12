@@ -36,6 +36,21 @@ def _part_xml_references_rId(root, rId: str) -> bool:
     return False
 
 
+def _require_picture_slide_enrolled(picture) -> None:
+    """Refuse a picture retained after its owning slide was deleted."""
+    from pptx.errors import TargetNotFoundError, materialize_slides
+
+    presentation = picture.part.package.presentation_part.presentation
+    if any(
+        slide.part is picture.part
+        for slide in materialize_slides(presentation, "replace_image")
+    ):
+        return
+    raise TargetNotFoundError(
+        "picture is stale: its slide is no longer enrolled in the presentation"
+    )
+
+
 class _BasePicture(BaseShape):
     """Base class for shapes based on a `p:pic` element."""
 
@@ -189,6 +204,7 @@ class Picture(_BasePicture):
 
         # -- validation pass, complete before any mutation --
         require_shape_attached(self, argument="picture")
+        _require_picture_slide_enrolled(self)
         if not isinstance(allow_format_change, bool):
             raise ValueError(
                 "allow_format_change must be a bool, got %r" % (allow_format_change,)
@@ -220,16 +236,19 @@ class Picture(_BasePicture):
             )
 
         # -- mutation --
-        image_part = self.part.package.get_or_add_image_part(io.BytesIO(new_image.blob))
-        new_rId = self.part.relate_to(image_part, RT.IMAGE)
-        if new_rId == old_rId:
-            return  # -- identical image bytes: already in place
-        self._pic.blipFill.blip.rEmbed = new_rId
-        # -- another shape on this slide may still reference old_rId (pictures added from
-        # -- identical bytes share one relationship); XmlPart.drop_rel only counts @r:id
-        # -- references, so guard with a scan over ALL r-namespace attributes.
-        if not _part_xml_references_rId(self.part._element, old_rId):
-            self.part.drop_rel(old_rId)
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            image_part = self.part.package.get_or_add_image_part(io.BytesIO(new_image.blob))
+            new_rId = self.part.relate_to(image_part, RT.IMAGE)
+            if new_rId == old_rId:
+                return  # -- identical image bytes: already in place
+            self._pic.blipFill.blip.rEmbed = new_rId
+            # -- another shape on this slide may still reference old_rId (pictures added from
+            # -- identical bytes share one relationship); XmlPart.drop_rel only counts @r:id
+            # -- references, so guard with a scan over ALL r-namespace attributes.
+            if not _part_xml_references_rId(self.part._element, old_rId):
+                self.part.drop_rel(old_rId)
 
     @property
     def auto_shape_type(self) -> MSO_SHAPE | None:

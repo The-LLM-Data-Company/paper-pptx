@@ -6,6 +6,7 @@ replace(x→y) then replace(y→x) restores visible text AND formatting.
 
 from __future__ import annotations
 
+import copy
 import io
 
 import pytest
@@ -23,7 +24,7 @@ from pptx.inspect import BlockAnchor, inspect_text
 from pptx.util import Emu
 
 from . import corpus
-from .contract import assert_changed_parts, save_to_bytes, snapshot_parts
+from .contract import assert_changed_parts, save_to_bytes, snapshot_parts, zip_member_map
 from .lo import lo_load_smoke
 
 MINIMAL = "self_generated/minimal_clean.pptx"
@@ -72,6 +73,35 @@ def test_replace_text_round_trips_with_exact_budget():
     after = save_to_bytes(prs)
     assert_changed_parts(before, after, expect_changed=["ppt/slides/slide1.xml"])
     assert _reopen(after).slides[0].shapes.title.text == "Renamed fixture"
+
+
+def test_replace_text_rolls_back_after_a_late_mutation(monkeypatch):
+    import pptx.edit as edit_module
+
+    prs = _open(MINIMAL)
+    before = save_to_bytes(prs)
+    original = edit_module._replace_in_paragraph
+
+    def fail_after_replacement(paragraph, find, replace):
+        count = original(paragraph, find, replace)
+        if count:
+            raise RuntimeError("forced late text failure")
+        return count
+
+    monkeypatch.setattr(edit_module, "_replace_in_paragraph", fail_after_replacement)
+    with pytest.raises(RuntimeError, match="forced late text failure"):
+        replace_text(prs, "Minimal clean", "Changed")
+
+    assert zip_member_map(save_to_bytes(prs)) == zip_member_map(before)
+    assert prs.slides[0].shapes.title.text == "Minimal clean fixture"
+
+
+def test_replace_text_refuses_a_stale_presentation_root():
+    prs = _open(MINIMAL)
+    prs.part._element = copy.deepcopy(prs.part._element)
+
+    with pytest.raises(TargetNotFoundError, match="presentation is stale"):
+        replace_text(prs, "Minimal", "Changed")
 
 
 def test_replacement_inherits_the_match_start_runs_formatting():

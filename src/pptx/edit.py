@@ -69,20 +69,23 @@ def replace_text(
     `ReplaceResult(0)`, not a refusal. Validation completes before the first write.
     """
     _validate_find_replace(find, replace)
-    # -- validate-fully-then-mutate (§1.3): materialize the COMPLETE traversal first, so any
-    # -- traversal refusal (depth guard, unsupported markup) fires before the first write —
-    # -- a refusal must never leave earlier blocks already rewritten
-    plan = _materialize_blocks(prs, include_notes)
-    total = 0
-    touched: List[BlockAnchor] = []
-    for partname, block_index, p in plan:
-        count = _replace_in_paragraph(p, find, replace)
-        if count:
-            total += count
-            touched.append(
-                BlockAnchor(partname, block_index, content_hash(_paragraph_text(p)))
-            )
-    return ReplaceResult(total, tuple(touched))
+    _require_presentation_root(prs)
+    from pptx._transaction import PackageTransaction
+
+    with PackageTransaction(prs.part.package, prs):
+        # -- validate-fully-then-mutate (§1.3): materialize the COMPLETE traversal first,
+        # -- so any traversal refusal fires before the first write.
+        plan = _materialize_blocks(prs, include_notes)
+        total = 0
+        touched: List[BlockAnchor] = []
+        for partname, block_index, p in plan:
+            count = _replace_in_paragraph(p, find, replace)
+            if count:
+                total += count
+                touched.append(
+                    BlockAnchor(partname, block_index, content_hash(_paragraph_text(p)))
+                )
+        return ReplaceResult(total, tuple(touched))
 
 
 def replace_text_at(
@@ -98,31 +101,35 @@ def replace_text_at(
     _validate_find_replace(find, replace)
     if not isinstance(anchor, BlockAnchor):
         raise ValueError("anchor must be a BlockAnchor, got %r" % (anchor,))
-    p = _block_paragraph(prs, anchor)
-    current_text = _paragraph_text(p)
-    current_hash = content_hash(current_text)
-    if current_hash != anchor.content_hash:
-        raise StaleAnchorError(
-            "anchor is stale: block %d of %s now hashes %s (anchor says %s); the document"
-            " changed since the anchor was produced — use pptx.edit.refind() to recover"
-            % (anchor.block_index, anchor.part, current_hash, anchor.content_hash)
+    _require_presentation_root(prs)
+    from pptx._transaction import PackageTransaction
+
+    with PackageTransaction(prs.part.package, prs):
+        p = _block_paragraph(prs, anchor)
+        current_text = _paragraph_text(p)
+        current_hash = content_hash(current_text)
+        if current_hash != anchor.content_hash:
+            raise StaleAnchorError(
+                "anchor is stale: block %d of %s now hashes %s (anchor says %s); the document"
+                " changed since the anchor was produced — use pptx.edit.refind() to recover"
+                % (anchor.block_index, anchor.part, current_hash, anchor.content_hash)
+            )
+        if find not in current_text:
+            raise TargetNotFoundError(
+                "%r does not occur in the anchored block (text %r)" % (find, current_text)
+            )
+        count = _replace_in_paragraph(p, find, replace)
+        if count == 0:
+            # -- `find` appears in the hash-text but every occurrence crosses a field or
+            # -- line-break boundary, which matches never do.
+            raise TargetNotFoundError(
+                "%r occurs in the anchored block only across a field or line-break boundary;"
+                " matches never cross a:fld/a:br" % (find,)
+            )
+        return ReplaceResult(
+            count,
+            (BlockAnchor(anchor.part, anchor.block_index, content_hash(_paragraph_text(p))),),
         )
-    if find not in current_text:
-        raise TargetNotFoundError(
-            "%r does not occur in the anchored block (text %r)" % (find, current_text)
-        )
-    count = _replace_in_paragraph(p, find, replace)
-    if count == 0:
-        # -- `find` appears in the hash-text but every occurrence crosses a field or
-        # -- line-break boundary, which matches never do: refuse rather than return a
-        # -- success-shaped zero (§1.5)
-        raise TargetNotFoundError(
-            "%r occurs in the anchored block only across a field or line-break boundary;"
-            " matches never cross a:fld/a:br" % (find,)
-        )
-    return ReplaceResult(
-        count, (BlockAnchor(anchor.part, anchor.block_index, content_hash(_paragraph_text(p))),)
-    )
 
 
 def refind(prs: "Presentation", anchor: BlockAnchor) -> BlockAnchor:
@@ -140,7 +147,7 @@ def refind(prs: "Presentation", anchor: BlockAnchor) -> BlockAnchor:
             continue
         block_index = 0
         for kind, _, txBody, _, _ in iter_text_bodies(spTree):
-            if kind == "alternate-content":
+            if txBody is None:
                 block_index += 1  # -- occupies an index but is never hash-matchable
                 continue
             for p in txBody.findall(qn("a:p")):
@@ -166,6 +173,14 @@ def refind(prs: "Presentation", anchor: BlockAnchor) -> BlockAnchor:
 
 
 # ------------------------------------------------------------------------------- internals
+
+
+def _require_presentation_root(prs) -> None:
+    """Refuse a retained Presentation proxy whose root has been replaced."""
+    if getattr(prs, "_element", None) is not getattr(prs.part, "_element", None):
+        raise TargetNotFoundError(
+            "presentation is stale: its XML root is no longer the live package root"
+        )
 
 
 def _validate_find_replace(find, replace) -> None:
@@ -224,6 +239,9 @@ def _materialize_blocks(prs, include_notes):
                     " guarantee every occurrence is reached inside markup-compatibility"
                     " branches (inspect_text reports these as blind regions)" % partname
                 )
+            if txBody is None:
+                block_index += 1
+                continue
             for p in txBody.findall(qn("a:p")):
                 plan.append((partname, block_index, p))
                 block_index += 1
@@ -241,11 +259,16 @@ def _block_paragraph(prs, anchor: BlockAnchor):
             continue
         block_index = 0
         for kind, _, txBody, _, _ in iter_text_bodies(spTree):
-            if kind == "alternate-content":
+            if txBody is None:
                 if block_index == anchor.block_index:
+                    detail = (
+                        "mc:AlternateContent (a blind region)"
+                        if kind == "alternate-content"
+                        else "%s (a blind graphic region)" % kind
+                    )
                     raise UnsupportedStructureError(
-                        "the anchored block is mc:AlternateContent (a blind region);"
-                        " markup-compatibility content is not editable in v0.1"
+                        "the anchored block is %s; this content is not editable in v0.1"
+                        % detail
                     )
                 block_index += 1
                 continue

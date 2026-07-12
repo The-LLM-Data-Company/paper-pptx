@@ -7,6 +7,7 @@ typed refusals for structures the mechanism can't honor, then routing to upstrea
 
 from __future__ import annotations
 
+import copy
 import io
 
 import pytest
@@ -19,6 +20,8 @@ from pptx.errors import (
     TargetNotFoundError,
     UnsupportedStructureError,
 )
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.oxml.ns import qn
 from pptx.util import Inches
 
 from . import corpus
@@ -99,6 +102,56 @@ def test_replace_data_safe_round_trips_with_exact_budget():
         ("FY26", (12.0, 13.0)),
     ]
     assert list(reopened_chart.plots[0].categories) == ["North", "South"]
+
+
+def test_replace_data_safe_refuses_a_workbook_shared_by_another_reachable_chart():
+    prs = _open(CHART_NOTES)
+    slide = prs.slides[0]
+    chart = slide.shapes.chart_by_name(CHART_NAME)
+    chart_data = CategoryChartData()
+    chart_data.categories = ["old"]
+    chart_data.add_series("other", (2,))
+    other = slide.shapes.add_chart(
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        Inches(5),
+        Inches(1),
+        Inches(2),
+        Inches(2),
+        chart_data,
+    ).chart
+    shared_workbook = chart._workbook.xlsx_part
+    old_rId = other._chartSpace.xlsx_part_rId
+    shared_rId = other.part.relate_to(shared_workbook, RT.PACKAGE)
+    other._chartSpace.externalData.set(qn("r:id"), shared_rId)
+    if old_rId != shared_rId:
+        other.part.drop_rel(old_rId)
+    before = save_to_bytes(prs)
+
+    with pytest.raises(UnsupportedStructureError, match="workbook is shared"):
+        chart.replace_data_safe(["new"], [("series", (9,))])
+
+    assert save_to_bytes(prs) == before
+    assert other._workbook.xlsx_part is shared_workbook
+
+
+def test_replace_data_safe_refuses_a_stale_chart_root():
+    prs = _open(CHART_NOTES)
+    chart = prs.slides[0].shapes.chart_by_name(CHART_NAME)
+    chart.part._element = copy.deepcopy(chart.part._element)
+
+    with pytest.raises(TargetNotFoundError, match="chart is stale"):
+        chart.replace_data_safe(["x"], [("series", (1,))])
+
+
+def test_replace_data_safe_refuses_a_chart_removed_from_its_slide():
+    prs = _open(CHART_NOTES)
+    slide = prs.slides[0]
+    chart_shape = slide.shapes.shape_by_name(CHART_NAME)
+    chart = chart_shape.chart
+    slide.shapes.delete(chart_shape)
+
+    with pytest.raises(TargetNotFoundError, match="chart is stale"):
+        chart.replace_data_safe(["x"], [("series", (1,))])
 
 
 @pytest.mark.parametrize(

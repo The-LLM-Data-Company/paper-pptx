@@ -241,6 +241,51 @@ def test_replace_image_refuses_a_deleted_picture_without_adding_relationships():
     assert tuple(slide.part.rels) == relationships_before
 
 
+def test_replace_image_refuses_a_picture_on_a_deleted_but_reachable_slide():
+    prs = _open(GAUNTLET)
+    slide = prs.slides[2]
+    picture = _cropped_picture(prs)
+    prs.slides[0].part.relate_to(
+        slide.part, "https://paper.design/relationships/keep-deleted-slide-reachable"
+    )
+    sldId = next(
+        entry
+        for entry in prs.part._element.sldIdLst.sldId_lst
+        if prs.part.rels[entry.rId].target_part is slide.part
+    )
+    prs.part._element.sldIdLst.remove(sldId)
+    prs.part.drop_rel(sldId.rId)
+    relationships_before = tuple(slide.part.rels)
+
+    with pytest.raises(TargetNotFoundError, match="no longer enrolled"):
+        picture.replace_image(io.BytesIO(_png_bytes()))
+
+    assert tuple(slide.part.rels) == relationships_before
+
+
+def test_replace_image_rolls_back_after_a_late_relationship_failure(monkeypatch):
+    from pptx.parts.slide import SlidePart
+
+    prs = _open(GAUNTLET)
+    picture = _cropped_picture(prs)
+    original_rId = picture._pic.blip_rId
+    original_blob = picture.image.blob
+    before = save_to_bytes(prs)
+    original_drop_rel = SlidePart.drop_rel
+
+    def fail_after_drop(part, rId):
+        original_drop_rel(part, rId)
+        raise RuntimeError("forced late image failure")
+
+    monkeypatch.setattr(SlidePart, "drop_rel", fail_after_drop)
+    with pytest.raises(RuntimeError, match="forced late image failure"):
+        picture.replace_image(io.BytesIO(_png_bytes((200, 10, 10))))
+
+    assert save_to_bytes(prs) == before
+    assert picture._pic.blip_rId == original_rId
+    assert picture.image.blob == original_blob
+
+
 def test_replace_keeps_relationship_alive_for_sibling_picture_sharing_it():
     """Regression: two pictures added from identical bytes share ONE relationship; replacing
     one used to drop the rel and leave the sibling's r:embed dangling (unloadable deck)."""

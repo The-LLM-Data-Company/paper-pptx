@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import math
 from collections.abc import Sequence
 
@@ -69,6 +68,51 @@ _SAFE_REPLACE_CHART_TYPES = frozenset(
         XL_CHART_TYPE.PIE_EXPLODED,
     ]
 )
+
+
+def _require_chart_attached(chart) -> None:
+    """Refuse a chart proxy detached from its live root or enrolled slide shape."""
+    from pptx.errors import TargetNotFoundError, materialize_slides
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    from pptx.oxml.ns import qn
+
+    if chart._chartSpace is not chart.part._element:
+        raise TargetNotFoundError(
+            "chart is stale: its XML root is no longer the live chart-part root"
+        )
+    presentation = chart.part.package.presentation_part.presentation
+    for slide in materialize_slides(presentation, "replace_data_safe"):
+        for chart_ref in slide.part._element.iter(qn("c:chart")):
+            rId = chart_ref.get(qn("r:id"))
+            if not rId or rId not in slide.part.rels:
+                continue
+            rel = slide.part.rels[rId]
+            if not rel.is_external and rel.reltype == RT.CHART and rel.target_part is chart.part:
+                return
+    raise TargetNotFoundError(
+        "chart is stale: its chart part is no longer owned by a chart shape on an enrolled slide"
+    )
+
+
+def _require_unshared_workbook(chart_part, xlsx_part) -> None:
+    """Refuse mutation of a workbook targeted by another reachable chart part."""
+    if xlsx_part is None:
+        return
+    from pptx.errors import UnsupportedStructureError
+    from pptx.parts.chart import ChartPart
+
+    for part in chart_part.package.iter_parts():
+        if part is chart_part or not isinstance(part, ChartPart):
+            continue
+        rId = part._element.xlsx_part_rId
+        if rId is None or rId not in part.rels:
+            continue
+        rel = part.rels[rId]
+        if not rel.is_external and rel.target_part is xlsx_part:
+            raise UnsupportedStructureError(
+                "chart workbook is shared by another reachable chart; replacing data would "
+                "silently change that chart's workbook"
+            )
 
 
 class Chart(PartElementProxy):
@@ -240,6 +284,8 @@ class Chart(PartElementProxy):
         from pptx.chart.data import CategoryChartData
         from pptx.errors import UnsupportedStructureError
 
+        _require_chart_attached(self)
+
         # -- data validation, complete before any structural probing or mutation --
         categories = list(categories)
         if not categories:
@@ -333,24 +379,15 @@ class Chart(PartElementProxy):
         for name, values in normalized_series:
             chart_data.add_series(name, values)
         xlsx_part = self._workbook.xlsx_part
+        _require_unshared_workbook(self.part, xlsx_part)
         xlsx_blob = chart_data.xlsx_blob if xlsx_part is not None else None
-        chart_snapshot = copy.deepcopy(self._chartSpace)
-        workbook_snapshot = xlsx_part.blob if xlsx_part is not None else None
-        try:
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
             rewriter = SeriesXmlRewriterFactory(self.chart_type, chart_data)
             rewriter.replace_series_data(self._chartSpace)
             if xlsx_blob is not None:
                 self._workbook.update_from_xlsx_blob(xlsx_blob)
-        except BaseException:
-            self._chartSpace.attrib.clear()
-            self._chartSpace.attrib.update(chart_snapshot.attrib)
-            for child in list(self._chartSpace):
-                self._chartSpace.remove(child)
-            for child in chart_snapshot:
-                self._chartSpace.append(copy.deepcopy(child))
-            if xlsx_part is not None:
-                xlsx_part.blob = workbook_snapshot
-            raise
 
     @lazyproperty
     def series(self):
