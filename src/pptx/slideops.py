@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import re
+import uuid
 from typing import TYPE_CHECKING, Dict, List, Tuple
 
 from pptx.errors import RelationshipPolicyError
@@ -39,6 +40,95 @@ _MEDIA_RELTYPES = frozenset([RT.IMAGE, RT.MEDIA, RT.VIDEO, RT.AUDIO])
 _CHART_CHILD_RELTYPES = frozenset([RT.PACKAGE, _CHART_COLOR_STYLE, _CHART_STYLE])
 #: relationship types allowed FROM a notes-slide part
 _NOTES_CHILD_RELTYPES = frozenset([RT.NOTES_MASTER, RT.SLIDE])
+_A16_CREATION_ID = "{http://schemas.microsoft.com/office/drawing/2014/main}creationId"
+_A16_CXN_DE_REFS = "{http://schemas.microsoft.com/office/drawing/2014/main}cxnDERefs"
+_A16_PRED_DE_REF = "{http://schemas.microsoft.com/office/drawing/2014/main}predDERef"
+_A_FIELD = "{http://schemas.openxmlformats.org/drawingml/2006/main}fld"
+
+
+class _CopySession(set):
+    """Partname reservations and document-wide identity remaps for one copy."""
+
+    def __init__(self, package, source_parts):
+        super().__init__()
+        self._reserved = _document_identity_values(package)
+        self._a16_mapping = {}
+        seen = set()
+        for part in source_parts:
+            root = _xml_root(part)
+            if root is None:
+                continue
+            for element in root.iter(_A16_CREATION_ID):
+                old = element.get("id")
+                if not old:
+                    continue
+                key = old.lower()
+                if key in seen:
+                    raise RelationshipPolicyError(
+                        "copied parts contain duplicate a16 creation identity %r" % old
+                    )
+                seen.add(key)
+                self._a16_mapping[key] = self._fresh_guid()
+
+    def remap(self, source_part, copied_part) -> None:
+        root = _xml_root(copied_part)
+        if root is None:
+            return
+        for element in root.iter():
+            if element.tag == _A16_CREATION_ID:
+                _replace_identity_attribute(element, "id", self._a16_mapping)
+            elif element.tag == _A16_CXN_DE_REFS:
+                _replace_identity_attribute(element, "st", self._a16_mapping)
+                _replace_identity_attribute(element, "end", self._a16_mapping)
+            elif element.tag == _A16_PRED_DE_REF:
+                _replace_identity_attribute(element, "pred", self._a16_mapping)
+            elif element.tag == _A_FIELD and element.get("id"):
+                element.set("id", self._fresh_guid())
+        if not isinstance(copied_part, XmlPart) and root is not None:
+            from lxml import etree
+
+            copied_part.blob = etree.tostring(
+                root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
+
+    def _fresh_guid(self) -> str:
+        while True:
+            value = "{%s}" % str(uuid.uuid4()).upper()
+            if value.lower() not in self._reserved:
+                self._reserved.add(value.lower())
+                return value
+
+
+def _replace_identity_attribute(element, name: str, mapping: dict) -> None:
+    value = element.get(name)
+    if value is not None and value.lower() in mapping:
+        element.set(name, mapping[value.lower()])
+
+
+def _xml_root(part):
+    if isinstance(part, XmlPart):
+        return part._element
+    content_type = part.content_type.partition(";")[0].strip().lower()
+    if content_type not in ("application/xml", "text/xml") and not content_type.endswith("+xml"):
+        return None
+    from pptx.oxml import parse_xml
+
+    try:
+        return parse_xml(part.blob)
+    except Exception:
+        return None
+
+
+def _document_identity_values(package) -> set:
+    values = set()
+    for part in package.iter_parts():
+        root = _xml_root(part)
+        if root is None:
+            continue
+        for element in root.iter():
+            if element.tag in (_A16_CREATION_ID, _A_FIELD) and element.get("id"):
+                values.add(element.get("id").lower())
+    return values
 
 
 def clone_slide_part(source_part: "SlidePart", policy) -> "SlidePart":
@@ -56,13 +146,27 @@ def clone_slide_part(source_part: "SlidePart", policy) -> "SlidePart":
     # -- relates the new slide, so `package.next_partname` cannot see them. `allocated`
     # -- tracks every partname assigned during THIS clone so two deep copies sharing a
     # -- template (e.g. two charts) can never collide.
-    allocated: "set" = set()
+    copied_sources = [source_part]
+    for _, action, rel in plan:
+        if action == "copy":
+            copied_sources.append(rel.target_part)
+        elif action == "chart":
+            copied_sources.append(rel.target_part)
+            copied_sources.extend(
+                child.target_part
+                for child in rel.target_part.rels.values()
+                if not child.is_external
+            )
+        elif action == "notes":
+            copied_sources.append(rel.target_part)
+    allocated = _CopySession(package, copied_sources)
     new_part = SlidePart(
         _allocate_partname(package, "/ppt/slides/slide%d.xml", allocated),
         CT.PML_SLIDE,
         package,
         copy.deepcopy(source_part._element),
     )
+    allocated.remap(source_part, new_part)
 
     rId_mapping: "Dict[str, str]" = {}
     for old_rId, action, rel in plan:
@@ -104,9 +208,7 @@ def remove_slide_from_id_lists(presentation_elm, slide_id: int, rId: str) -> Non
     ):
         if section_sldId.get("id") == slide_id_str:
             section_sldId.getparent().remove(section_sldId)
-    for show_sld in presentation_elm.findall(
-        ".//{%s}custShowLst//{%s}sld" % (_P_NS, _P_NS)
-    ):
+    for show_sld in presentation_elm.findall(".//{%s}custShowLst//{%s}sld" % (_P_NS, _P_NS)):
         if show_sld.get("{%s}id" % _R_NS) == rId:
             show_sld.getparent().remove(show_sld)
 
@@ -156,7 +258,9 @@ def _validated_plan(source_part, policy) -> "List[Tuple[str, str, object]]":
         rel = source_part.rels[rId]
         if rel.is_external:
             plan.append((rId, "external", rel))
-        elif rel.reltype == RT.SLIDE_LAYOUT:
+            continue
+        target = _owned_target(source_part, rel, "slide clone")
+        if rel.reltype == RT.SLIDE_LAYOUT:
             plan.append((rId, "share", rel))
         elif rel.reltype in _MEDIA_RELTYPES:
             plan.append((rId, "share" if policy.share_media else "copy", rel))
@@ -167,11 +271,11 @@ def _validated_plan(source_part, policy) -> "List[Tuple[str, str, object]]":
                     " editable chart part between slides is exactly the cross-contamination"
                     " this API exists to prevent, and is not offered in v0"
                 )
-            _validate_chart_rels(rel.target_part)
+            _validate_chart_rels(target)
             plan.append((rId, "chart", rel))
         elif rel.reltype == RT.NOTES_SLIDE:
             if policy.deep_copy_notes:
-                _validate_notes_rels(rel.target_part)
+                _validate_notes_rels(target)
                 plan.append((rId, "notes", rel))
             else:
                 plan.append((rId, "drop", rel))
@@ -190,12 +294,13 @@ def _validate_chart_rels(chart_part) -> None:
         rel = chart_part.rels[rId]
         if rel.is_external:
             continue
+        child_part = _owned_target(chart_part, rel, "chart clone")
         if rel.reltype not in _CHART_CHILD_RELTYPES:
             raise RelationshipPolicyError(
                 "chart part %s has relationship type clone does not support in v0: %s"
                 % (chart_part.partname, rel.reltype)
             )
-        if any(not child.is_external for child in rel.target_part.rels.values()):
+        if any(not child.is_external for child in child_part.rels.values()):
             raise RelationshipPolicyError(
                 "chart child part %s has internal relationships of its own; clone supports"
                 " only leaf chart children in v0" % rel.target_part.partname
@@ -205,11 +310,28 @@ def _validate_chart_rels(chart_part) -> None:
 def _validate_notes_rels(notes_part) -> None:
     for rId in notes_part.rels:
         rel = notes_part.rels[rId]
+        if not rel.is_external:
+            _owned_target(notes_part, rel, "notes clone")
         if not rel.is_external and rel.reltype not in _NOTES_CHILD_RELTYPES:
             raise RelationshipPolicyError(
                 "notes slide %s has relationship type clone does not support in v0: %s"
                 % (notes_part.partname, rel.reltype)
             )
+
+
+def _owned_target(owner_part, rel, context: str):
+    """Return an internal target only when it belongs to the owner's package."""
+    try:
+        target = rel.target_part
+    except (AssertionError, AttributeError, TypeError, ValueError) as exc:
+        raise RelationshipPolicyError(
+            "%s relationship %s has an invalid internal target" % (context, rel.rId)
+        ) from exc
+    if target.package is not owner_part.package:
+        raise RelationshipPolicyError(
+            "%s relationship %s targets a part owned by another package" % (context, rel.rId)
+        )
+    return target
 
 
 def _copy_chart_part(chart_part, allocated):
@@ -249,8 +371,12 @@ def _copy_leaf_part(part, allocated):
     package = part.package
     partname = _allocate_partname(package, _partname_template(str(part.partname)), allocated)
     if isinstance(part, XmlPart):
-        return type(part)(partname, part.content_type, package, copy.deepcopy(part._element))
-    return type(part)(partname, part.content_type, package, part.blob)
+        copied = type(part)(partname, part.content_type, package, copy.deepcopy(part._element))
+    else:
+        copied = type(part)(partname, part.content_type, package, part.blob)
+    if hasattr(allocated, "remap"):
+        allocated.remap(part, copied)
+    return copied
 
 
 def _partname_template(partname: str) -> str:

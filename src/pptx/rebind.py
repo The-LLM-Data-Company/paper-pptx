@@ -122,8 +122,7 @@ class RebindReport:
             "target_layout": self.target_layout,
             "target_layout_name": self.target_layout_name,
             "placeholder_map_used": [
-                {"source_idx": src, "target_idx": tgt}
-                for src, tgt in self.placeholder_map_used
+                {"source_idx": src, "target_idx": tgt} for src, tgt in self.placeholder_map_used
             ],
             "baked_orphans": list(self.baked_orphans),
             "run_shifts": [shift.to_dict() for shift in self.run_shifts],
@@ -138,7 +137,12 @@ def rebind_layout(
     orphan_policy: str = "refuse",
 ) -> RebindReport:
     """Rebind `slide` to `target_layout`; return the required shift report."""
-    from pptx.slide import SlideLayout
+    from pptx._transaction import PackageTransaction
+    from pptx.slide import (
+        SlideLayout,
+        _require_layout_enrolled,
+        _require_slide_enrolled,
+    )
 
     if not isinstance(target_layout, SlideLayout):
         raise ValueError("target_layout must be a SlideLayout, got %r" % (target_layout,))
@@ -149,7 +153,23 @@ def rebind_layout(
         )
     if orphan_policy not in ("refuse", "bake"):
         raise ValueError("orphan_policy must be 'refuse' or 'bake', got %r" % (orphan_policy,))
+    _require_slide_enrolled(slide)
+    _require_layout_enrolled(target_layout)
+    with PackageTransaction(slide.part.package, slide, target_layout):
+        return _rebind_layout_impl(
+            slide,
+            target_layout,
+            placeholder_map=placeholder_map,
+            orphan_policy=orphan_policy,
+        )
+
+
+def _rebind_layout_impl(slide, target_layout, *, placeholder_map, orphan_policy) -> RebindReport:
+    """Perform a rebind inside the caller's package transaction."""
     source_layout = slide.slide_layout
+    from pptx.slide import _require_layout_enrolled
+
+    _require_layout_enrolled(source_layout, argument="source layout")
     if target_layout.part is source_layout.part:
         raise ValueError("target_layout is already this slide's layout")
     if any(True for _ in slide._element.spTree.iterchildren(_MC_ALTERNATE_CONTENT)):
@@ -185,8 +205,7 @@ def rebind_layout(
                 "volatile content - remove the placeholder or map it explicitly" % shape.name
             )
         if any(
-            getattr(shape, attribute) is None
-            for attribute in ("left", "top", "width", "height")
+            getattr(shape, attribute) is None for attribute in ("left", "top", "width", "height")
         ):
             raise UnsupportedStructureError(
                 "placeholder %r has no resolvable geometry (no a:xfrm anywhere in its "
@@ -199,10 +218,13 @@ def rebind_layout(
                     unsafe_name = any(
                         "non-Latin" in step.detail for step in effective.name.provenance
                     )
-                    unsafe_color = any(
-                        "unapplied transforms" in step.detail
-                        for step in effective.color_rgb.provenance
-                    ) and effective.color_rgb.bake_color_xml is None
+                    unsafe_color = (
+                        any(
+                            "unapplied transforms" in step.detail
+                            for step in effective.color_rgb.provenance
+                        )
+                        and effective.color_rgb.bake_color_xml is None
+                    )
                     if unsafe_name or unsafe_color:
                         raise UnsupportedStructureError(
                             "placeholder %r has unresolved text formatting; baking would "
@@ -321,9 +343,7 @@ def _compute_mapping(slide_phs, target_layout, placeholder_map):
     for shape in unmatched:
         source_idx = shape.element.ph_idx
         exact = slot_by_idx.get(source_idx)
-        if exact is not None and exact[0] == shape.element.ph_type and (
-            source_idx not in claimed
-        ):
+        if exact is not None and exact[0] == shape.element.ph_type and (source_idx not in claimed):
             mapping[source_idx] = exact
             claimed.add(source_idx)
         else:
@@ -332,9 +352,7 @@ def _compute_mapping(slide_phs, target_layout, placeholder_map):
     unmatched, still_unmatched = still_unmatched, []
     for shape in unmatched:
         source_type = shape.element.ph_type
-        same_type = [
-            slot for slot in slots if slot[0] == source_type and slot[1] not in claimed
-        ]
+        same_type = [slot for slot in slots if slot[0] == source_type and slot[1] not in claimed]
         if same_type:
             mapping[shape.element.ph_idx] = same_type[0]
             claimed.add(same_type[0][1])
@@ -414,8 +432,7 @@ def _bake_placeholder(shape) -> None:
     # -- before writing ANY: writing `left` creates an a:off whose y defaults to 0, which
     # -- a subsequent `top` read would see as a local value, poisoning the inheritance.
     geometry = {
-        attribute: getattr(shape, attribute)
-        for attribute in ("left", "top", "width", "height")
+        attribute: getattr(shape, attribute) for attribute in ("left", "top", "width", "height")
     }
     for attribute, value in geometry.items():
         setattr(shape, attribute, Emu(value))
@@ -449,17 +466,17 @@ def _bake_placeholder(shape) -> None:
                         and effective_value.value is not None
                     ):
                         setattr(run.font, emphasis, effective_value.value)
-                if effective.underline is not None and effective.underline.resolved and (
-                    effective.underline.value is not None
+                if (
+                    effective.underline is not None
+                    and effective.underline.resolved
+                    and (effective.underline.value is not None)
                 ):
                     from pptx.enum.text import MSO_TEXT_UNDERLINE_TYPE
 
                     # -- the resolved value is the raw `u` token ("none", "sng", "dbl",
                     # -- ...); bake the exact token so the style (including "explicitly
                     # -- not underlined") cannot re-resolve under the new layout
-                    run.font.underline = MSO_TEXT_UNDERLINE_TYPE.from_xml(
-                        effective.underline.value
-                    )
+                    run.font.underline = MSO_TEXT_UNDERLINE_TYPE.from_xml(effective.underline.value)
 
     ph = shape.element.ph
     ph.getparent().remove(ph)

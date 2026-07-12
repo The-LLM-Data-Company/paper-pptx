@@ -152,14 +152,16 @@ def test_bake_geometry_falls_back_through_inheritance():
     """The baked orphan's xfrm is materialized from the resolved inheritance chain."""
     prs = _open(GAUNTLET)
     body = next(s for s in prs.slides[0].shapes if s.element.ph_idx == 1)
-    assert body._element.spPr.find(
-        "{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm"
-    ) is None  # -- precondition: geometry lives on the layout, not the slide
+    assert (
+        body._element.spPr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm")
+        is None
+    )  # -- precondition: geometry lives on the layout, not the slide
     prs.slides[0].rebind_layout(prs.slide_layouts[5], orphan_policy="bake")
     baked = next(s for s in prs.slides[0].shapes if s.name == "Content Placeholder 2")
-    assert baked._element.spPr.find(
-        "{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm"
-    ) is not None
+    assert (
+        baked._element.spPr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm")
+        is not None
+    )
 
 
 def test_bake_refuses_field_bearing_placeholder():
@@ -195,16 +197,18 @@ def test_bake_localizes_transformed_scheme_color_without_losing_transform():
 
     prs.slides[0].rebind_layout(prs.slide_layouts[5], orphan_policy="bake")
     reopened = save_reopen(prs)
-    baked = next(
-        s for s in reopened.slides[0].shapes if s.name == "Content Placeholder 2"
+    baked = next(s for s in reopened.slides[0].shapes if s.name == "Content Placeholder 2")
+    color = (
+        baked.text_frame.paragraphs[0]
+        .runs[0]
+        ._r.get_or_add_rPr()
+        .find("{http://schemas.openxmlformats.org/drawingml/2006/main}solidFill")[0]
     )
-    color = baked.text_frame.paragraphs[0].runs[0]._r.get_or_add_rPr().find(
-        "{http://schemas.openxmlformats.org/drawingml/2006/main}solidFill"
-    )[0]
     assert color.tag.endswith("srgbClr")
-    assert color.find(
-        "{http://schemas.openxmlformats.org/drawingml/2006/main}lumMod"
-    ).get("val") == "50000"
+    assert (
+        color.find("{http://schemas.openxmlformats.org/drawingml/2006/main}lumMod").get("val")
+        == "50000"
+    )
 
 
 def test_post_mutation_report_failure_rolls_rebind_back(monkeypatch):
@@ -239,9 +243,7 @@ def test_explicit_map_overrides_auto():
     report = prs.slides[0].rebind_layout(prs.slide_layouts[3], placeholder_map={1: 2})
     assert (1, 2) in report.placeholder_map_used
     reopened = save_reopen(prs)
-    ph_idx_set = {
-        s.element.ph_idx for s in reopened.slides[0].shapes if s.is_placeholder
-    }
+    ph_idx_set = {s.element.ph_idx for s in reopened.slides[0].shapes if s.is_placeholder}
     assert ph_idx_set == {0, 2}
 
 
@@ -274,9 +276,7 @@ def test_exact_matches_settle_before_lower_idx_placeholders_can_steal_slots():
     target = prs.slide_layouts[3]  # -- "Two Content": TITLE@0, OBJECT@1, OBJECT@2
     # -- make the target's OBJECT@1 slot a CHART slot: OBJECT@2 is now the only content
     # -- slot, and it is ph@2's EXACT match
-    target_obj1 = next(
-        ph for ph in target.placeholders if ph.element.ph_idx == 1
-    )
+    target_obj1 = next(ph for ph in target.placeholders if ph.element.ph_idx == 1)
     target_obj1.element.ph.type = PP_PLACEHOLDER.CHART
 
     # -- slide: BODY@1 (family-matches OBJECT only) plus an OBJECT@2 copy (exact match)
@@ -348,8 +348,23 @@ def test_rebound_output_reopens_and_text_intact():
     prs = _open(GAUNTLET)
     prs.slides[0].rebind_layout(prs.slide_layouts[5], orphan_policy="bake")
     reopened = Presentation(io.BytesIO(save_to_bytes(prs)))
-    texts = sorted(
-        s.text_frame.text for s in reopened.slides[0].shapes if s.has_text_frame
-    )
+    texts = sorted(s.text_frame.text for s in reopened.slides[0].shapes if s.has_text_frame)
     assert "Gauntlet: branded" in texts
     assert any("Inherited body level one" in t for t in texts)
+
+
+def test_rebind_refuses_deleted_slide_and_layout_targets():
+    prs = _open(GAUNTLET)
+    stale_slide = prs.slides[0]
+    target = prs.slide_layouts[3]
+    prs.slides.delete(0)
+
+    with pytest.raises(PaperRefusal, match="stale or no longer enrolled"):
+        stale_slide.rebind_layout(target)
+
+    live_slide = prs.slides[0]
+    stale_layout = next(layout for layout in prs.slide_layouts if not layout.used_by_slides)
+    stale_layout.slide_master.slide_layouts.remove(stale_layout)
+
+    with pytest.raises(PaperRefusal, match="stale or no longer enrolled"):
+        live_slide.rebind_layout(stale_layout)

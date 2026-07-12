@@ -224,9 +224,7 @@ def test_clone_with_two_charts_allocates_distinct_partnames():
     prs.slides.clone(0)
     saved = save_to_bytes(prs)
     zip_map = zip_member_map(saved)  # -- asserts no duplicate member names by itself
-    charts = sorted(
-        n for n in zip_map if n.startswith("ppt/charts/chart") and n.endswith(".xml")
-    )
+    charts = sorted(n for n in zip_map if n.startswith("ppt/charts/chart") and n.endswith(".xml"))
     workbooks = sorted(n for n in zip_map if n.startswith("ppt/embeddings/"))
     assert len(charts) == 4
     assert len(workbooks) == 4
@@ -267,9 +265,7 @@ def test_clone_with_two_unshared_images_allocates_distinct_partnames():
 
     reopened = _reopen(saved)
     clone_blobs = {
-        s.image.blob
-        for s in reopened.slides[1].shapes
-        if s.shape_type.name == "PICTURE"
+        s.image.blob for s in reopened.slides[1].shapes if s.shape_type.name == "PICTURE"
     }
     assert clone_blobs == {png((250, 0, 0)), png((0, 250, 0))}
 
@@ -292,10 +288,7 @@ def test_clone_refuses_chart_with_unsupported_child_relationship():
     chart_part = next(s for s in prs.slides[0].shapes if s.has_chart).chart.part
     image_part = prs.slides[0].part.package.get_or_add_image_part(
         io.BytesIO(
-            Presentation(str(corpus.fixture_path(SHARED_MEDIA)))
-            .slides[0]
-            .shapes[0]
-            .image.blob
+            Presentation(str(corpus.fixture_path(SHARED_MEDIA))).slides[0].shapes[0].image.blob
         )
     )
     chart_part.relate_to(image_part, "http://example.com/relationships/bogus")
@@ -408,9 +401,7 @@ def test_reorder_permutes_slides_and_round_trips():
     after = save_to_bytes(prs)
     assert_changed_parts(before, after, expect_changed=["ppt/presentation.xml"])
 
-    titles_after = [
-        s.shapes.title.text if s.shapes.title else None for s in _reopen(after).slides
-    ]
+    titles_after = [s.shapes.title.text if s.shapes.title else None for s in _reopen(after).slides]
     assert titles_after == [titles_before[i] for i in [2, 0, 3, 1]]
 
 
@@ -549,6 +540,66 @@ def test_delete_error_paths_leave_the_deck_untouched():
     with pytest.raises(TargetNotFoundError):
         prs.slides.delete(other.slides[0])
     assert_changed_parts(before, save_to_bytes(prs))  # -- empty budget
+
+
+def test_delete_refuses_an_additional_relationship_alias_atomically():
+    prs = _open(MINIMAL)
+    target = prs.slides[0]
+    prs.part.rels._add_relationship(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide",
+        target.part,
+    )
+
+    raised = assert_refusal_atomic(prs, lambda p: p.slides.delete(0), PaperRefusal)
+
+    assert "additional inbound relationship aliases" in str(raised)
+
+
+def test_clone_rolls_back_late_failure_and_preserves_live_shape_proxy(monkeypatch):
+    from pptx import slideops
+
+    prs = _open(MINIMAL)
+    shape = prs.slides[0].shapes[0]
+
+    def fail_after_clone(*args):
+        raise RuntimeError("forced late clone failure")
+
+    monkeypatch.setattr(slideops, "enroll_clone_in_section", fail_after_clone)
+    assert_refusal_atomic(prs, lambda p: p.slides.clone(0), RuntimeError)
+
+    shape.text = "proxy remains live"
+    assert prs.slides[0].shapes[0].text == "proxy remains live"
+
+
+def test_clone_allocates_fresh_document_identity_for_each_copy():
+    prs = _open(MINIMAL)
+    identity_tag = "{http://schemas.microsoft.com/office/drawing/2014/main}creationId"
+    etree.SubElement(
+        prs.slides[0]._element,
+        identity_tag,
+        id="{11111111-1111-1111-1111-111111111111}",
+    )
+
+    first = prs.slides.clone(0)
+    second = prs.slides.clone(0)
+    ids = [slide._element.find(".//" + identity_tag).get("id") for slide in prs.slides]
+
+    assert first is not second
+    assert len(ids) == len(set(ids))
+
+
+def test_layout_delete_refuses_an_additional_relationship_alias_atomically():
+    prs = _open(MINIMAL)
+    layout = next(layout for layout in prs.slide_layouts if not layout.used_by_slides)
+    master = layout.slide_master
+    master.part.rels._add_relationship(
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout",
+        layout.part,
+    )
+
+    raised = assert_refusal_atomic(prs, lambda p: master.slide_layouts.remove(layout), PaperRefusal)
+
+    assert "additional inbound relationship aliases" in str(raised)
 
 
 # --------------------------------------------------------------------------------- lo_smoke

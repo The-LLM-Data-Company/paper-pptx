@@ -86,9 +86,7 @@ def test_keep_appearance_dedupes_master_across_three_imports():
     saved = save_to_bytes(dest)
     zip_map = zip_member_map(saved)
     masters = [
-        m
-        for m in zip_map
-        if m.startswith("ppt/slideMasters/slideMaster") and m.endswith(".xml")
+        m for m in zip_map if m.startswith("ppt/slideMasters/slideMaster") and m.endswith(".xml")
     ]
     themes = [m for m in zip_map if m.startswith("ppt/theme/") and m.endswith(".xml")]
     assert sorted(masters) == [
@@ -143,9 +141,7 @@ def test_adopt_theme_unmatched_layout_refuses_and_explicit_target_recovers():
         dest.import_slide(source, 2, mode="adopt_theme")
     assert_changed_parts(before, save_to_bytes(dest))  # -- empty budget
 
-    report = dest.import_slide(
-        source, 2, mode="adopt_theme", target_layout=dest.slide_layouts[5]
-    )
+    report = dest.import_slide(source, 2, mode="adopt_theme", target_layout=dest.slide_layouts[5])
     assert report.layout_binding_method == "explicit"
     saved = save_to_bytes(dest)
     _assert_clean(saved)
@@ -204,6 +200,37 @@ def test_source_is_never_mutated_and_imported_chart_is_independent():
     source_chart = reopened_source.slides[2].shapes.chart_by_name("beta_chart")
     values = [pt for series in source_chart.plots[0].series for pt in series.values]
     assert values == [12.5, 8.75]  # -- source data untouched
+
+
+def test_import_remaps_copied_document_identity_without_mutating_source():
+    from lxml import etree
+
+    source = _open(BETA)
+    dest = _open(ALPHA)
+    identity_tag = "{http://schemas.microsoft.com/office/drawing/2014/main}creationId"
+    source_id = "{22222222-2222-2222-2222-222222222222}"
+    etree.SubElement(source.slides[0]._element, identity_tag, id=source_id)
+
+    dest.import_slide(source, 0, mode="adopt_theme")
+    imported_id = dest.slides[-1]._element.find(".//" + identity_tag).get("id")
+
+    assert imported_id != source_id
+    assert source.slides[0]._element.find(".//" + identity_tag).get("id") == source_id
+
+
+def test_import_refuses_a_deleted_source_slide_proxy():
+    source = _open(BETA)
+    stale = source.slides[0]
+    source.slides.delete(0)
+    dest = _open(ALPHA)
+
+    raised = assert_refusal_atomic(
+        dest,
+        lambda p: p.import_slide(source, stale, mode="adopt_theme"),
+        TargetNotFoundError,
+    )
+
+    assert "source slide" in str(raised)
 
 
 def test_media_always_copies_never_shared_across_packages():
@@ -265,15 +292,11 @@ def test_section_enrollment_named_and_adjacent():
     presentation = etree.fromstring(zip_member_map(saved2)["ppt/presentation.xml"])
     P14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
     intro = next(
-        s
-        for s in presentation.findall(".//{%s}section" % P14)
-        if s.get("name") == "Intro"
+        s for s in presentation.findall(".//{%s}section" % P14) if s.get("name") == "Intro"
     )
     intro_ids = [e.get("id") for e in intro.findall(".//{%s}sldId" % P14)]
     P = "http://schemas.openxmlformats.org/presentationml/2006/main"
-    deck_ids = [
-        e.get("id") for e in presentation.findall(".//{%s}sldIdLst/{%s}sldId" % (P, P))
-    ]
+    deck_ids = [e.get("id") for e in presentation.findall(".//{%s}sldIdLst/{%s}sldId" % (P, P))]
     # -- section order mirrors deck order: [slide 1's id, the imported slide's id]
     assert intro_ids == [deck_ids[0], deck_ids[1]]
 
@@ -352,13 +375,9 @@ def test_argument_validation():
     with pytest.raises(ValueError, match="does not belong"):
         dest.import_slide(source, dest.slides[0], mode="bake")
     with pytest.raises(ValueError, match="target_layout does not apply"):
-        dest.import_slide(
-            source, 0, mode="keep_appearance", target_layout=dest.slide_layouts[0]
-        )
+        dest.import_slide(source, 0, mode="keep_appearance", target_layout=dest.slide_layouts[0])
     with pytest.raises(ValueError, match="destination"):
-        dest.import_slide(
-            source, 0, mode="adopt_theme", target_layout=source.slide_layouts[0]
-        )
+        dest.import_slide(source, 0, mode="adopt_theme", target_layout=source.slide_layouts[0])
 
 
 def test_alternate_content_refuses_for_reconciling_modes_only():
@@ -387,9 +406,7 @@ def test_import_report_matches_frozen_golden():
     """Deterministic report, byte-identical to the reviewed golden."""
     dest = _open(ALPHA)
     report = dest.import_slide(_open(BETA), 0, mode="keep_appearance")
-    actual = (
-        json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n"
-    ).encode("utf-8")
+    actual = (json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n").encode("utf-8")
     golden_path = corpus.FIXTURES_DIR.parent / "goldens" / "import_beta_keep.import.json"
     assert actual == golden_path.read_bytes()
 
@@ -477,18 +494,14 @@ def test_import_placeholder_picture_slide_under_reconciling_modes():
         blobs = [
             shape.image.blob
             for shape in reopened.slides[3].shapes
-            if isinstance(shape, Picture) or (
-                shape.is_placeholder and hasattr(shape, "image")
-            )
+            if isinstance(shape, Picture) or (shape.is_placeholder and hasattr(shape, "image"))
         ]
         assert any(blob == png.getvalue() for blob in blobs)
 
 
 def test_append_deck_corrupt_source_refuses_typed():
     dest = _open(ALPHA)
-    corrupt = Presentation(
-        str(corpus.fixture_path("self_generated/corrupt_dangling_sldid.pptx"))
-    )
+    corrupt = Presentation(str(corpus.fixture_path("self_generated/corrupt_dangling_sldid.pptx")))
     before = save_to_bytes(dest)
     with pytest.raises(UnsupportedStructureError, match="relationship graph is broken"):
         dest.append_deck(corrupt, mode="bake")

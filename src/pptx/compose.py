@@ -33,6 +33,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from pptx._transaction import PackageTransaction
 from pptx.errors import RelationshipPolicyError, TargetNotFoundError, UnsupportedStructureError
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.opc.package import XmlPart
@@ -40,6 +41,7 @@ from pptx.oxml import parse_xml
 from pptx.oxml.ns import qn
 from pptx.slideops import (
     _allocate_partname,
+    _CopySession,
     _partname_template,
     _rewrite_r_references,
     _rId_sort_key,
@@ -55,52 +57,12 @@ SCHEMA_NAME = "paper-import-report"
 SCHEMA_VERSION = 1
 
 
-class _ComposeTransaction:
-    """Restore the complete reachable destination graph when composition raises."""
+class _ComposeTransaction(PackageTransaction):
+    """Package transaction rooted at the destination presentation."""
 
     def __init__(self, dest_prs):
-        self._dest_prs = dest_prs
-        self._package = dest_prs.part.package
-        self._parts = list(self._package.iter_parts())
-        self._part_state = []
-        for part in self._parts:
-            payload = copy.deepcopy(part._element) if isinstance(part, XmlPart) else part.blob
-            self._part_state.append((part, payload, dict(part.rels._rels)))
-        self._package_rels = dict(self._package._rels._rels)
-        self._had_cache = hasattr(self._package, "_paper_compose_fingerprints")
-        self._cache = dict(getattr(self._package, "_paper_compose_fingerprints", {}))
+        super().__init__(dest_prs.part.package, dest_prs)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        if exc_type is None:
-            return False
-        for part, payload, rels in self._part_state:
-            if isinstance(part, XmlPart):
-                _restore_xml_element(part._element, payload)
-            else:
-                part.blob = payload
-            part.rels._rels.clear()
-            part.rels._rels.update(rels)
-        self._package._rels._rels.clear()
-        self._package._rels._rels.update(self._package_rels)
-        if self._had_cache:
-            self._package._paper_compose_fingerprints = self._cache
-        elif hasattr(self._package, "_paper_compose_fingerprints"):
-            delattr(self._package, "_paper_compose_fingerprints")
-        return False
-
-
-def _restore_xml_element(target, snapshot) -> None:
-    target.attrib.clear()
-    target.attrib.update(snapshot.attrib)
-    target.text = snapshot.text
-    target.tail = snapshot.tail
-    for child in list(target):
-        target.remove(child)
-    for child in snapshot:
-        target.append(copy.deepcopy(child))
 
 _MODES = ("adopt_theme", "keep_appearance", "bake")
 _MEDIA_RELTYPES = frozenset([RT.IMAGE, RT.MEDIA, RT.VIDEO, RT.AUDIO])
@@ -268,8 +230,7 @@ def _validate_arguments(
         raise ValueError("source_prs must be a Presentation, got %r" % (source_prs,))
     if source_prs.part.package is dest_prs.part.package:
         raise ValueError(
-            "source_prs is this same presentation; same-package duplication is "
-            "Slides.clone's job"
+            "source_prs is this same presentation; same-package duplication is Slides.clone's job"
         )
     from pptx.errors import materialize_slides
 
@@ -292,6 +253,9 @@ def _validate_arguments(
         slide = source_prs.slides[slide]
     elif slide.part.package is not source_prs.part.package:
         raise ValueError("slide does not belong to source_prs")
+    from pptx.slide import _require_layout_enrolled, _require_slide_enrolled
+
+    _require_slide_enrolled(slide, argument="source slide")
     if mode not in _MODES:
         raise ValueError("mode must be one of %s, got %r" % (", ".join(_MODES), mode))
     if position is not None and (
@@ -309,9 +273,7 @@ def _validate_arguments(
         if not isinstance(section, str):
             raise ValueError("section must be a str section name or None")
         if _find_section(dest_prs._element, section) is None:
-            raise TargetNotFoundError(
-                "destination has no section named %r" % (section,)
-            )
+            raise TargetNotFoundError("destination has no section named %r" % (section,))
     if target_layout is not None:
         if mode == "keep_appearance":
             raise ValueError(
@@ -322,15 +284,7 @@ def _validate_arguments(
             raise ValueError("target_layout must be a SlideLayout")
         if target_layout.part.package is not dest_prs.part.package:
             raise ValueError("target_layout must belong to the destination presentation")
-        live_layout_parts = {
-            layout.part
-            for master in dest_prs.slide_masters
-            for layout in master.slide_layouts
-        }
-        if target_layout.part not in live_layout_parts:
-            raise TargetNotFoundError(
-                "target_layout is no longer enrolled in the destination presentation"
-            )
+        _require_layout_enrolled(target_layout, argument="target_layout")
     if mode in ("adopt_theme", "bake") and any(
         True for _ in slide._element.spTree.iterchildren(_MC_ALTERNATE_CONTENT)
     ):
@@ -400,9 +354,7 @@ def _validate_mode_preparation(source_slide, mode, binding):
         return {"before_state": _resolution_state(source_slide)}
 
     slide_phs = [shape for shape in source_slide.shapes if shape.is_placeholder]
-    hf_phs = [
-        shape for shape in slide_phs if shape.element.ph.get("type") in _HF_PH_TYPE_TOKENS
-    ]
+    hf_phs = [shape for shape in slide_phs if shape.element.ph.get("type") in _HF_PH_TYPE_TOKENS]
     content_phs = [shape for shape in slide_phs if shape not in hf_phs]
 
     if mode == "adopt_theme":
@@ -414,17 +366,13 @@ def _validate_mode_preparation(source_slide, mode, binding):
 
     baked_values = {}
     for shape in orphans:
-        if shape.element.findall(
-            ".//{http://schemas.openxmlformats.org/drawingml/2006/main}fld"
-        ):
+        if shape.element.findall(".//{http://schemas.openxmlformats.org/drawingml/2006/main}fld"):
             raise UnsupportedStructureError(
                 "placeholder %r contains a field (a:fld); baking would freeze volatile "
-                "content - import with keep_appearance or remove the field first"
-                % shape.name
+                "content - import with keep_appearance or remove the field first" % shape.name
             )
         geometry = {
-            attribute: getattr(shape, attribute)
-            for attribute in ("left", "top", "width", "height")
+            attribute: getattr(shape, attribute) for attribute in ("left", "top", "width", "height")
         }
         if any(value is None for value in geometry.values()):
             raise UnsupportedStructureError(
@@ -491,13 +439,13 @@ def _resolved_run_values(shape) -> list:
     for p_idx, paragraph in enumerate(shape.text_frame.paragraphs):
         for r_idx, run in enumerate(paragraph.runs):
             effective = run.effective_font()
-            unsafe_name = any(
-                "non-Latin" in step.detail for step in effective.name.provenance
+            unsafe_name = any("non-Latin" in step.detail for step in effective.name.provenance)
+            unsafe_color = (
+                any(
+                    "unapplied transforms" in step.detail for step in effective.color_rgb.provenance
+                )
+                and effective.color_rgb.bake_color_xml is None
             )
-            unsafe_color = any(
-                "unapplied transforms" in step.detail
-                for step in effective.color_rgb.provenance
-            ) and effective.color_rgb.bake_color_xml is None
             if unsafe_name or unsafe_color:
                 from pptx.errors import UnsupportedStructureError
 
@@ -516,12 +464,16 @@ def _resolved_run_values(shape) -> list:
                 values["color_xml"] = effective.color_rgb.bake_color_xml
             for facet in ("bold", "italic"):
                 facet_value = getattr(effective, facet)
-                if facet_value is not None and facet_value.resolved and (
-                    facet_value.value is not None
+                if (
+                    facet_value is not None
+                    and facet_value.resolved
+                    and (facet_value.value is not None)
                 ):
                     values[facet] = facet_value.value
-            if effective.underline is not None and effective.underline.resolved and (
-                effective.underline.value is not None
+            if (
+                effective.underline is not None
+                and effective.underline.resolved
+                and (effective.underline.value is not None)
             ):
                 values["underline"] = effective.underline.value
             if values:
@@ -545,9 +497,7 @@ def _resolve_layout_binding(dest_prs, source_slide, mode, target_layout) -> _Lay
     if target_layout is not None:
         return _LayoutBinding(target_layout, "explicit")
     source_layout = source_slide.slide_layout
-    dest_layouts = [
-        layout for master in dest_prs.slide_masters for layout in master.slide_layouts
-    ]
+    dest_layouts = [layout for master in dest_prs.slide_masters for layout in master.slide_layouts]
     source_name = source_layout.name
     if source_name:
         for layout in dest_layouts:
@@ -579,7 +529,7 @@ def _perform_import(
     dest_package = dest_prs.part.package
     before_partnames = {str(part.partname) for part in dest_package.iter_parts()}
     reused: "List[str]" = []
-    allocated = _ImportSession()
+    allocated = _ImportSession(dest_package, source_slide.part.package)
 
     # -- keep_appearance: the support chain first (fingerprint-deduped) ------------------
     if mode == "keep_appearance":
@@ -596,6 +546,7 @@ def _perform_import(
         dest_package,
         copy.deepcopy(source_slide.part._element),
     )
+    allocated.remap(source_slide.part, new_slide_part)
     rId_mapping: "Dict[str, str]" = {}
     comments_dropped = 0
     notes_copied = False
@@ -635,9 +586,7 @@ def _perform_import(
     baked_names: "List[str]" = []
     dropped_names: "List[str]" = []
     if mode in ("adopt_theme", "bake"):
-        baked_names, dropped_names = _reconcile_copied_placeholders(
-            new_slide_part, mode, prep
-        )
+        baked_names, dropped_names = _reconcile_copied_placeholders(new_slide_part, mode, prep)
     new_slide_part.relate_to(dest_layout_part, RT.SLIDE_LAYOUT)
 
     # -- enroll in the destination slide sequence ------------------------------------------
@@ -651,9 +600,7 @@ def _perform_import(
         sldIdLst.sldId_lst[final_position].addprevious(sldId)
     new_slide_id = int(sldId.get("id"))
 
-    enrolled_section = _enroll_in_section(
-        dest_prs._element, new_slide_id, final_position, section
-    )
+    enrolled_section = _enroll_in_section(dest_prs._element, new_slide_id, final_position, section)
 
     # -- report ----------------------------------------------------------------------------
     after_state = _resolution_state(new_slide_part.slide)
@@ -719,9 +666,7 @@ def _reconcile_copied_placeholders(new_slide_part, mode, prep):
                 if "italic" in values:
                     run.font.italic = values["italic"]
                 if "underline" in values:
-                    run.font.underline = MSO_TEXT_UNDERLINE_TYPE.from_xml(
-                        values["underline"]
-                    )
+                    run.font.underline = MSO_TEXT_UNDERLINE_TYPE.from_xml(values["underline"])
         if shape.is_placeholder and shape.shape_id in prep["orphan_ids"]:
             baked_names.append(shape.name)
             ph = shape.element.ph
@@ -738,7 +683,7 @@ def _reconcile_copied_placeholders(new_slide_part, mode, prep):
 # --------------------------------------------------------------- support-part transplant
 
 
-class _ImportSession(set):
+class _ImportSession(_CopySession):
     """The partname-allocation set for one import call, plus the parts it created.
 
     Behaves as the plain `allocated` set the shared `_allocate_partname` machinery
@@ -747,8 +692,8 @@ class _ImportSession(set):
     reachable (the new slide is enrolled only at the end of the import).
     """
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, dest_package, source_package):
+        super().__init__(dest_package, tuple(source_package.iter_parts()))
         self.created_parts = []
 
 
@@ -823,15 +768,14 @@ def _import_support_part(dest_package, part, allocated, reused):
     if hit is not None:
         reused.append(str(hit.partname))
         return hit
-    partname = _allocate_partname(
-        dest_package, _partname_template(str(part.partname)), allocated
-    )
+    partname = _allocate_partname(dest_package, _partname_template(str(part.partname)), allocated)
     if isinstance(part, XmlPart):
         new_part = type(part)(
             partname, part.content_type, dest_package, copy.deepcopy(part._element)
         )
     else:
         new_part = type(part)(partname, part.content_type, dest_package, part.blob)
+    allocated.remap(part, new_part)
     rId_mapping = {}
     for rId in sorted(part.rels, key=_rId_sort_key):
         rel = part.rels[rId]
@@ -918,14 +862,13 @@ def _import_diagram_part(dest_package, dgm_part, allocated, reused):
 
 
 def _import_leaf_into(dest_package, part, allocated):
-    partname = _allocate_partname(
-        dest_package, _partname_template(str(part.partname)), allocated
-    )
+    partname = _allocate_partname(dest_package, _partname_template(str(part.partname)), allocated)
     if isinstance(part, XmlPart):
-        return type(part)(
-            partname, part.content_type, dest_package, copy.deepcopy(part._element)
-        )
-    return type(part)(partname, part.content_type, dest_package, part.blob)
+        copied = type(part)(partname, part.content_type, dest_package, copy.deepcopy(part._element))
+    else:
+        copied = type(part)(partname, part.content_type, dest_package, part.blob)
+    allocated.remap(part, copied)
+    return copied
 
 
 def _transplant_layout_chain(dest_prs, source_layout, allocated, reused):
@@ -959,9 +902,7 @@ def _transplant_layout_chain(dest_prs, source_layout, allocated, reused):
     # -- enroll the layout in the transplanted master (via the oxml id-list machinery)
     master_rId = dest_master_part.relate_to(new_layout, RT.SLIDE_LAYOUT)
     sldLayoutIdLst = dest_master_part._element.get_or_add_sldLayoutIdLst()
-    sldLayoutIdLst._add_sldLayoutId(
-        rId=master_rId, id=_next_layout_or_master_id(dest_prs)
-    )
+    sldLayoutIdLst._add_sldLayoutId(rId=master_rId, id=_next_layout_or_master_id(dest_prs))
 
     cache[layout_fingerprint] = new_layout
     if hasattr(allocated, "created_parts"):
@@ -1009,9 +950,7 @@ def _transplant_master(dest_prs, source_master, allocated, reused):
     # -- enroll the master in the destination presentation (via the oxml machinery)
     pres_rId = dest_prs.part.relate_to(new_master, RT.SLIDE_MASTER)
     sldMasterIdLst = dest_prs._element.get_or_add_sldMasterIdLst()
-    sldMasterIdLst._add_sldMasterId(
-        rId=pres_rId, id=_next_layout_or_master_id(dest_prs)
-    )
+    sldMasterIdLst._add_sldMasterId(rId=pres_rId, id=_next_layout_or_master_id(dest_prs))
 
     cache[master_fingerprint] = new_master
     if hasattr(allocated, "created_parts"):
@@ -1047,9 +986,7 @@ def _enroll_in_section(presentation_elm, new_slide_id, final_position, section_n
     Returns the name of the section actually enrolled in (None when the destination has
     no sections) so the report can carry the real disposition, not the argument.
     """
-    sections = presentation_elm.findall(
-        ".//{%s}sectionLst/{%s}section" % (_P14_NS, _P14_NS)
-    )
+    sections = presentation_elm.findall(".//{%s}sectionLst/{%s}section" % (_P14_NS, _P14_NS))
     if not sections:
         return None
     if section_name is not None:
@@ -1071,9 +1008,7 @@ def _enroll_in_section(presentation_elm, new_slide_id, final_position, section_n
         for section in sections:
             for entry in section.findall(".//{%s}sldId" % _P14_NS):
                 if entry.get("id") == preceding_id:
-                    new_entry = entry.makeelement(
-                        "{%s}sldId" % _P14_NS, {"id": str(new_slide_id)}
-                    )
+                    new_entry = entry.makeelement("{%s}sldId" % _P14_NS, {"id": str(new_slide_id)})
                     entry.addnext(new_entry)
                     return section.get("name")
     first_sldIdLst = sections[0].find("{%s}sldIdLst" % _P14_NS)
