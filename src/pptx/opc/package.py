@@ -7,6 +7,10 @@ presentations to and from a .pptx file.
 from __future__ import annotations
 
 import collections
+import os
+import stat
+import tempfile
+from contextlib import suppress
 from typing import IO, TYPE_CHECKING, DefaultDict, Iterator, Mapping, Set, cast
 
 from pptx.opc.constants import RELATIONSHIP_TARGET_MODE as RTM
@@ -153,7 +157,109 @@ class OpcPackage(_RelatableMixin):
 
         `file` can be either a path to a file (a string) or a file-like object.
         """
-        PackageWriter.write(pkg_file, self._rels, tuple(self.iter_parts()))
+        parts = tuple(self.iter_parts())
+        if isinstance(pkg_file, (str, os.PathLike)):
+            self._save_path_atomically(os.fspath(pkg_file), parts)
+            return
+        self._save_stream_atomically(pkg_file, parts)
+
+    def _save_stream_atomically(self, stream: IO[bytes], parts: tuple[Part, ...]) -> None:
+        """Stage output and restore a seekable destination if publishing fails."""
+        from pptx._zipguard import MAX_COMPRESSED_BYTES
+        from pptx.errors import PackageLimitError, UnsupportedStructureError
+
+        with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as staged:
+            PackageWriter.write(staged, self._rels, parts)
+            staged.seek(0)
+
+            original_position = None
+            try:
+                original_position = stream.tell()
+                stream.seek(0, os.SEEK_END)
+                original_size = stream.tell()
+                if original_size > MAX_COMPRESSED_BYTES:
+                    raise PackageLimitError(
+                        "existing package destination stream exceeds the compressed package limit"
+                    )
+                stream.seek(0)
+                original = stream.read(original_size)
+                if not isinstance(original, bytes) or len(original) != original_size:
+                    raise OSError("could not snapshot complete destination stream")
+                truncate = stream.truncate
+                stream.seek(0)
+            except BaseException as setup_error:
+                if original_position is not None:
+                    try:
+                        stream.seek(original_position)
+                        if stream.tell() != original_position:
+                            raise OSError("destination stream did not restore its position")
+                    except BaseException as restore_error:
+                        raise RuntimeError(
+                            "package stream setup failed and the original position could not "
+                            "be restored"
+                        ) from restore_error
+                if isinstance(setup_error, PackageLimitError):
+                    raise
+                if isinstance(setup_error, (AttributeError, OSError, TypeError, ValueError)):
+                    raise UnsupportedStructureError(
+                        "saving to a stream requires readable, seekable, truncatable "
+                        "binary I/O (%s)"
+                        % setup_error
+                    ) from setup_error
+                raise
+
+            try:
+                while True:
+                    chunk = staged.read(64 * 1024)
+                    if not chunk:
+                        break
+                    written = stream.write(chunk)
+                    if written is not None and written != len(chunk):
+                        raise OSError("destination stream performed a short write")
+                truncate()
+            except BaseException as publish_error:
+                try:
+                    stream.seek(0)
+                    written = stream.write(original)
+                    if written is not None and written != len(original):
+                        raise OSError("destination stream performed a short restore write")
+                    truncate()
+                    stream.seek(original_position)
+                except BaseException as restore_error:
+                    raise RuntimeError(
+                        "package stream write failed and the original destination could not "
+                        "be restored"
+                    ) from restore_error
+                raise publish_error
+
+    def _save_path_atomically(self, path: str, parts: tuple[Part, ...]) -> None:
+        """Serialize beside `path` and replace it only after a complete successful write."""
+        destination = os.path.abspath(path)
+        directory = os.path.dirname(destination)
+        existing_mode = (
+            stat.S_IMODE(os.stat(destination).st_mode) if os.path.exists(destination) else None
+        )
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=".%s." % os.path.basename(destination), suffix=".partial", dir=directory
+        )
+        os.close(descriptor)
+        try:
+            PackageWriter.write(temporary, self._rels, parts)
+            if existing_mode is not None:
+                os.chmod(temporary, existing_mode)
+            else:
+                # -- mkstemp creates 0600; a NEW destination must get the mode a plain
+                # -- open() would have given it, or downstream readers lose access
+                active_umask = os.umask(0)
+                os.umask(active_umask)
+                os.chmod(temporary, 0o666 & ~active_umask)
+            with open(temporary, "rb") as stream:
+                os.fsync(stream.fileno())
+            os.replace(temporary, destination)
+        except BaseException:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary)
+            raise
 
     def _load(self) -> Self:
         """Return the package after loading all parts and relationships."""
@@ -248,20 +354,50 @@ class _PackageLoader:
 
         def load_rels(source_partname: PackURI, rels: CT_Relationships):
             """Populate `xml_rels` dict by traversing relationships depth-first."""
+            from pptx.errors import PackageLimitError
+
             xml_rels[source_partname] = rels
             visited_partnames.add(source_partname)
             base_uri = source_partname.baseURI
+
+            rIds = [rel.rId for rel in rels.relationship_lst]
+            duplicate_rIds = sorted({rId for rId in rIds if rIds.count(rId) > 1})
+            if duplicate_rIds:
+                raise PackageLimitError(
+                    "relationship part for %s contains duplicate ids: %s"
+                    % (source_partname, ", ".join(duplicate_rIds))
+                )
 
             # --- recursion stops when there are no unvisited partnames in rels ---
             for rel in rels.relationship_lst:
                 if rel.targetMode == RTM.EXTERNAL:
                     continue
                 target_partname = PackURI.from_rel_ref(base_uri, rel.target_ref)
+                if self._pkg_file is not None and target_partname not in self._package_reader:
+                    raise PackageLimitError(
+                        "relationship %s from %s targets missing part %s"
+                        % (rel.rId, source_partname, target_partname)
+                    )
                 if target_partname in visited_partnames:
                     continue
                 load_rels(target_partname, self._xml_rels_for(target_partname))
 
         load_rels(PACKAGE_URI, self._xml_rels_for(PACKAGE_URI))
+        physical_names = None if self._pkg_file is None else self._package_reader.partnames
+        if physical_names is not None:
+            physical_parts = {
+                partname
+                for partname in physical_names
+                if partname != CONTENT_TYPES_URI and not partname.membername.endswith(".rels")
+            }
+            unreachable = sorted(physical_parts - (visited_partnames - {PACKAGE_URI}))
+            if unreachable:
+                from pptx.errors import PackageLimitError
+
+                raise PackageLimitError(
+                    "ZIP package contains unreachable parts that ordinary save would drop: %s"
+                    % ", ".join(str(partname) for partname in unreachable)
+                )
         return xml_rels
 
     def _xml_rels_for(self, partname: PackURI) -> CT_Relationships:

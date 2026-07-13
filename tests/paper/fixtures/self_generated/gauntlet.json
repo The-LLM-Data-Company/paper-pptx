@@ -1,0 +1,71 @@
+{
+  "fixture": "gauntlet.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Built by tests/paper/_authoring/build_fixtures.py. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "gauntlet",
+    "master_txstyles",
+    "clrmap_remap",
+    "native_chart_with_embedded_workbook",
+    "speaker_notes",
+    "shared_media_part",
+    "autofit_noautofit",
+    "autofit_normautofit",
+    "autofit_spautofit",
+    "real_bullet_buchar",
+    "table",
+    "picture_crop",
+    "external_hyperlink",
+    "empty_placeholder"
+  ],
+  "ground_truth": {
+    "slide_count": 4,
+    "master_body_lvl1_sz_centipoints": 2600,
+    "clrmap_accent1": "accent2",
+    "layout_title_lvl1_sz_centipoints": 3600,
+    "chart_part": "ppt/charts/chart1.xml",
+    "embedded_workbook_part": "ppt/embeddings/Microsoft_Excel_Sheet1.xlsx",
+    "notes_slide_part": "ppt/notesSlides/notesSlide1.xml",
+    "notes_text": "Gauntlet speaker notes.",
+    "media_parts": [
+      "ppt/media/image1.png"
+    ],
+    "media_shared_by_slides": [
+      2,
+      3,
+      4
+    ],
+    "real_bullet": {
+      "shape_name": "real_bullet_box",
+      "bu_char": "•",
+      "bu_font": "Arial"
+    },
+    "table": {
+      "shape_name": "gauntlet_table",
+      "rows": 3,
+      "cols": 3
+    },
+    "cropped_picture": {
+      "shape_name": "gauntlet_cropped",
+      "srcrect_l": "25000",
+      "srcrect_t": "10000"
+    },
+    "external_hyperlink": {
+      "slide": 4,
+      "target": "https://example.com/paper"
+    },
+    "empty_body_placeholder_slide": 4,
+    "autofit_by_shape": {
+      "autofit_none_box": "a:noAutofit",
+      "autofit_normal_box": "a:normAutofit",
+      "autofit_shape_box": "a:spAutoFit",
+      "real_bullet_box": "a:noAutofit",
+      "hyperlink_box": "a:noAutofit"
+    }
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

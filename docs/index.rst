@@ -1,6 +1,6 @@
 
-python-pptx
-===========
+paper-pptx
+==========
 
 Release v\ |version| (:ref:`Installation <install>`)
 
@@ -17,22 +17,40 @@ which includes a comprehensive two-level (e2e + unit) testing regimen. This disc
 comes at a cost in development effort/time, but we consider reliability to be an
 essential requirement.
 
+**paper-pptx** uses the inherited package and XML layers to inspect, edit, and compose existing
+decks. These operations cover work that otherwise requires direct package and XML changes, where
+an incorrect relationship or inherited value can produce silent corruption. Each added operation
+validates its inputs before mutation and raises a typed refusal without changing the document
+when it cannot proceed safely. The contract harness checks save → reopen behavior, exact
+changed-part budgets, and LibreOffice loading. See :ref:`paper_additions` for the added APIs; the
+remaining documentation describes the shared python-pptx foundation.
+
 
 Feature Support
 ---------------
 
-|pp| has the following capabilities:
+|pp| round-trips any Open XML presentation (.pptx) losslessly and can, from the inherited
+python-pptx API:
 
-* Round-trip any Open XML presentation (.pptx file) including all its elements
-* Add slides
-* Populate text placeholders, for example to create a bullet slide
-* Add image to slide at arbitrary position and size
-* Add textbox to a slide; manipulate text font size and bold
-* Add table to a slide
-* Add auto shapes (e.g. polygons, flowchart shapes, etc.) to a slide
+* Add slides; populate text placeholders, for example to create a bullet slide
+* Add an image, textbox, table, or auto shape to a slide at arbitrary position and size
 * Add and manipulate column, bar, line, and pie charts
 * Access and change core document properties such as title and subject
 * And many others ...
+
+The **paper-pptx** additions extend this foundation to inspecting, editing, composing, and
+verifying existing decks (overview: :ref:`paper_additions`):
+
+* Copy, delete, reorder, and move slides safely; delete/move/copy shapes; insert and delete
+  table rows and columns
+* Resolve the size, font, and color a shape *actually* renders at through the
+  placeholder → layout → master → theme chain, with provenance
+* Replace text while preserving formatting (anchored and staleness-detecting); make real bullets;
+  read and normalize autofit; swap an image while keeping its crop; replace chart data by shape name
+* Apply real slide-number and date fields; scrub a deck send-safe; rebind a slide to another
+  layout; import slides across presentations; diff two decks part-by-part
+* Raise a typed refusal and leave the document byte-identical when an operation cannot be
+  completed safely
 
 Even with all |pp| does, the PowerPoint document format is very rich and there are still
 features |pp| does not support.
@@ -41,9 +59,9 @@ features |pp| does not support.
 New features/releases
 ---------------------
 
-New features are generally added via sponsorship. If there's a new feature you need for
-your use case, feel free to reach out at the email address on the github.com/scanny
-profile page. Many of the most used features such as charts were added this way.
+paper-pptx adds capabilities one at a time, with frozen test fixtures and contract tests.
+The inherited python-pptx features were generally added through sponsorship; many widely used
+features, including charts, arrived that way.
 
 
 User Guide
@@ -53,6 +71,7 @@ User Guide
    :maxdepth: 1
 
    user/intro
+   user/paper-additions
    user/install
    user/quickstart
    user/presentations
@@ -102,6 +121,21 @@ API Documentation
    api/exc
    api/util
    api/enum/index
+
+.. rubric:: paper-pptx additions
+
+.. toctree::
+   :maxdepth: 2
+
+   api/errors
+   api/inspect
+   api/edit
+   api/package
+   api/hf
+   api/scrub
+   api/rebind
+   api/compose
+   api/diff
 
 
 Contributor Guide

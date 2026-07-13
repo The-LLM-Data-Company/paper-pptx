@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Callable, cast
 
 from pptx.oxml import parse_from_template, parse_xml
 from pptx.oxml.dml.fill import CT_GradientFillProperties
-from pptx.oxml.ns import nsdecls
-from pptx.oxml.simpletypes import XsdString
+from pptx.oxml.ns import nsdecls, qn
+from pptx.oxml.simpletypes import XsdBoolean, XsdString, XsdUnsignedInt
 from pptx.oxml.xmlchemy import (
     BaseOxmlElement,
     Choice,
@@ -251,11 +251,36 @@ class CT_Slide(_BaseSlideElement):
         )
 
 
+class CT_HeaderFooter(BaseOxmlElement):
+    """`p:hf` element, header/footer placeholder visibility flags (paper-pptx addition).
+
+    All four attributes are optional booleans whose schema default is true (visible).
+    """
+
+    sldNum: bool | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "sldNum", XsdBoolean
+    )
+    hdr: bool | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "hdr", XsdBoolean
+    )
+    ftr: bool | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "ftr", XsdBoolean
+    )
+    dt: bool | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "dt", XsdBoolean
+    )
+
+
 class CT_SlideLayout(_BaseSlideElement):
     """`p:sldLayout` element, root of a slide layout part."""
 
+    get_or_add_hf: Callable[[], CT_HeaderFooter]
+
     _tag_seq = ("p:cSld", "p:clrMapOvr", "p:transition", "p:timing", "p:hf", "p:extLst")
     cSld: CT_CommonSlideData = OneAndOnlyOne("p:cSld")  # pyright: ignore[reportAssignmentType]
+    hf: CT_HeaderFooter | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+        "p:hf", successors=_tag_seq[5:]
+    )
     del _tag_seq
 
 
@@ -277,12 +302,17 @@ class CT_SlideLayoutIdListEntry(BaseOxmlElement):
     """
 
     rId: str = RequiredAttribute("r:id", XsdString)  # pyright: ignore[reportAssignmentType]
+    #: document-unique layout id, schema minimum 2147483648 (paper-pptx addition)
+    id: int | None = OptionalAttribute(  # pyright: ignore[reportAssignmentType]
+        "id", XsdUnsignedInt
+    )
 
 
 class CT_SlideMaster(_BaseSlideElement):
     """`p:sldMaster` element, root of a slide master part."""
 
     get_or_add_sldLayoutIdLst: Callable[[], CT_SlideLayoutIdList]
+    get_or_add_hf: Callable[[], CT_HeaderFooter]
 
     _tag_seq = (
         "p:cSld",
@@ -298,7 +328,36 @@ class CT_SlideMaster(_BaseSlideElement):
     sldLayoutIdLst: CT_SlideLayoutIdList = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
         "p:sldLayoutIdLst", successors=_tag_seq[3:]
     )
+    hf: CT_HeaderFooter | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+        "p:hf", successors=_tag_seq[6:]
+    )
+    txStyles: CT_SlideMasterTextStyles | None = ZeroOrOne(  # pyright: ignore[reportAssignmentType]
+        "p:txStyles", successors=_tag_seq[7:]
+    )
     del _tag_seq
+
+
+class CT_SlideMasterTextStyles(BaseOxmlElement):
+    """`p:txStyles` element, holding the master's title/body/other text list-styles.
+
+    Read-only access for the effective-style inheritance walk; each child is a
+    `CT_TextListStyle`.
+    """
+
+    @property
+    def titleStyle(self):
+        """`p:titleStyle` child (a `CT_TextListStyle`), or |None| if not present."""
+        return self.find(qn("p:titleStyle"))
+
+    @property
+    def bodyStyle(self):
+        """`p:bodyStyle` child (a `CT_TextListStyle`), or |None| if not present."""
+        return self.find(qn("p:bodyStyle"))
+
+    @property
+    def otherStyle(self):
+        """`p:otherStyle` child (a `CT_TextListStyle`), or |None| if not present."""
+        return self.find(qn("p:otherStyle"))
 
 
 class CT_SlideTiming(BaseOxmlElement):

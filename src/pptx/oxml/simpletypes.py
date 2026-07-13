@@ -628,6 +628,94 @@ class ST_TargetMode(XsdString):
             raise ValueError("must be one of 'Internal' or 'External', got '%s'" % value)
 
 
+class ST_TextAutonumberScheme(XsdTokenEnumeration):
+    """Valid values for `a:buAutoNum/@type` (ECMA-376 ST_TextAutonumberScheme)."""
+
+    _members = (
+        "alphaLcParenBoth",
+        "alphaUcParenBoth",
+        "alphaLcParenR",
+        "alphaUcParenR",
+        "alphaLcPeriod",
+        "alphaUcPeriod",
+        "arabicParenBoth",
+        "arabicParenR",
+        "arabicPeriod",
+        "arabicPlain",
+        "romanLcParenBoth",
+        "romanUcParenBoth",
+        "romanLcParenR",
+        "romanUcParenR",
+        "romanLcPeriod",
+        "romanUcPeriod",
+        "circleNumDbPlain",
+        "circleNumWdBlackPlain",
+        "circleNumWdWhitePlain",
+        "arabicDbPeriod",
+        "arabicDbPlain",
+        "ea1ChsPeriod",
+        "ea1ChsPlain",
+        "ea1ChtPeriod",
+        "ea1ChtPlain",
+        "ea1JpnChsDbPeriod",
+        "ea1JpnKorPlain",
+        "ea1JpnKorPeriod",
+        "arabic1Minus",
+        "arabic2Minus",
+        "hebrew2Minus",
+        "thaiAlphaPeriod",
+        "thaiAlphaParenR",
+        "thaiAlphaParenBoth",
+        "thaiNumPeriod",
+        "thaiNumParenR",
+        "thaiNumParenBoth",
+        "hindiAlphaPeriod",
+        "hindiNumPeriod",
+        "hindiNumParenR",
+        "hindiAlpha1Period",
+    )
+
+
+class ST_TextBulletSizePercent(BaseFloatType):
+    """Valid values for `a:buSzPct/@val`, as a fraction of the text size (e.g. 0.75 for 75%).
+
+    Reads both wire forms found in real files: thousandths-of-a-percent integers ("75000",
+    ECMA-376:2006 form) and percent strings ("75%"). Writes the percent-string form, which
+    both current schema editions bless — their pattern admits WHOLE percents only (25%–400%),
+    so fractional percents like 0.755 are rejected at validation.
+    """
+
+    @classmethod
+    def convert_from_xml(cls, str_value):
+        if str_value.endswith("%"):
+            return float(str_value[:-1]) / 100.0
+        return int(str_value) / 100000.0
+
+    @classmethod
+    def convert_to_xml(cls, value):
+        return "%d%%" % int(round(value * 100.0))
+
+    @classmethod
+    def validate(cls, value):
+        BaseFloatType.validate(value)
+        if value < 0.25 or value > 4.0:
+            raise ValueError("bullet size fraction must be in range 0.25..4.0, got %s" % value)
+        percent = value * 100.0
+        if abs(percent - round(percent)) > 1e-9:
+            raise ValueError(
+                "bullet size must be a whole percent (the ECMA-376 schema admits integer"
+                " percents only), got %s%%" % percent
+            )
+
+
+class ST_TextBulletStartAtNum(BaseIntType):
+    """Valid values for `a:buAutoNum/@startAt`."""
+
+    @classmethod
+    def validate(cls, value):
+        cls.validate_int_in_range(value, 1, 32767)
+
+
 class ST_TextFontScalePercentOrPercentString(BaseFloatType):
     """
     Valid values for the `fontScale` attribute of ``<a:normAutofit>``.
@@ -657,10 +745,50 @@ class ST_TextFontSize(BaseIntType):
         cls.validate_int_in_range(value, 100, 400000)
 
 
+class ST_TextLineSpaceReductionPercentOrPercentString(BaseFloatType):
+    """Valid values for `a:normAutofit/@lnSpcReduction`, as a percent float (20.0 = 20%).
+
+    Reads both wire forms ("20000" thousandths and "20%"), mirroring the `fontScale`
+    attribute's simpletype, and writes the thousandths form PowerPoint writes.
+    """
+
+    @classmethod
+    def convert_from_xml(cls, str_value):
+        if str_value.endswith("%"):
+            return float(str_value[:-1])
+        return int(str_value) / 1000.0
+
+    @classmethod
+    def convert_to_xml(cls, value):
+        return str(int(value * 1000.0))
+
+    @classmethod
+    def validate(cls, value):
+        BaseFloatType.validate(value)
+        if value < 0.0 or value > 100.0:
+            raise ValueError("value must be in range 0.0..100.0 (percent), got %s" % value)
+
+
+class ST_TextIndent(ST_Coordinate32Unqualified):
+    """Valid values for `a:pPr/@indent`, an EMU |Length| (negative = hanging indent)."""
+
+    @classmethod
+    def validate(cls, value):
+        cls.validate_int_in_range(value, -51206400, 51206400)
+
+
 class ST_TextIndentLevelType(BaseIntType):
     @classmethod
     def validate(cls, value):
         cls.validate_int_in_range(value, 0, 8)
+
+
+class ST_TextMargin(ST_Coordinate32Unqualified):
+    """Valid values for `a:pPr/@marL` and `@marR`, an EMU |Length|."""
+
+    @classmethod
+    def validate(cls, value):
+        cls.validate_int_in_range(value, 0, 51206400)
 
 
 class ST_TextSpacingPercentOrPercentString(BaseFloatType):

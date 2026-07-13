@@ -1,25 +1,19 @@
-*python-pptx* is a Python library for creating, reading, and updating PowerPoint (.pptx)
-files.
+*paper-pptx* is Paper Instruments' agent-first, strict-superset hard fork of *python-pptx*
+``v1.0.2`` for safely **inspecting, editing, and composing** existing PowerPoint (.pptx) files.
+The distribution is renamed; the import name stays ``pptx``. ``from pptx import Presentation``
+and every other existing call keep working unchanged.
 
-A typical use would be generating a PowerPoint presentation from dynamic content such as
-a database query, analytics output, or a JSON payload, perhaps in response to an HTTP
-request and downloading the generated PPTX file in response. It runs on any Python
-capable platform, including macOS and Linux, and does not require the PowerPoint
-application to be installed or licensed.
+Stock python-pptx provides the package and XML layers for creating decks. paper-pptx adds APIs for
+existing decks: resolve effective values through the placeholder → layout → master → theme chain,
+with provenance; edit text and structure; compose slides across files under an explicit theme
+policy; and compare the result with a deck-to-deck diff. It runs on any Python-capable platform,
+including macOS and Linux, and does not require PowerPoint to be installed or licensed.
 
-It can also be used to analyze PowerPoint files from a corpus, perhaps to extract search
-indexing text and images.
+The fork exists to prevent **silent corruption**: a deck that opens fine and is quietly wrong.
+Every added operation either does exactly what it claims or refuses atomically, leaving the
+document byte-for-byte unchanged. The contract harness checks this through save → reopen checks,
+exact changed-part budgets, and an independent LibreOffice load smoke in release verification.
 
-In can also be used to simply automate the production of a slide or two that would be
-tedious to get right by hand, which is how this all got started.
-
-More information is available in the `python-pptx documentation`_.
-
-Browse `examples with screenshots`_ to get a quick idea what you can do with
-python-pptx.
-
-.. _`python-pptx documentation`:
-   https://python-pptx.readthedocs.org/en/latest/
-
-.. _`examples with screenshots`:
-   https://python-pptx.readthedocs.org/en/latest/user/quickstart.html
+Start with :ref:`paper_additions` for an overview. Each added module has a page under
+`API Documentation`_. The remaining documentation is inherited from python-pptx and describes
+the shared, unchanged foundation.

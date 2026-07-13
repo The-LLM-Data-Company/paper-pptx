@@ -174,6 +174,34 @@ class MSO_VERTICAL_ANCHOR(BaseXmlEnum):
 MSO_ANCHOR = MSO_VERTICAL_ANCHOR
 
 
+class PP_BULLET_TYPE(BaseEnum):
+    """Kind of bullet explicitly set on a paragraph's own properties (paper-pptx addition).
+
+    Reported by `paragraph.bullet.type`. Reflects local `a:pPr` state only: a paragraph whose
+    bullet rendering is inherited from the placeholder/list-style chain reports |None|, not a
+    member of this enumeration.
+
+    Example::
+
+        from pptx.enum.text import PP_BULLET_TYPE
+
+        paragraph.bullet.set_character()
+        assert paragraph.bullet.type == PP_BULLET_TYPE.CHARACTER
+    """
+
+    NONE = (0, "Explicit 'no bullet' (`a:buNone`), overriding any inherited bullet.")
+    """Explicit 'no bullet' (`a:buNone`), overriding any inherited bullet."""
+
+    CHARACTER = (1, "Character bullet (`a:buChar`), e.g. the classic '•'.")
+    """Character bullet (`a:buChar`), e.g. the classic '•'."""
+
+    NUMBERED = (2, "Automatic numbering (`a:buAutoNum`).")
+    """Automatic numbering (`a:buAutoNum`)."""
+
+    PICTURE = (3, "Picture bullet (`a:buBlip`). Recognized on read; not writable in v0.")
+    """Picture bullet (`a:buBlip`). Recognized on read; not writable in v0."""
+
+
 class PP_PARAGRAPH_ALIGNMENT(BaseXmlEnum):
     """Specifies the horizontal alignment for one or more paragraphs.
 

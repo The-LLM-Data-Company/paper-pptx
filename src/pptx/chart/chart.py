@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 from pptx.chart.axis import CategoryAxis, DateAxis, ValueAxis
@@ -10,9 +11,117 @@ from pptx.chart.plot import PlotFactory, PlotTypeInspector
 from pptx.chart.series import SeriesCollection
 from pptx.chart.xmlwriter import SeriesXmlRewriterFactory
 from pptx.dml.chtfmt import ChartFormat
+from pptx.enum.chart import XL_CHART_TYPE
 from pptx.shared import ElementProxy, PartElementProxy
 from pptx.text.text import Font, TextFrame
 from pptx.util import lazyproperty
+
+
+def _require_xml_encodable(value, name):
+    """Raise |ValueError| when `value` cannot be represented in XML 1.0.
+
+    Part of validate-fully-then-mutate (paper-pptx): a str that passes isinstance checks but
+    explodes during serialization would otherwise corrupt the chart mid-replacement.
+    """
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValueError("%s contains characters not encodable in XML: %r" % (name, value))
+    if any(
+        not (
+            ch in "\t\n\r"
+            or "\x20" <= ch <= "\ud7ff"
+            or "\ue000" <= ch <= "\ufffd"
+            or "\U00010000" <= ch <= "\U0010ffff"
+        )
+        for ch in value
+    ):
+        raise ValueError("%s contains characters not permitted in XML 1.0: %r" % (name, value))
+
+
+_MAX_CHART_CATEGORIES = 1_048_575  # row 1 is reserved for headings
+_MAX_CHART_SERIES = 16_383  # column A is reserved for categories
+
+
+#: chart types `Chart.replace_data_safe` supports: the category-chart families the
+#: production reference exercised (paper-pptx addition)
+_SAFE_REPLACE_CHART_TYPES = frozenset(
+    [
+        XL_CHART_TYPE.AREA,
+        XL_CHART_TYPE.AREA_STACKED,
+        XL_CHART_TYPE.AREA_STACKED_100,
+        XL_CHART_TYPE.BAR_CLUSTERED,
+        XL_CHART_TYPE.BAR_STACKED,
+        XL_CHART_TYPE.BAR_STACKED_100,
+        XL_CHART_TYPE.COLUMN_CLUSTERED,
+        XL_CHART_TYPE.COLUMN_STACKED,
+        XL_CHART_TYPE.COLUMN_STACKED_100,
+        XL_CHART_TYPE.DOUGHNUT,
+        XL_CHART_TYPE.DOUGHNUT_EXPLODED,
+        XL_CHART_TYPE.LINE,
+        XL_CHART_TYPE.LINE_MARKERS,
+        XL_CHART_TYPE.LINE_MARKERS_STACKED,
+        XL_CHART_TYPE.LINE_MARKERS_STACKED_100,
+        XL_CHART_TYPE.LINE_STACKED,
+        XL_CHART_TYPE.LINE_STACKED_100,
+        XL_CHART_TYPE.PIE,
+        XL_CHART_TYPE.PIE_EXPLODED,
+    ]
+)
+
+
+def _require_chart_attached(chart) -> None:
+    """Require exactly one reachable graphic-frame reference to this live chart part."""
+    from pptx.errors import TargetNotFoundError, UnsupportedStructureError
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+    from pptx.oxml.ns import qn
+
+    if chart._chartSpace is not chart.part._element:
+        raise TargetNotFoundError(
+            "chart is stale: its XML root is no longer the live chart-part root"
+        )
+    references = []
+    for owner in chart.part.package.iter_parts():
+        root = getattr(owner, "_element", None)
+        if root is None:
+            continue
+        for chart_ref in root.iter(qn("c:chart")):
+            rId = chart_ref.get(qn("r:id"))
+            if not rId or rId not in owner.rels:
+                continue
+            rel = owner.rels[rId]
+            if not rel.is_external and rel.reltype == RT.CHART and rel.target_part is chart.part:
+                references.append((owner, chart_ref))
+    if not references:
+        raise TargetNotFoundError(
+            "chart is stale: its chart part is no longer referenced by a reachable chart shape"
+        )
+    if len(references) > 1:
+        raise UnsupportedStructureError(
+            "chart part is shared by multiple reachable chart shapes; replacing data would "
+            "silently change every shape that shares it"
+        )
+
+
+def _require_unshared_workbook(chart_part, xlsx_part) -> None:
+    """Refuse mutation of a workbook targeted by another reachable chart part."""
+    if xlsx_part is None:
+        return
+    from pptx.errors import UnsupportedStructureError
+    from pptx.parts.chart import ChartPart
+
+    for part in chart_part.package.iter_parts():
+        if part is chart_part or not isinstance(part, ChartPart):
+            continue
+        rId = part._element.xlsx_part_rId
+        if rId is None or rId not in part.rels:
+            continue
+        rel = part.rels[rId]
+        if not rel.is_external and rel.target_part is xlsx_part:
+            raise UnsupportedStructureError(
+                "chart workbook is shared by another reachable chart; replacing data would "
+                "silently change that chart's workbook"
+            )
 
 
 class Chart(PartElementProxy):
@@ -165,6 +274,129 @@ class Chart(PartElementProxy):
         rewriter = SeriesXmlRewriterFactory(self.chart_type, chart_data)
         rewriter.replace_series_data(self._chartSpace)
         self._workbook.update_from_xlsx_blob(chart_data.xlsx_blob)
+
+    def replace_data_safe(self, categories, series, *, number_format=None):
+        """Validate `categories`/`series` fully, then route to :meth:`replace_data`.
+
+        paper-pptx addition: the safety-and-addressing wrapper over the existing replacement
+        mechanism. `categories` is a sequence of str; `series` is a sequence of
+        `(name, values)` pairs where each `values` is a sequence of numbers (or None for a
+        missing point) exactly as long as `categories`.
+
+        Data-shape problems raise |ValueError| (programmer error). Structural refusals
+        (|UnsupportedStructureError|, document untouched): a chart type outside the
+        supported category-chart families (XY/bubble/stock/surface/radar and 3-D variants
+        are not supported) or a multi-plot (combo) chart. Charts without an embedded
+        workbook (e.g. LibreOffice/Google-authored) are supported: their chart
+        XML is rewritten and the (absent) workbook update is skipped.
+        """
+        from pptx.chart.data import CategoryChartData
+        from pptx.errors import UnsupportedStructureError
+
+        _require_chart_attached(self)
+
+        # -- data validation, complete before any structural probing or mutation --
+        categories = list(categories)
+        if not categories:
+            raise ValueError("categories must be a non-empty sequence of str")
+        if len(categories) > _MAX_CHART_CATEGORIES:
+            raise ValueError(
+                "categories cannot exceed Excel's %d data-row limit, got %d"
+                % (_MAX_CHART_CATEGORIES, len(categories))
+            )
+        for category in categories:
+            if not isinstance(category, str):
+                raise ValueError("categories must all be str, got %r" % (category,))
+            _require_xml_encodable(category, "category")
+        series = list(series)
+        if not series:
+            raise ValueError("series must be a non-empty sequence of (name, values) pairs")
+        if len(series) > _MAX_CHART_SERIES:
+            raise ValueError(
+                "series cannot exceed Excel's %d data-column limit, got %d"
+                % (_MAX_CHART_SERIES, len(series))
+            )
+        normalized_series = []
+        seen_names = set()
+        for item in series:
+            try:
+                name, values = item
+            except (TypeError, ValueError):
+                raise ValueError("each series must be a (name, values) pair, got %r" % (item,))
+            if not isinstance(name, str) or not name:
+                raise ValueError("series name must be a non-empty str, got %r" % (name,))
+            _require_xml_encodable(name, "series name")
+            if name in seen_names:
+                raise ValueError("duplicate series name %r" % (name,))
+            seen_names.add(name)
+            values = tuple(values)
+            if len(values) != len(categories):
+                raise ValueError(
+                    "series %r has %d values for %d categories"
+                    % (name, len(values), len(categories))
+                )
+            for value in values:
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, (int, float))
+                ):
+                    raise ValueError(
+                        "series %r values must be numbers or None, got %r" % (name, value)
+                    )
+                if value is not None:
+                    # -- finite-float representability, validated BEFORE any XML write:
+                    # -- a 10**400 int would otherwise raise OverflowError mid-mutation
+                    # -- (chart XML rewritten, workbook not), and inf/nan serialize as
+                    # -- schema-invalid lexical values
+                    try:
+                        as_float = float(value)
+                    except OverflowError:
+                        raise ValueError(
+                            "series %r value %r is too large to represent as a chart value"
+                            % (name, value)
+                        )
+                    if math.isnan(as_float) or math.isinf(as_float):
+                        raise ValueError(
+                            "series %r values must be finite numbers, got %r" % (name, value)
+                        )
+            normalized_series.append((name, values))
+        if number_format is not None and not isinstance(number_format, str):
+            raise ValueError("number_format must be a str or None, got %r" % (number_format,))
+        if number_format is not None:
+            _require_xml_encodable(number_format, "number_format")
+
+        # -- structural validation --
+        chart_type = self.chart_type
+        if chart_type not in _SAFE_REPLACE_CHART_TYPES:
+            raise UnsupportedStructureError(
+                "chart type %s is not supported by replace_data_safe in v0 (category charts"
+                " only: bar/column/line/area families, pie, doughnut)" % chart_type
+            )
+        if len(self.plots) != 1:
+            raise UnsupportedStructureError(
+                "multi-plot (combo) charts are not supported by replace_data_safe in v0"
+            )
+
+        # -- route to the existing public mechanism. Charts without an embedded workbook
+        # -- (LibreOffice/Google-authored) update chart XML only: the same series
+        # -- rewriter runs, and the workbook update is skipped because there is none.
+        chart_data = (
+            CategoryChartData(number_format=number_format)
+            if number_format is not None
+            else CategoryChartData()
+        )
+        chart_data.categories = categories
+        for name, values in normalized_series:
+            chart_data.add_series(name, values)
+        xlsx_part = self._workbook.xlsx_part
+        _require_unshared_workbook(self.part, xlsx_part)
+        xlsx_blob = chart_data.xlsx_blob if xlsx_part is not None else None
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            rewriter = SeriesXmlRewriterFactory(self.chart_type, chart_data)
+            rewriter.replace_series_data(self._chartSpace)
+            if xlsx_blob is not None:
+                self._workbook.update_from_xlsx_blob(xlsx_blob)
 
     @lazyproperty
     def series(self):

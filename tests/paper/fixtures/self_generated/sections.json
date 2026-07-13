@@ -1,0 +1,71 @@
+{
+  "fixture": "sections.pptx",
+  "provenance": {
+    "app": "python-pptx (paper-pptx fork, self-generated)",
+    "version": "paper-pptx 0.1.0 on python-pptx 1.0.2 core, CPython 3.12.13, macOS 26.5.1 arm64",
+    "notes": "Sections/custom show injected into presentation.xml by zip surgery (python-pptx cannot author them); real-PowerPoint version requested as FIXTURE-REQUESTS.md R8. Built by tests/paper/_authoring/build_fixtures.py for PLAN-v0.1 Phase 0. Frozen: regeneration requires manifest + sidecar update in a reviewed PR."
+  },
+  "features": [
+    "slide_sections",
+    "custom_show"
+  ],
+  "ground_truth": {
+    "slide_count": 5,
+    "sldid_entries": [
+      {
+        "id": "256",
+        "r_id": "rId7"
+      },
+      {
+        "id": "257",
+        "r_id": "rId8"
+      },
+      {
+        "id": "258",
+        "r_id": "rId9"
+      },
+      {
+        "id": "259",
+        "r_id": "rId10"
+      },
+      {
+        "id": "260",
+        "r_id": "rId11"
+      }
+    ],
+    "sections": [
+      {
+        "name": "Intro",
+        "slide_ids": [
+          "256"
+        ]
+      },
+      {
+        "name": "Body",
+        "slide_ids": [
+          "257",
+          "258",
+          "259"
+        ]
+      },
+      {
+        "name": "Close",
+        "slide_ids": [
+          "260"
+        ]
+      }
+    ],
+    "section_ext_uri": "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}",
+    "custom_shows": [
+      {
+        "name": "Focus",
+        "slide_r_ids": [
+          "rId8",
+          "rId10"
+        ]
+      }
+    ]
+  },
+  "verified_by": "UNVERIFIED - machine-derived by direct XML/zip inspection at authoring time; human verification pending, see FIXTURE-REQUESTS.md",
+  "date": "2026-07-07"
+}

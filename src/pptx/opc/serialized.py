@@ -7,6 +7,7 @@ import posixpath
 import zipfile
 from typing import IO, TYPE_CHECKING, Any, Container, Sequence
 
+from pptx._zipguard import GuardedZipReader, enforce_compressed_size, preflight_zip
 from pptx.exc import PackageNotFoundError
 from pptx.opc.constants import CONTENT_TYPE as CT
 from pptx.opc.oxml import CT_Types, serialize_part_xml
@@ -45,6 +46,11 @@ class PackageReader(Container[bytes]):
         """
         blob_reader, uri = self._blob_reader, partname.rels_uri
         return blob_reader[uri] if uri in blob_reader else None
+
+    @property
+    def partnames(self) -> set[PackURI] | None:
+        """Physical member names, or |None| for an expanded directory package."""
+        return getattr(self._blob_reader, "partnames", None)
 
     @lazyproperty
     def _blob_reader(self) -> _PhysPkgReader:
@@ -131,17 +137,20 @@ class _PhysPkgReader(Container[PackURI]):
         """Return |_PhysPkgReader| subtype instance appropriage for `pkg_file`."""
         # --- for pkg_file other than str, assume it's a stream and pass it to Zip
         # --- reader to sort out
-        if not isinstance(pkg_file, str):
+        if not isinstance(pkg_file, (str, os.PathLike)):
             return _ZipPkgReader(pkg_file)
 
         # --- otherwise we treat `pkg_file` as a path ---
-        if os.path.isdir(pkg_file):
-            return _DirPkgReader(pkg_file)
+        path = os.fspath(pkg_file)
+        if os.path.isdir(path):
+            return _DirPkgReader(path)
 
-        if zipfile.is_zipfile(pkg_file):
-            return _ZipPkgReader(pkg_file)
+        if os.path.isfile(path):
+            enforce_compressed_size(path)
+        if zipfile.is_zipfile(path):
+            return _ZipPkgReader(path)
 
-        raise PackageNotFoundError("Package not found at '%s'" % pkg_file)
+        raise PackageNotFoundError("Package not found at '%s'" % path)
 
 
 class _DirPkgReader(_PhysPkgReader):
@@ -188,11 +197,19 @@ class _ZipPkgReader(_PhysPkgReader):
             raise KeyError("no member '%s' in package" % pack_uri)
         return self._blobs[pack_uri]
 
+    @property
+    def partnames(self) -> set[PackURI]:
+        """All validated physical package member names."""
+        return set(self._blobs)
+
     @lazyproperty
     def _blobs(self) -> dict[PackURI, bytes]:
         """dict mapping partname to package part binaries."""
+        enforce_compressed_size(self._pkg_file)
+        preflight_zip(self._pkg_file)
         with zipfile.ZipFile(self._pkg_file, "r") as z:
-            return {PackURI("/%s" % name): z.read(name) for name in z.namelist()}
+            guarded = GuardedZipReader(z)
+            return {PackURI("/%s" % name): guarded.read(name) for name in guarded.order}
 
 
 class _PhysPkgWriter:

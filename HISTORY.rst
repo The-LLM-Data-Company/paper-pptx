@@ -3,6 +3,29 @@
 Release History
 ---------------
 
+paper-pptx 0.1.2 (2026-07-12)
+++++++++++++++++++++++++++++++++
+
+- Make failed multi-part edits restore the original live object graph and package bytes.
+- Reject stale targets, shared mutable chart data, unsafe relationship aliases, and foreign
+  source-package ownership before mutation.
+- Preserve document-wide identities during cloning and composition.
+- Correct field, line-break, inherited-formatting, and exact-package diff reporting.
+- Make ordinary path and seekable-stream saves refusal-atomic.
+
+paper-pptx 0.1.1 (2026-07-11)
+++++++++++++++++++++++++++++++++
+
+- Add bounded, unambiguous ZIP intake and atomic ordinary path saves.
+- Harden composition, formatting resolution, package diffing, and stale-proxy handling.
+- Add an install doctor, reproducible release artifacts, and a full required CI gate.
+
+paper-pptx 0.1.0 (2026-07-10)
+++++++++++++++++++++++++++++++++
+
+- Initial paper-pptx release, based on python-pptx 1.0.2.
+- Add safe inspection, editing, composition, scrubbing, and deck-diff APIs.
+
 1.0.2 (2024-08-07)
 ++++++++++++++++++
 

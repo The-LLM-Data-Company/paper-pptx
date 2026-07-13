@@ -48,6 +48,75 @@ class Table(object):
         """
         return _ColumnCollection(self._tbl, self)
 
+    def delete_column(self, col_idx: int) -> None:
+        """Remove the column at 0-based `col_idx`, cells included.
+
+        paper-pptx addition. The `a:gridCol` and every row's cell at that
+        grid position are removed together, so each row keeps exactly one `a:tc` per grid
+        column, and the graphic frame's width is recalculated from the remaining columns.
+
+        Merged-cell guard is cell-wise: the operation refuses
+        (|UnsupportedStructureError|, tree untouched) only when a *horizontal* merge extends
+        beyond the deleted column - a vertical merge lying wholly inside the column is
+        deleted with it. Deleting the last remaining column raises |ValueError| (delete the
+        table's shape instead).
+        """
+        self._validate_structure()
+        col_count = len(self._tbl.tblGrid.gridCol_lst)
+        self._validate_grid_index(col_idx, "col_idx", col_count)
+        if col_count == 1:
+            raise ValueError(
+                "cannot delete the last remaining column; delete the table shape instead"
+            )
+        conflicts = [
+            region
+            for region in self._merge_regions()
+            if region.gridSpan > 1 and region.left <= col_idx <= region.right
+        ]
+        if conflicts:
+            self._refuse_merge_conflict("deleting column %d" % col_idx, conflicts)
+
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            self._tbl.tblGrid.remove(self._tbl.tblGrid.gridCol_lst[col_idx])
+            for tr in self._tbl.tr_lst:
+                tr.remove(tr.tc_lst[col_idx])
+            self.notify_width_changed()
+
+    def delete_row(self, row_idx: int) -> None:
+        """Remove the row at 0-based `row_idx`, cells included.
+
+        paper-pptx addition. The graphic frame's height is recalculated
+        from the remaining rows.
+
+        Merged-cell guard is cell-wise: the operation refuses
+        (|UnsupportedStructureError|, tree untouched) only when a *vertical* merge extends
+        beyond the deleted row - a horizontal merge lying wholly inside the row (e.g. a
+        merged header) is deleted with it and must not poison other rows' operations.
+        Deleting the last remaining row raises |ValueError|.
+        """
+        self._validate_structure()
+        row_count = len(self._tbl.tr_lst)
+        self._validate_grid_index(row_idx, "row_idx", row_count)
+        if row_count == 1:
+            raise ValueError(
+                "cannot delete the last remaining row; delete the table shape instead"
+            )
+        conflicts = [
+            region
+            for region in self._merge_regions()
+            if region.rowSpan > 1 and region.top <= row_idx <= region.bottom
+        ]
+        if conflicts:
+            self._refuse_merge_conflict("deleting row %d" % row_idx, conflicts)
+
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            self._tbl.remove(self._tbl.tr_lst[row_idx])
+            self.notify_height_changed()
+
     @property
     def first_col(self) -> bool:
         """When `True`, indicates first column should have distinct formatting.
@@ -86,6 +155,108 @@ class Table(object):
     @horz_banding.setter
     def horz_banding(self, value: bool):
         self._tbl.bandRow = value
+
+    def insert_column(self, after: int, *, width: Length | None = None) -> _Column:
+        """Insert a new empty column immediately after 0-based column `after`; return it.
+
+        paper-pptx addition. `after=-1` inserts before the first column.
+        `width` (EMU int) defaults to the width of the neighboring column at `after` (the
+        first column when `after=-1`). A new minimal empty cell is inserted at the same grid
+        position in every row - the grid stays consistent by construction - and the graphic
+        frame's width is recalculated.
+
+        Merged-cell guard is cell-wise: refuses (|UnsupportedStructureError|, tree
+        untouched) only when the insertion boundary would split a horizontal merge; vertical
+        merges elsewhere in the table never block the operation.
+        """
+        self._validate_structure()
+        col_count = len(self._tbl.tblGrid.gridCol_lst)
+        self._validate_grid_index(after, "after", col_count, lower=-1)
+        if width is not None and (
+            isinstance(width, bool) or not isinstance(width, int) or width <= 0
+        ):
+            raise ValueError("width must be a positive int (EMU), got %r" % (width,))
+        # -- a boundary at either table edge can never split a merge --
+        if -1 < after < col_count - 1:
+            conflicts = [
+                region
+                for region in self._merge_regions()
+                if region.left <= after < region.right
+            ]
+            if conflicts:
+                self._refuse_merge_conflict(
+                    "inserting a column between columns %d and %d" % (after, after + 1),
+                    conflicts,
+                )
+
+        neighbor_idx = 0 if after == -1 else after
+        new_width = Emu(width) if width is not None else Emu(
+            self._tbl.tblGrid.gridCol_lst[neighbor_idx].w
+        )
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            gridCol = self._tbl.tblGrid.insert_gridCol_at(after + 1, new_width)
+            for tr in self._tbl.tr_lst:
+                tr.insert_tc_at(after + 1)
+            self.notify_width_changed()
+            column = _Column(gridCol, self.columns)
+        return column
+
+    def insert_row(self, after: int, *, copy_format_from: int | None = None) -> _Row:
+        """Insert a new empty row immediately after 0-based row `after`; return it.
+
+        paper-pptx addition. `after=-1` inserts before the first row. The
+        new row holds one minimal empty cell per grid column. Row height and per-cell
+        formatting (each cell's `a:tcPr`: fill, margins, anchor) are copied from the row at
+        `copy_format_from` when given, otherwise the height of the neighboring row at
+        `after` (the first row when `after=-1`) is used and cells carry default formatting.
+        Merge attributes are never copied - the new row is always unmerged. Text is never
+        copied. The graphic frame's height is recalculated.
+
+        Merged-cell guard is cell-wise: refuses (|UnsupportedStructureError|, tree
+        untouched) only when the insertion boundary would split a vertical merge; a merged
+        header row never blocks body-row insertion.
+        """
+        from copy import deepcopy
+
+        self._validate_structure()
+        row_count = len(self._tbl.tr_lst)
+        self._validate_grid_index(after, "after", row_count, lower=-1)
+        if copy_format_from is not None:
+            self._validate_grid_index(copy_format_from, "copy_format_from", row_count)
+        # -- a boundary at either table edge can never split a merge --
+        if -1 < after < row_count - 1:
+            conflicts = [
+                region
+                for region in self._merge_regions()
+                if region.top <= after < region.bottom
+            ]
+            if conflicts:
+                self._refuse_merge_conflict(
+                    "inserting a row between rows %d and %d" % (after, after + 1), conflicts
+                )
+
+        template_idx = copy_format_from if copy_format_from is not None else (
+            0 if after == -1 else after
+        )
+        template_tr = self._tbl.tr_lst[template_idx]
+        from pptx._transaction import PackageTransaction
+
+        with PackageTransaction(self.part.package, self):
+            tr = self._tbl.insert_tr_at(after + 1, Emu(template_tr.h))
+            for col_idx in range(len(self._tbl.tblGrid.gridCol_lst)):
+                tc = tr.add_tc()
+                if copy_format_from is not None:
+                    template_tcPr = template_tr.tc_lst[col_idx].tcPr
+                    if template_tcPr is not None:
+                        existing_tcPr = tc.tcPr
+                        if existing_tcPr is not None:
+                            tc.remove(existing_tcPr)
+                        tc.append(deepcopy(template_tcPr))
+            self.notify_height_changed()
+            row = _Row(tr, self.rows)
+        return row
 
     def iter_cells(self) -> Iterator[_Cell]:
         """Generate _Cell object for each cell in this table.
@@ -163,6 +334,105 @@ class Table(object):
     @vert_banding.setter
     def vert_banding(self, value: bool):
         self._tbl.bandCol = value
+
+    def _merge_regions(self) -> list[_MergeRegion]:
+        """All merged regions in this table, one entry per merge-origin cell.
+
+        paper-pptx helper for the row/column surgery guards. Read-only scan.
+        """
+        regions = []
+        for row_idx, tr in enumerate(self._tbl.tr_lst):
+            for col_idx, tc in enumerate(tr.tc_lst):
+                if tc.is_merge_origin:
+                    regions.append(_MergeRegion(row_idx, col_idx, tc.rowSpan, tc.gridSpan))
+        return regions
+
+    def _validate_structure(self) -> None:
+        """Refuse malformed table grids before a surgery operation mutates XML."""
+        from pptx._ownership import require_shape_attached
+        from pptx.errors import UnsupportedStructureError
+
+        require_shape_attached(self._graphic_frame, argument="table shape")
+        col_count = len(self._tbl.tblGrid.gridCol_lst)
+        row_count = len(self._tbl.tr_lst)
+        if col_count == 0 or row_count == 0:
+            raise UnsupportedStructureError(
+                "table has no rows or columns; repair the table before editing it"
+            )
+        for row_idx, tr in enumerate(self._tbl.tr_lst):
+            if len(tr.tc_lst) != col_count:
+                raise UnsupportedStructureError(
+                    "table row %d has %d cells for %d grid columns; repair the table before "
+                    "editing it" % (row_idx, len(tr.tc_lst), col_count)
+                )
+        for region in self._merge_regions():
+            if (
+                region.rowSpan < 1
+                or region.gridSpan < 1
+                or region.bottom >= row_count
+                or region.right >= col_count
+            ):
+                raise UnsupportedStructureError(
+                    "table contains an out-of-bounds merged region %s; repair the table before "
+                    "editing it" % region
+                )
+
+    def _refuse_merge_conflict(self, operation: str, conflicts: list[_MergeRegion]) -> None:
+        """Raise |UnsupportedStructureError| naming every merged region in `conflicts`."""
+        from pptx.errors import UnsupportedStructureError
+
+        raise UnsupportedStructureError(
+            "%s would cut through merged cell%s %s; split the merge first (cell.split()) or "
+            "operate outside the merged region"
+            % (
+                operation,
+                "" if len(conflicts) == 1 else "s",
+                ", ".join(str(region) for region in conflicts),
+            )
+        )
+
+    @staticmethod
+    def _validate_grid_index(value: int, name: str, count: int, *, lower: int = 0) -> None:
+        """Raise |ValueError| unless `value` is an int in `range(lower, count)`."""
+        if isinstance(value, bool) or not isinstance(value, int) or not (
+            lower <= value < count
+        ):
+            raise ValueError(
+                "%s must be an int in range %d..%d, got %r" % (name, lower, count - 1, value)
+            )
+
+
+class _MergeRegion(object):
+    """Extent of one merged-cell region: origin (top, left) plus row/grid spans.
+
+    paper-pptx addition, used by the surgery guards and their messages.
+    """
+
+    def __init__(self, top: int, left: int, rowSpan: int, gridSpan: int):
+        self.top = top
+        self.left = left
+        self.rowSpan = rowSpan
+        self.gridSpan = gridSpan
+
+    @property
+    def bottom(self) -> int:
+        """0-based index of the last row the region covers."""
+        return self.top + self.rowSpan - 1
+
+    @property
+    def right(self) -> int:
+        """0-based index of the last grid column the region covers."""
+        return self.left + self.gridSpan - 1
+
+    def __repr__(self) -> str:
+        return "<_MergeRegion origin=(%d, %d) rows %d..%d cols %d..%d>" % (
+            self.top, self.left, self.top, self.bottom, self.left, self.right,
+        )
+
+    def __str__(self) -> str:
+        return "(%d, %d) spanning rows %d..%d, columns %d..%d" % (
+            self.top, self.left, self.top, self.bottom, self.left, self.right,
+        )
 
 
 class _Cell(Subshape):
