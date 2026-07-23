@@ -13,11 +13,12 @@ Ubuntu).
 ```bash
 git clone https://github.com/paper-instruments/paper-pptx.git
 cd paper-pptx
-pip install -e .
-pip install -r requirements-dev.txt
+uv sync --group dev
 ```
 
-`uv pip install -r requirements-dev.txt` works equally well.
+Dev, test, and docs dependencies are declared as PEP 735 dependency groups in
+`pyproject.toml` and pinned by the committed `uv.lock`. If you prefer pip
+(25.1+), `pip install -e . --group dev` works equally well.
 
 ## Running the tests
 
@@ -25,11 +26,11 @@ CI (`.github/workflows/test.yml`) runs all of the following; running them
 locally before opening a PR saves a round trip:
 
 ```bash
-pytest                          # upstream unit suite + tests/paper contract harness
-behave                          # upstream acceptance features (or: make accept)
-pytest -m lo_smoke tests/paper  # LibreOffice load smoke; needs headless LibreOffice
-make docs                       # Sphinx build; CI builds with warnings as errors
-make build                      # sdist/wheel build + twine check
+uv run pytest                          # upstream unit suite + tests/paper contract harness
+uv run behave                          # upstream acceptance features (or: uv run make accept)
+uv run pytest -m lo_smoke tests/paper  # LibreOffice load smoke; needs headless LibreOffice
+uv run make docs                       # Sphinx build; CI builds with warnings as errors
+uv run make build                      # sdist/wheel build + twine check
 ```
 
 The pytest matrix in CI covers Python 3.9 through 3.13.

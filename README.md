@@ -446,7 +446,7 @@ extend the upstream python-pptx documentation:
 - The remaining documentation is inherited from python-pptx and describes the
   shared, unchanged foundation.
 
-Build locally with `make docs` (requires `requirements-docs.txt`).
+Build locally with `uv sync --group docs` and `uv run make docs`.
 
 ## Roadmap and known limitations
 
@@ -499,9 +499,9 @@ satisfy (validate-fully-then-mutate, save→reopen assertions, changed-part
 budgets). The short version:
 
 ```bash
-pip install -r requirements-dev.txt
-pytest
-behave
+uv sync --group dev
+uv run pytest
+uv run behave
 ```
 
 ## Community and support
