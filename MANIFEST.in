@@ -5,4 +5,5 @@ recursive-include tests *.py
 recursive-include tests/test_files *
 recursive-include tests/paper/fixtures *
 recursive-include tests/paper/goldens *
+recursive-include tests/paper/xsd *
 global-exclude *.py[cod]

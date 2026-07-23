@@ -224,6 +224,6 @@ __marimo__/
 /docs/.build
 out.txt
 _scratch/
-/spec/gen_spec/spec*.db
 tags
 /tests/debug.py
+reference/
