@@ -45,11 +45,11 @@ paper-pptx-doctor = "paper_pptx_doctor:main"
 version = {attr = "pptx._version.__paper_version__"}
 
 [project.urls]
-Changelog = "https://github.com/The-LLM-Data-Company/paper-pptx/blob/main/HISTORY.rst"
-Documentation = "https://github.com/The-LLM-Data-Company/paper-pptx"
-Homepage = "https://github.com/The-LLM-Data-Company/paper-pptx"
-Issues = "https://github.com/The-LLM-Data-Company/paper-pptx/issues"
-Repository = "https://github.com/The-LLM-Data-Company/paper-pptx"
+Changelog = "https://github.com/paper-instruments/paper-pptx/releases"
+Documentation = "https://github.com/paper-instruments/paper-pptx"
+Homepage = "https://github.com/paper-instruments/paper-pptx"
+Issues = "https://github.com/paper-instruments/paper-pptx/issues"
+Repository = "https://github.com/paper-instruments/paper-pptx"
 
 [tool.black]
 line-length = 100
