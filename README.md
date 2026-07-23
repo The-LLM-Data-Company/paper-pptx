@@ -1,9 +1,19 @@
-# paper-pptx
+<div align="center">
+  <a href="https://github.com/paper-instruments/paper-pptx">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+      <img alt="paper-pptx logo" src=".github/assets/logo-light.svg" height="128">
+    </picture>
+  </a>
+  <h1>paper-pptx</h1>
 
-[![Test](https://github.com/paper-instruments/paper-pptx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-pptx/actions/workflows/test.yml)
-[![PyPI](https://img.shields.io/pypi/v/paper-pptx)](https://pypi.org/project/paper-pptx/)
-[![Python versions](https://img.shields.io/pypi/pyversions/paper-pptx)](https://pypi.org/project/paper-pptx/)
-[![License: MIT](https://img.shields.io/pypi/l/paper-pptx)](LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/paper-pptx.svg)](https://pypi.org/project/paper-pptx/)
+[![Python versions](https://img.shields.io/pypi/pyversions/paper-pptx.svg)](https://pypi.org/project/paper-pptx/)
+[![License](https://img.shields.io/pypi/l/paper-pptx.svg)](LICENSE)
+[![CI](https://github.com/paper-instruments/paper-pptx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-pptx/actions/workflows/test.yml)
+[![Downloads](https://img.shields.io/pypi/dm/paper-pptx.svg)](https://pypi.org/project/paper-pptx/)
+
+</div>
 
 An agent-first structure editor for PowerPoint files.
 
